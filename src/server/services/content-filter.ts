@@ -160,7 +160,7 @@ function maskBannedWord(text: string, word: string): { text: string; hit: boolea
 // 같은 키워드인데 실제로는 영원히 매칭되지 않는다. 예전에는
 //   등록: toUpperCase() + 공백 제거
 //   매칭: toUpperCase() + 하이픈 제거
-// 라서 "GIV-1234" 로 등록하면 등록값은 `GIV-1234`, 수신 파싱값은 `MSG1234` 가 되어
+// 라서 "GIV-1234" 로 등록하면 등록값은 `GIV-1234`, 수신 파싱값은 `GIV1234` 가 되어
 // 그 사회복지기관의 결제가 전건 UNKNOWN_ROUTE 로 떨어졌다. 아래 한 함수로 통일한다.
 // ---------------------------------------------------------------------------
 
@@ -171,7 +171,7 @@ const KEYWORD_SEPARATOR = /[\s._\-*~/+#]/gu;
  * 키워드를 비교용 표준형으로 바꾼다.
  *
  *  - NFKC 로 접어 전각(ＭＳＧ)·호환 문자를 같은 글자로 본다
- *  - 공백·하이픈·밑줄·점 등 구분 기호를 제거한다 ("GIV-1234" = "msg 1234" = "MSG1234")
+ *  - 공백·하이픈·밑줄·점 등 구분 기호를 제거한다 ("GIV-1234" = "giv 1234" = "GIV1234")
  *  - 대문자로 접는다 (한글에는 영향이 없다)
  */
 export function normalizeKeyword(raw: string | null | undefined): string {

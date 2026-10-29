@@ -21,7 +21,6 @@ echo     public\screenshots\             옛 후원페이지 스크린샷 2개
 echo     public\assets\ 미사용 4개       margin-home-v2, margin-sub-v3, section-*.svg
 echo     public\ 의 Next 템플릿 기본 svg 5개
 echo     scripts\                        옛 브랜드 자산 생성 스크립트 4개
-echo     tools\generate-brand-assets.py  토네이도 자산 생성기
 echo.
 echo   [남기는 것] 배치 파일 전부, 마이그레이션, e2e, docs,
 echo               사용 중인 이미지(avatars\givesign-v2 포함)
@@ -57,7 +56,6 @@ for %%F in (file.svg globe.svg next.svg vercel.svg window.svg) do (
 
 echo [4/4] 동작하지 않는 자산 생성 스크립트
 if exist "scripts" rmdir /s /q "scripts"
-if exist "tools\generate-brand-assets.py" del /f /q "tools\generate-brand-assets.py"
 
 echo.
 echo [완료] 정리했습니다.

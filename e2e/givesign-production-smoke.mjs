@@ -34,7 +34,7 @@ try {
   await adminPage.waitForURL('**/admin');
   const admin = await adminPage.goto(base + '/admin/fundraising');
   assert.equal(admin.status(), 200);
-  assert.match(await adminPage.locator('body').innerText(), /기관 후원페이지·캠페인/);
+  assert.match(await adminPage.locator('body').innerText(), /모금 현황/);
   await adminContext.close();
   await page.goto(base);
   await page.screenshot({ path: 'output/qa/home-desktop-final.png', fullPage: true });

@@ -34,7 +34,7 @@ docker compose -p givesign up -d
 if errorlevel 1 (
   echo.
   echo [오류] 컨테이너를 시작하지 못했습니다.
-  echo        Docker Desktop 이 실행 중인지, 5432/6379 포트가 비어 있는지 확인해 주세요.
+  echo        Docker Desktop 이 실행 중인지, 5462/6390 포트가 비어 있는지 확인해 주세요.
   echo.
   pause
   exit /b 1
@@ -51,7 +51,7 @@ echo [경고] 준비 확인에 실패했습니다. docker ps 로 상태를 확�
 goto :done
 
 :ready
-echo [완료] PostgreSQL(5432), Redis(6379) 준비 완료
+echo [완료] PostgreSQL(5462), Redis(6390) 준비 완료
 
 :done
 echo.
