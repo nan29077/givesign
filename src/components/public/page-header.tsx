@@ -15,9 +15,9 @@ export function PageHeader({
   description?: string;
 }) {
   return (
-    <header className="relative mb-6 overflow-hidden rounded-[26px] border border-slate-200/80 bg-[linear-gradient(135deg,#f7fafc_0%,#fff_52%,#eef5f2_100%)] px-5 py-6 pr-20 shadow-[0_14px_34px_rgba(7,20,38,0.08)] sm:px-7 sm:py-8 sm:pr-28">
-      <span className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-[#b7f34a]/22 blur-2xl" aria-hidden />
-      <span className="absolute -bottom-12 left-1/3 h-24 w-24 rounded-full bg-[#071426]/10 blur-2xl" aria-hidden />
+    <header className="relative mb-6 overflow-hidden rounded-[26px] border border-slate-200/80 bg-[linear-gradient(135deg,#f7fafc_0%,#fff_52%,#eef5f2_100%)] px-5 py-6 pr-20 shadow-[0_14px_34px_rgba(32,60,50,0.08)] sm:px-7 sm:py-8 sm:pr-28">
+      <span className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-brand-400/40 blur-2xl" aria-hidden />
+      <span className="absolute -bottom-12 left-1/3 h-24 w-24 rounded-full bg-ink-900/10 blur-2xl" aria-hidden />
       <MascotAccent seed={title} className="absolute -bottom-3 -right-2 h-[82px] w-[82px] opacity-90 sm:-bottom-4 sm:right-2 sm:h-[108px] sm:w-[108px]" />
       <div className="relative z-[1]">
       {eyebrow ? <p className="text-[10px] font-extrabold tracking-[0.18em] text-brand-700">{eyebrow}</p> : null}

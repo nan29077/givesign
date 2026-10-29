@@ -91,7 +91,7 @@ export function PublicShellClient({
     <div className="public-canvas min-h-dvh pb-20 lg:pb-0">
       <PublicMarginMascots />
       <div className="relative z-[2] mx-auto flex w-full max-w-[824px] items-start justify-center">
-        <div className="public-app-surface min-h-dvh w-full min-w-0 max-w-[720px] shadow-[0_0_70px_rgba(7,20,38,0.12)]">
+        <div className="public-app-surface min-h-dvh w-full min-w-0 max-w-[720px] shadow-[0_0_70px_rgba(32,60,50,0.12)]">
       <header className="public-header sticky top-0 z-40 border-b backdrop-blur-xl">
         <div className="flex h-[68px] w-full items-center justify-between px-4 sm:px-6">
           <Link href="/" aria-label="기브싸인 홈">
@@ -188,7 +188,7 @@ export function PublicShellClient({
             <Link
               href="/"
               aria-label="기브싸인 홈"
-              className="mb-2 grid h-10 w-10 place-items-center rounded-[14px] bg-[#071426] text-[#b7f34a] shadow-[0_8px_18px_rgba(7,20,38,0.24)] ring-1 ring-white/10 transition-transform hover:-translate-y-0.5"
+              className="mb-2 grid h-10 w-10 place-items-center rounded-[14px] bg-ink-900 text-brand-400 shadow-[0_8px_18px_rgba(32,60,50,0.24)] ring-1 ring-white/10 transition-transform hover:-translate-y-0.5"
             >
               <GiveSignMark size={38} onDark />
             </Link>

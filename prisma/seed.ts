@@ -54,11 +54,8 @@ async function main() {
       // 시드를 다시 돌리면 문안이 최신으로 맞춰지도록 갱신한다.
       update: { title: t.title, content: t.content, required: t.required },
     });
-    // 같은 유형의 이전 버전은 비활성화한다. 활성 버전이 둘이면 동의 화면에 중복 노출된다.
-    await prisma.termsVersion.updateMany({
-      where: { type: t.type, version: { not: TERMS_VERSION }, active: true },
-      data: { active: false },
-    });
+    // 이전 버전은 그대로 둔다. 현행본은 시행일 기준으로 고르고(terms.ts) 유형당 1건만 노출되므로 중복되지 않으며,
+    // 이전 버전에 걸린 동의 기록이 "개정 전 동의"로 남아 있어야 재동의(staleRequiredConsents)가 동작한다.
   }
 
   // ---------------------------------------------------------------- 정책

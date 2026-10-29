@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '@/server/db';
+import { newId } from '@/lib/id';
+import { phoneHash } from '@/lib/crypto';
 import { mockMoAdapter } from '@/server/adapters/mo';
 import { readMockOutbox } from '@/server/adapters/mt';
 import { handleMoInbound } from '@/server/services/charge-flow';
@@ -257,4 +259,36 @@ describe('후원 금액 선택', () => {
     }
   });
 
+  it('[14] 개정 약관이 시행되면 이전 버전에 동의한 후원자는 체크 없이 확정할 수 없고, 체크하면 현행본 동의가 기록된다', async () => {
+    const payer = await prisma.payerProfile.findFirstOrThrow({ where: { phoneHash: phoneHash(fx.payerPhone) } });
+    const old = await prisma.termsVersion.findFirstOrThrow({ where: { type: 'TERMS_SERVICE', version: '1.0' } });
+    // 가입 때 1.0 에 동의한 것으로 기록
+    await prisma.consentRecord.create({
+      data: { id: newId(), phoneHash: payer.phoneHash, termsId: old.id, type: 'TERMS_SERVICE', agreed: true },
+    });
+    // 개정본 2.0 시행
+    const next = await prisma.termsVersion.create({
+      data: { id: newId(), type: 'TERMS_SERVICE', version: '2.0', title: '개정 약관', content: '후원 서비스 기준', required: true, effectiveFrom: new Date(Date.now() - 1000) },
+    });
+
+    await inbound(moPayload({ to: fx.moNumber }));
+    const token = lastSelectAmountToken()!;
+    const ctx = await loadSelectAmountContext(token);
+    expect(ctx.ok && ctx.ctx.reconsent.map((t) => t.type)).toEqual(['TERMS_SERVICE']);
+
+    const product = await prisma.chargeProduct.findFirstOrThrow({ where: { amount: 3000n } });
+    const denied = await confirmChargeAmount({ token, productId: product.id });
+    expect(denied.ok).toBe(false);
+    expect(denied.message).toContain('개정된 약관');
+
+    const okRes = await confirmChargeAmount({ token, productId: product.id, reconsentTypes: ['TERMS_SERVICE'] });
+    expect(okRes.ok).toBe(true);
+    const rec = await prisma.consentRecord.findFirst({ where: { phoneHash: payer.phoneHash, termsId: next.id, agreed: true } });
+    expect(rec).not.toBeNull();
+
+    // 다음 후원부터는 재동의를 요구하지 않는다.
+    await inbound(moPayload({ to: fx.moNumber, text: '두 번째' }));
+    const ctx2 = await loadSelectAmountContext(lastSelectAmountToken()!);
+    expect(ctx2.ok && ctx2.ctx.reconsent).toEqual([]);
+  });
 });

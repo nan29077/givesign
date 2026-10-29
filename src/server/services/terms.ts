@@ -45,3 +45,53 @@ export async function currentTermsList(now: Date = new Date()) {
   }
   return [...latest.values()];
 }
+
+/**
+ * 재동의가 필요한 필수 약관.
+ *
+ * 약관이 개정되면(새 버전의 시행일이 지나면) 이전 버전에만 동의한 후원자는 현행본에 다시 동의해야 한다.
+ * 후원자의 가장 최근 동의 기록이 가리키는 버전이 현행본과 다른 필수 유형을 돌려준다.
+ * 후원 확정 화면(/r/[token])에서 이 목록이 비어 있지 않으면 동의 체크를 받고, 확정 시 기록한다.
+ */
+export async function staleRequiredConsents(payer: { phoneHash: string; userId?: string | null }, now: Date = new Date()) {
+  const current = (await currentTermsList(now)).filter((t) => t.required);
+  if (current.length === 0) return [];
+  const or: Array<{ phoneHash: string } | { userId: string }> = [{ phoneHash: payer.phoneHash }];
+  if (payer.userId) or.push({ userId: payer.userId });
+  const records = await prisma.consentRecord.findMany({
+    where: { OR: or, type: { in: current.map((t) => t.type) }, agreed: true },
+    orderBy: { createdAt: 'desc' },
+    select: { type: true, termsId: true },
+  });
+  const latest = new Map<string, string>();
+  for (const r of records) if (!latest.has(r.type)) latest.set(r.type, r.termsId);
+  // 한 번도 동의한 적 없는 유형은 가입 화면에서 받는다(가입 전에는 이 화면에 오지 못한다).
+  // 여기서는 "예전 버전에 동의했고 그 뒤 개정된" 유형만 고른다.
+  return current.filter((t) => latest.has(t.type) && latest.get(t.type) !== t.id);
+}
+
+/** 현행 필수 약관에 대한 동의 기록을 남긴다(재동의). 이미 현행본에 동의한 유형은 건너뛴다. */
+export async function recordReconsent(
+  payer: { phoneHash: string; userId?: string | null },
+  types: ConsentType[],
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  if (types.length === 0) return 0;
+  const stale = await staleRequiredConsents(payer);
+  const todo = stale.filter((t) => types.includes(t.type));
+  if (todo.length === 0) return 0;
+  const { newId } = await import('@/lib/id');
+  await prisma.consentRecord.createMany({
+    data: todo.map((t) => ({
+      id: newId(),
+      phoneHash: payer.phoneHash,
+      userId: payer.userId ?? null,
+      termsId: t.id,
+      type: t.type,
+      agreed: true,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+    })),
+  });
+  return todo.length;
+}

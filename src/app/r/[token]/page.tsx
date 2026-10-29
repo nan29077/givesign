@@ -351,6 +351,7 @@ async function SelectAmountScreen({ token }: { token: string }) {
       </div>
       <SelectAmountPanel
         token={token}
+        reconsent={ctx.reconsent}
         merchantName={ctx.merchantName}
         products={ctx.products.map((p) => ({
           id: p.id,

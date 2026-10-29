@@ -76,6 +76,7 @@ export function SelectAmountPanel({
   remoteFee,
   campaigns = [],
   defaultCampaignId = null,
+  reconsent = [],
 }: {
   token: string;
   merchantName: string;
@@ -96,9 +97,14 @@ export function SelectAmountPanel({
   campaigns?: { id: string; title: string; code: string }[];
   /** MO 키워드로 이미 지정된 캠페인 */
   defaultCampaignId?: string | null;
+  /** 개정되어 다시 동의가 필요한 필수 약관. 모두 체크해야 후원을 진행할 수 있다. */
+  reconsent?: Array<{ type: string; title: string; version: string; content: string }>;
 }) {
   const [campaignId, setCampaignId] = React.useState(defaultCampaignId ?? '');
   const [anonymous, setAnonymous] = React.useState(false);
+  const [agreedTypes, setAgreedTypes] = React.useState<string[]>([]);
+  const [openTerms, setOpenTerms] = React.useState<string | null>(null);
+  const reconsentDone = reconsent.every((t) => agreedTypes.includes(t.type));
   const min = BigInt(minAmount);
   const max = BigInt(maxAmount);
   // 직접 입력은 사회복지기관이 좁혀 둔 범위·단위를 따른다(서버도 같은 값으로 다시 검사한다).
@@ -559,8 +565,47 @@ export function SelectAmountPanel({
         후원페이지 최근 후원에 익명으로 표시
       </label>
 
+      {reconsent.length > 0 ? (
+        <div className="rounded-2xl border border-brand-200 bg-brand-50/60 p-3.5">
+          <p className="text-[13px] font-bold text-ink-900">약관이 개정되었습니다. 계속하려면 동의해 주세요.</p>
+          <p className="mt-0.5 text-[11.5px] text-ink-500">후원 서비스에 맞게 내용을 고쳤습니다. 동의 내역은 마이페이지에서 확인할 수 있습니다.</p>
+          <ul className="mt-2.5 space-y-2">
+            {reconsent.map((t) => (
+              <li key={t.type}>
+                <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink-800">
+                  <input
+                    type="checkbox"
+                    checked={agreedTypes.includes(t.type)}
+                    onChange={(e) =>
+                      setAgreedTypes((prev) => (e.target.checked ? [...prev, t.type] : prev.filter((x) => x !== t.type)))
+                    }
+                    className="mt-0.5 h-4 w-4 rounded border-ink-300"
+                  />
+                  <span>
+                    [필수] {t.title} <span className="text-ink-400">v{t.version}</span>{' '}
+                    <button
+                      type="button"
+                      onClick={() => setOpenTerms(openTerms === t.type ? null : t.type)}
+                      className="font-bold text-brand-700 underline"
+                    >
+                      {openTerms === t.type ? '접기' : '내용 보기'}
+                    </button>
+                  </span>
+                </label>
+                {openTerms === t.type ? (
+                  <pre className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl bg-white p-3 font-sans text-[11.5px] leading-relaxed text-ink-600">
+                    {t.content}
+                  </pre>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <form action={formAction}>
         <input type="hidden" name="token" value={token} />
+        <input type="hidden" name="reconsentTypes" value={agreedTypes.join(',')} />
         <input type="hidden" name="campaignId" value={campaignId} />
         <input type="hidden" name="campaignTouched" value="1" />
         <input type="hidden" name="anonymous" value={anonymous ? '1' : ''} />
@@ -584,13 +629,15 @@ export function SelectAmountPanel({
         ) : null}
         <button
           type="submit"
-          disabled={!valid || pending || state.ok}
+          disabled={!valid || !reconsentDone || pending || state.ok}
           className="inline-flex h-14 w-full items-center justify-center rounded-2xl bg-brand-400 text-[16px] font-extrabold text-ink-900 transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:bg-ink-100 disabled:text-ink-300"
         >
           {state.ok
             ? 'PIN 입력 화면으로 이동합니다'
             : pending
               ? '처리 중'
+              : valid && !reconsentDone
+                ? '개정 약관에 동의해 주세요'
               : valid && preview.total !== null
                 ? `${formatWon(preview.total)} 결제하기`
                 : isPhysical && !addressFilled

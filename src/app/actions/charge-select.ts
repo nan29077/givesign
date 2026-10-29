@@ -2,6 +2,9 @@
 
 import { headers } from 'next/headers';
 import { confirmChargeAmount } from '@/server/services/charge-select';
+import type { ConsentType } from '@/generated/prisma/enums';
+
+const CONSENT_TYPES: ConsentType[] = ['TERMS_SERVICE', 'PRIVACY', 'E_FINANCE', 'WITHDRAWAL_AGREE', 'AGE_CONFIRM', 'MARKETING', 'RECEIPT_ISSUANCE', 'RECURRING_DEBIT'];
 import { clientIpFrom } from '@/server/rate-limit';
 
 /**
@@ -78,6 +81,9 @@ export async function confirmChargeAmountAction(
     customAmount: productId ? null : BigInt(customRaw),
     campaignId: campaignTouched ? campaignId || null : undefined,
     anonymous: s('anonymous') === '1',
+    reconsentTypes: s('reconsentTypes')
+      .split(',')
+      .filter((t): t is ConsentType => CONSENT_TYPES.includes(t as ConsentType)),
     quantity: Number.isFinite(quantityRaw) ? quantityRaw : 1,
     optionValues: parseOptionValues(s('optionValues')),
     address,

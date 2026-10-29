@@ -29,7 +29,7 @@ export function HeroSlider() {
 
   return (
     <section
-      className="hero-slider group relative isolate overflow-hidden rounded-[30px] bg-[#071426] shadow-[0_28px_80px_rgba(7,20,38,0.28)]"
+      className="hero-slider group relative isolate overflow-hidden rounded-[30px] bg-ink-900 shadow-[0_28px_80px_rgba(32,60,50,0.28)]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       aria-label="기브싸인 주요 서비스"
@@ -61,7 +61,7 @@ export function HeroSlider() {
                 )}
               />
             ) : null}
-            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,20,38,0)_52%,rgba(7,20,38,.72)_86%,rgba(7,20,38,1)_100%)] sm:bg-[linear-gradient(90deg,rgba(7,20,38,.98)_0%,rgba(7,20,38,.8)_46%,rgba(7,20,38,.06)_100%)]" />
+            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(32,60,50,0)_52%,rgba(32,60,50,.72)_86%,rgba(32,60,50,1)_100%)] sm:bg-[linear-gradient(90deg,rgba(32,60,50,.98)_0%,rgba(32,60,50,.8)_46%,rgba(32,60,50,.06)_100%)]" />
           </div>
         ))}
 
@@ -77,7 +77,7 @@ export function HeroSlider() {
 
       {/* 텍스트 영역. 모바일은 이미지 아래 일반 흐름, sm+ 는 이미지 위 오버레이 */}
       <div className="relative z-10 -mt-2 px-6 pb-6 pt-0 sm:absolute sm:inset-y-0 sm:left-0 sm:mt-0 sm:flex sm:w-[72%] sm:flex-col sm:justify-end sm:p-9 sm:pb-9">
-        <p className="text-[10px] font-bold tracking-[0.22em] text-[#b7f34a]">{slides[current].eyebrow}</p>
+        <p className="text-[10px] font-bold tracking-[0.22em] text-brand-400">{slides[current].eyebrow}</p>
         <h1 className="mt-2.5 whitespace-pre-line text-[26px] font-black leading-[1.16] tracking-[-0.045em] text-white sm:mt-3 sm:text-[36px]">
           {slides[current].title}
         </h1>
@@ -86,7 +86,7 @@ export function HeroSlider() {
         </p>
         <Link
           href={slides[current].href}
-          className="mt-4 inline-flex h-11 w-fit items-center gap-2 rounded-full bg-[#b7f34a] px-5 text-[13px] font-extrabold text-[#071426] shadow-lg shadow-black/10 transition-transform hover:-translate-y-0.5 sm:mt-5"
+          className="mt-4 inline-flex h-11 w-fit items-center gap-2 rounded-full bg-brand-400 px-5 text-[13px] font-extrabold text-ink-900 shadow-lg shadow-black/10 transition-transform hover:-translate-y-0.5 sm:mt-5"
         >
           {slides[current].cta}
           <ArrowRight size={15} strokeWidth={1.8} />

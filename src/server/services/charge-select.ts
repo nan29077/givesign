@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { logger } from '@/lib/logger';
 import { initialPointStatus } from './point-status';
 import { openCampaigns } from './fundraising';
 import { resolveSecureLink, consumeSecureLink } from './secure-link';
@@ -11,7 +12,8 @@ import {
 } from './products';
 import { encrypt, maskName, maskPhone, normalizePhone } from '@/lib/crypto';
 import { newId } from '@/lib/id';
-import type { DigitalProductType, ProductKind } from '@/generated/prisma/enums';
+import type { ConsentType, DigitalProductType, ProductKind } from '@/generated/prisma/enums';
+import { recordReconsent, staleRequiredConsents } from './terms';
 
 /**
  * 상품·금액 선택.
@@ -95,6 +97,8 @@ export interface SelectAmountContext {
   campaigns: Array<{ id: string; title: string; code: string }>;
   /** MO 문자 키워드로 이미 지정된 캠페인 */
   campaignId: string | null;
+  /** 개정되어 다시 동의받아야 하는 필수 약관. 비어 있지 않으면 화면에서 체크를 받고 확정 시 기록한다. */
+  reconsent: Array<{ type: ConsentType; title: string; version: string; content: string }>;
 }
 
 export async function loadSelectAmountContext(
@@ -118,7 +122,7 @@ export async function loadSelectAmountContext(
 
   const charge = await prisma.charge.findUnique({
     where: { id: link.chargeId },
-    include: { merchant: true },
+    include: { merchant: true, payer: { select: { phoneHash: true, userId: true } } },
   });
   if (!charge) return { ok: false, reason: '결제 거래를 찾을 수 없습니다.' };
   if (charge.status !== 'PENDING_AMOUNT') {
@@ -215,6 +219,9 @@ export async function loadSelectAmountContext(
       shipping,
       campaigns: campaigns.map((c) => ({ id: c.id, title: c.title, code: c.code })),
       campaignId: charge.campaignId,
+      reconsent: charge.payer
+        ? (await staleRequiredConsents(charge.payer)).map((t) => ({ type: t.type, title: t.title, version: t.version, content: t.content }))
+        : [],
     },
   };
 }
@@ -266,11 +273,21 @@ export async function confirmChargeAmount(input: {
   campaignId?: string | null;
   /** 공개 화면에 이름·메시지를 숨긴다 */
   anonymous?: boolean;
+  /** 개정 약관에 동의한 유형(재동의). 필요한 유형이 빠져 있으면 확정하지 않는다. */
+  reconsentTypes?: ConsentType[];
   ip?: string;
   userAgent?: string;
 }): Promise<ConfirmAmountResult> {
   const loaded = await loadSelectAmountContext(input.token);
   if (!loaded.ok) return { ok: false, message: loaded.reason };
+  // 개정 약관 재동의. 화면에 뜬 항목에 모두 체크해야 진행한다(동의 없이 결제되는 일이 없게).
+  if (loaded.ctx.reconsent.length > 0) {
+    const agreed = new Set(input.reconsentTypes ?? []);
+    const missing = loaded.ctx.reconsent.filter((t) => !agreed.has(t.type));
+    if (missing.length > 0) {
+      return { ok: false, message: `개정된 약관에 동의해 주세요: ${missing.map((m) => m.title).join(', ')}` };
+    }
+  }
   const ctx = loaded.ctx;
 
   // 캠페인은 모금 중인 것만 고를 수 있다. 화면이 보낸 값을 그대로 믿지 않는다.
@@ -423,6 +440,7 @@ export async function confirmChargeAmount(input: {
   //
   // pointStatus(후원 처리 상태)는 여기서 정한다. 기관이 따로 지급할 것이 없는 후원은 SKIPPED.
   // 상품 기능(FEATURE_GOODS)을 켠 경우에만 디지털 항목을 PENDING 으로 둔다(point-status.ts).
+  const claimedReconsent = loaded.ctx.reconsent.map((t) => t.type);
   const claimed = await prisma.charge.updateMany({
     where: { id: charge.id, status: 'PENDING_AMOUNT' },
     data: {
@@ -439,6 +457,13 @@ export async function confirmChargeAmount(input: {
     },
   });
   if (claimed.count === 0) return { ok: false, message: '이미 처리된 결제입니다.' };
+
+  // 재동의 기록. 기록 실패가 결제를 막지는 않지만(이미 확정됨) 로그로 남긴다.
+  if (claimedReconsent.length > 0 && payer) {
+    await recordReconsent({ phoneHash: payer.phoneHash, userId: payer.userId }, claimedReconsent, { ip: input.ip, userAgent: input.userAgent }).catch((e) =>
+      logger.error('약관 재동의 기록 실패', { chargeId: charge.id, message: (e as Error).message }),
+    );
+  }
 
   // 배송지는 결제 건과 1:1 로 붙인다. 원문은 암호화하고 화면에는 마스킹만 남긴다.
   if (selected?.kind === 'PHYSICAL' && input.address) {
