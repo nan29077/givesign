@@ -154,6 +154,8 @@ export async function requireAdmin(): Promise<SessionUser> {
 /** 관리자 변경 감사로그 */
 export async function writeAudit(input: {
   adminUserId?: string;
+  /** 관리자가 아닌 행위자(기관 담당자·후원자). 비우면 현재 세션 사용자로 채운다. */
+  actorUserId?: string;
   action: string;
   targetType: string;
   targetId?: string;
@@ -166,10 +168,19 @@ export async function writeAudit(input: {
     const p = await prisma.adminProfile.findUnique({ where: { userId: input.adminUserId }, select: { id: true } });
     adminProfileId = p?.id ?? null;
   }
+  // 행위자. 예전에는 관리자만 기록돼 기관·후원자의 행위(주민번호 명세 다운로드 등)가 "시스템"으로 남았다.
+  let actorUserId: string | null = input.actorUserId ?? input.adminUserId ?? null;
+  if (!actorUserId) actorUserId = (await getSessionUser().catch(() => null))?.id ?? null;
+  const actor = actorUserId
+    ? await prisma.user.findUnique({ where: { id: actorUserId }, select: { email: true, name: true, role: true } })
+    : null;
   await prisma.adminAuditLog.create({
     data: {
       id: newId(),
       adminId: adminProfileId,
+      actorUserId,
+      actorLabel: actor ? (actor.email ?? actor.name ?? actorUserId) : null,
+      actorRole: actor?.role ?? 'SYSTEM',
       action: input.action,
       targetType: input.targetType,
       targetId: input.targetId ?? null,

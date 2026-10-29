@@ -3,7 +3,9 @@ import { requireAdmin } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { campaignStats } from '@/server/services/fundraising';
 import { recurringStatusLabel, recurringDebitAllowed } from '@/server/services/recurring';
-import { issuerReadiness, receiptStatusLabel } from '@/server/services/receipts';
+import { doneeVerified, issuerReadiness, receiptStatusLabel } from '@/server/services/receipts';
+import { ActionButton } from '@/components/admin/action-form';
+import { revokeDesignatedDoneeAction, verifyDesignatedDoneeAction } from '@/app/actions/admin/fundraising';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, EmptyState, Notice, StatTile, Table, Td, Th } from '@/components/ui';
 import { ProgressBar } from '@/components/public/progress-bar';
@@ -201,7 +203,7 @@ async function OrgsTab({ orgs }: { orgs: Array<Awaited<ReturnType<typeof prisma.
   const raisedMap = new Map(raised.map((r) => [r.merchantId, r._sum.amount ?? 0n]));
   return (
     <Table>
-      <thead><tr><Th>기관</Th><Th>유형</Th><Th>MO 번호</Th><Th>후원페이지</Th><Th>영수증 발급 준비</Th><Th>모집등록</Th><Th>누적 후원</Th></tr></thead>
+      <thead><tr><Th>기관</Th><Th>유형</Th><Th>MO 번호</Th><Th>후원페이지</Th><Th>영수증 발급 준비</Th><Th>공익법인 확인</Th><Th>모집등록</Th><Th>누적 후원</Th></tr></thead>
       <tbody>
         {orgs.map((o) => {
           const r = issuerReadiness(o);
@@ -212,6 +214,19 @@ async function OrgsTab({ orgs }: { orgs: Array<Awaited<ReturnType<typeof prisma.
               <Td>{moMap.get(o.id) ? <Badge tone="success">{moMap.get(o.id)}개</Badge> : <Badge tone="warning">미배정</Badge>}</Td>
               <Td>{o.donationPage?.published ? <Badge tone="success">공개</Badge> : <span className="text-ink-400">비공개</span>}</Td>
               <Td>{r.ok ? <Badge tone="success">준비됨</Badge> : <span className="text-[12px] text-ink-500">{r.missing.join(' · ')}</span>}</Td>
+              <Td className="min-w-[150px]">
+                {o.designatedDoneeVerifiedAt ? (
+                  <div className="space-y-1">
+                    <Badge tone={doneeVerified(o) ? 'success' : 'warning'}>{doneeVerified(o) ? '확인됨' : '기간 만료'}</Badge>
+                    <span className="block text-[11px] text-ink-400">{formatKst(o.designatedDoneeVerifiedAt)}</span>
+                    <ActionButton action={revokeDesignatedDoneeAction} values={{ merchantId: o.id }} label="확인 취소" confirm="공익법인 지정 확인을 취소할까요? 이 기관은 영수증을 새로 발급할 수 없게 됩니다." />
+                  </div>
+                ) : o.designatedDonee ? (
+                  <ActionButton action={verifyDesignatedDoneeAction} values={{ merchantId: o.id }} label="지정 확인" confirm={`지정서(고유번호 ${o.businessNo ?? '-'}, 만료 ${o.designatedDoneeUntil ? o.designatedDoneeUntil.toISOString().slice(0, 10) : '없음'})를 확인하셨나요?`} />
+                ) : (
+                  <span className="text-[12px] text-ink-400">기관 미등록</span>
+                )}
+              </Td>
               <Td>{o.fundraisingRegNo ?? <span className="text-ink-300">-</span>}</Td>
               <Td className="tabular-nums">{formatWon(raisedMap.get(o.id) ?? 0n)}</Td>
             </tr>

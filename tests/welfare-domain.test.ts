@@ -59,7 +59,7 @@ async function seedContextualTerms() {
 async function makeIssuerReady(merchantId: string) {
   await prisma.merchantProfile.update({
     where: { id: merchantId },
-    data: { businessNo: '123-82-00001', representativeName: '김대표', address: '서울시 중구 1', designatedDonee: true, orgType: 'WELFARE_CORPORATION' },
+    data: { businessNo: '123-82-00001', representativeName: '김대표', address: '서울시 중구 1', designatedDonee: true, designatedDoneeVerifiedAt: new Date(), orgType: 'WELFARE_CORPORATION' },
   });
 }
 

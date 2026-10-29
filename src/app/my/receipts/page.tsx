@@ -62,7 +62,7 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
               </Field>
             </div>
             <Field label="주소(선택)" hint="영수증에 인쇄됩니다."><Input name="address" maxLength={200} defaultValue={profile?.address ?? ''} /></Field>
-            <Checkbox name="hometaxOptIn" defaultChecked={profile?.hometaxOptIn ?? true} label="국세청 연말정산 간소화 자료 제출에 동의" description="끄면 종이(화면) 영수증만 발급되고 홈택스에 자동 반영되지 않습니다." />
+            <Checkbox name="hometaxOptIn" defaultChecked={profile?.hometaxOptIn ?? false} label="국세청 연말정산 간소화 자료 제출에 동의" description="끄면 종이(화면) 영수증만 발급되고 홈택스에 자동 반영되지 않습니다." />
             <div className="rounded-xl border border-ink-200 p-3">
               <p className="text-[13px] font-bold text-ink-900">{terms?.title ?? '기부금영수증 발급을 위한 개인정보 수집·이용 동의'}</p>
               <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-ink-500">{terms?.content ?? '동의 약관이 준비되지 않았습니다.'}</pre>

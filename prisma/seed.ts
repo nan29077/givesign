@@ -131,6 +131,14 @@ async function main() {
       update: { userId: user.id, status: 'APPROVED', avatarUrl: '/assets/givesign/mascot.png' },
     });
 
+    // 공익법인 지정 확인(관리자 확인)이 생기기 전에 시드된 데모 기관도 영수증 발급을 시연할 수 있게 채운다.
+    if (merchant.representativeName && merchant.designatedDonee && !merchant.designatedDoneeVerifiedAt) {
+      await prisma.merchantProfile.update({
+        where: { id: merchant.id },
+        data: { designatedDoneeVerifiedAt: new Date('2026-01-02T00:00:00Z') },
+      });
+    }
+
     // 기관 정보(기부금영수증 발급 주체). 비어 있을 때만 채워 운영자가 바꾼 값을 덮지 않는다.
     if (!merchant.representativeName) {
       await prisma.merchantProfile.update({
@@ -145,6 +153,8 @@ async function main() {
           contactEmail: c.email,
           designatedDonee: true,
           designatedDoneeUntil: new Date('2029-12-31T00:00:00Z'),
+          // 데모 기관은 관리자가 지정서를 확인한 상태로 둔다(영수증 발급 시연용).
+          designatedDoneeVerifiedAt: new Date('2026-01-02T00:00:00Z'),
           donationCode: '40',
           fundraisingRegNo: c.code === 'GIV-8K2M' ? '2026-서울-00123' : null,
           fundraisingRegAuthority: c.code === 'GIV-8K2M' ? '서울특별시' : null,

@@ -8,6 +8,7 @@ import { calculateFees, postRefundSettlement } from './settlement';
 import { rollbackCounters } from './limits';
 import { sendMtForPayer } from './charge-flow';
 import * as tpl from './mt-templates';
+import { notifySuperAdmins } from './notifications';
 
 /**
  * 환불 처리.
@@ -210,9 +211,15 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
 
   // 환불된 건이 기부금영수증에 묶여 있으면 그 영수증을 무효화한다(절대 규칙 9).
   // 영수증 처리 실패가 환불 결과를 바꾸지 않도록 오류는 기록만 한다.
-  await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin').catch((e) =>
-    logger.error('환불 후 기부금영수증 무효화 실패', { chargeId: refund.chargeId, message: (e as Error).message }),
-  );
+  await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin').catch(async (e) => {
+    logger.error('환불 후 기부금영수증 무효화 실패', { chargeId: refund.chargeId, message: (e as Error).message });
+    // 무효화에 실패하면 환불된 금액이 든 영수증이 그대로 남아 홈택스 명세에 실린다. 사람이 처리하도록 알린다.
+    await notifySuperAdmins({
+      title: '환불 건의 기부금영수증 무효화 실패',
+      body: `환불된 후원(${refund.chargeId})이 묶인 영수증을 자동으로 무효화하지 못했습니다. 모금 현황 > 기부금영수증에서 직접 무효 처리 후 재발급해 주세요.`,
+      linkUrl: '/admin/fundraising?tab=receipts',
+    }).catch(() => undefined);
+  });
   // 정기후원 결제 건이면 약정의 누적(화면 표시용)을 되돌린다.
   await revertRecurringTotals(refund.chargeId).catch((e) =>
     logger.error('환불 후 정기후원 누적 갱신 실패', { chargeId: refund.chargeId, message: (e as Error).message }),

@@ -16,6 +16,7 @@ import { logger } from '@/lib/logger';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { DONATION_CODES } from '@/lib/receipt-codes';
 import { currentTermsDoc } from './terms';
+import { writeAudit } from '@/server/auth';
 import { sendMtForPayer } from './charge-flow';
 import * as tpl from './mt-templates';
 import type { Prisma } from '@/generated/prisma/client';
@@ -67,6 +68,25 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
   const payer = await prisma.payerProfile.findUnique({ where: { id: payerId } });
   if (!payer) return { ok: false, message: '후원자 정보를 찾을 수 없습니다.' };
 
+  // 같은 주민등록번호가 다른 후원자 계정에 이미 등록돼 있으면 막는다. 타인의 번호로 등록하면
+  // 그 사람 명의로 영수증이 발급되고 국세청 명세에 실리기 때문이다.
+  // (실명 확인(본인인증) 계약 전이라 성명·번호 일치는 확인하지 못한다. 중복·변경 횟수로 막는다)
+  const hash = residentHash(resident);
+  const taken = await prisma.payerReceiptProfile.findFirst({
+    where: { residentNoHash: hash, payerId: { not: payerId } },
+    select: { payerId: true },
+  });
+  if (taken) {
+    return { ok: false, message: '이미 다른 계정에 등록된 주민등록번호입니다. 본인 번호가 맞다면 고객센터로 문의해 주세요.' };
+  }
+  // 하루 변경 횟수 제한(번호를 바꿔 가며 시도하는 것을 막는다)
+  const changesToday = await prisma.consentRecord.count({
+    where: { phoneHash: payer.phoneHash, type: 'RECEIPT_ISSUANCE', agreed: true, createdAt: { gte: new Date(Date.now() - 86_400_000) } },
+  });
+  if (changesToday >= RECEIPT_PROFILE_DAILY_CHANGES) {
+    return { ok: false, message: '영수증 정보는 하루 3번까지 바꿀 수 있습니다. 내일 다시 시도하거나 고객센터로 문의해 주세요.' };
+  }
+
   const terms = await currentTermsDoc('RECEIPT_ISSUANCE');
   if (!terms) return { ok: false, message: '기부금영수증 동의 약관이 준비되지 않았습니다. 관리자에게 문의해 주세요.' };
 
@@ -86,7 +106,7 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
     const data = {
       legalName: name,
       residentNoEnc: encrypt(resident),
-      residentNoHash: residentHash(resident),
+      residentNoHash: hash,
       residentNoMasked: maskResident(resident),
       address: (input.address ?? '').trim() || null,
       hometaxOptIn: input.hometaxOptIn,
@@ -95,8 +115,18 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
     };
     await tx.payerReceiptProfile.upsert({ where: { payerId }, create: { payerId, ...data }, update: data });
   });
+  // 주민번호 원문·해시는 감사로그에 남기지 않는다. 등록 사실과 마스킹 값만.
+  await writeAudit({
+    action: 'RECEIPT_PROFILE_UPSERT',
+    targetType: 'PayerReceiptProfile',
+    targetId: payerId,
+    after: { legalName: name, residentNoMasked: maskResident(resident), hometaxOptIn: input.hometaxOptIn },
+  }).catch((e) => logger.warn('영수증 정보 감사로그 실패', { message: (e as Error).message }));
   return { ok: true };
 }
+
+/** 하루에 영수증 정보를 바꿀 수 있는 횟수 */
+export const RECEIPT_PROFILE_DAILY_CHANGES = 3;
 
 export async function getReceiptProfile(payerId: string) {
   const row = await prisma.payerReceiptProfile.findUnique({ where: { payerId } });
@@ -112,9 +142,22 @@ export async function getReceiptProfile(payerId: string) {
   };
 }
 
-/** 동의 철회: 정보를 지운다. 이미 발급된 영수증 대장(스냅샷)은 법정 보유 기간 동안 남는다. */
-export async function deleteReceiptProfile(payerId: string) {
-  await prisma.payerReceiptProfile.deleteMany({ where: { payerId } });
+/** 동의 철회: 정보를 지우고 철회 기록을 남긴다. 이미 발급된 영수증 대장(스냅샷)은 법정 보유 기간 동안 남는다. */
+export async function deleteReceiptProfile(payerId: string, meta: { ip?: string; userAgent?: string } = {}) {
+  const [payer, terms] = await Promise.all([
+    prisma.payerProfile.findUnique({ where: { id: payerId }, select: { userId: true, phoneHash: true } }),
+    currentTermsDoc('RECEIPT_ISSUANCE'),
+  ]);
+  const removed = await prisma.payerReceiptProfile.deleteMany({ where: { payerId } });
+  if (removed.count > 0 && payer && terms) {
+    await prisma.consentRecord.create({
+      data: {
+        id: newId(), userId: payer.userId, phoneHash: payer.phoneHash, termsId: terms.id,
+        type: 'RECEIPT_ISSUANCE', agreed: false, ip: meta.ip ?? null, userAgent: meta.userAgent ?? null,
+      },
+    });
+  }
+  await writeAudit({ action: 'RECEIPT_PROFILE_DELETE', targetType: 'PayerReceiptProfile', targetId: payerId }).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,18 +210,39 @@ export async function receiptCandidates(merchantId: string, taxYear: number) {
 
 export class ReceiptError extends Error {}
 
+/**
+ * 공익법인 지정이 지금 유효한가.
+ * 기관의 자기 신고(designatedDonee)만으로는 부족하고 관리자 확인(designatedDoneeVerifiedAt)이 있어야 하며,
+ * 지정 만료일이 지났으면 무효다. 공개 페이지의 "영수증 발급 가능" 표시도 이 판정을 쓴다.
+ */
+export function doneeVerified(
+  m: { designatedDonee: boolean; designatedDoneeVerifiedAt?: Date | null; designatedDoneeUntil?: Date | null },
+  now = new Date(),
+) {
+  if (!m.designatedDonee || !m.designatedDoneeVerifiedAt) return false;
+  if (m.designatedDoneeUntil) {
+    const today = new Date(now.getTime() + 9 * 3600000).toISOString().slice(0, 10);
+    if (m.designatedDoneeUntil.toISOString().slice(0, 10) < today) return false;
+  }
+  return true;
+}
+
 /** 기관이 영수증을 발급할 수 있는 상태인지. 발급 주체 정보가 비어 있으면 서식을 채울 수 없다. */
 export function issuerReadiness(m: {
   businessNo: string | null;
   representativeName: string | null;
   address: string | null;
   designatedDonee: boolean;
+  designatedDoneeVerifiedAt?: Date | null;
+  designatedDoneeUntil?: Date | null;
 }) {
   const missing: string[] = [];
   if (!m.businessNo) missing.push('고유번호(사업자등록번호)');
   if (!m.representativeName) missing.push('대표자');
   if (!m.address) missing.push('소재지');
-  if (!m.designatedDonee) missing.push('공익법인(지정기부금단체) 지정 확인');
+  if (!m.designatedDonee) missing.push('공익법인(지정기부금단체) 지정 여부');
+  else if (!m.designatedDoneeVerifiedAt) missing.push('관리자의 공익법인 지정 확인');
+  else if (!doneeVerified(m)) missing.push('공익법인 지정 기간(만료됨)');
   return { ok: missing.length === 0, missing };
 }
 
@@ -199,11 +263,11 @@ export async function issueReceipt(input: IssueReceiptInput) {
     eligibleCharges(input.merchantId, input.payerId, input.taxYear),
   ]);
   if (!merchant) throw new ReceiptError('기관을 찾을 수 없습니다.');
-  if (!payer) throw new ReceiptError('후원자를 찾을 수 없습니다.');
-  if (!profile) throw new ReceiptError('후원자가 기부금영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다.');
   const readiness = issuerReadiness(merchant);
   if (!readiness.ok) throw new ReceiptError(`기관 정보가 부족합니다: ${readiness.missing.join(', ')}`);
-  if (charges.length === 0) throw new ReceiptError('발급할 후원 내역이 없습니다(이미 발급됐거나 결제 성공 건이 없음).');
+  // 후원 내역 확인을 먼저 한다. 임의의 후원자 ID 로 "후원자 없음 / 정보 미등록" 을 구분해 볼 수 없게.
+  if (charges.length === 0 || !payer) throw new ReceiptError('발급할 후원 내역이 없습니다(이미 발급됐거나 결제 성공 건이 없음).');
+  if (!profile) throw new ReceiptError('후원자가 기부금영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다.');
 
   const total = charges.reduce((s, c) => s + c.amount, 0n);
   const viewToken = generateToken(24);
@@ -251,29 +315,51 @@ export async function issueReceipt(input: IssueReceiptInput) {
           amount: c.amount.toString(),
         })) as Prisma.InputJsonValue,
         issuedBy: input.issuedBy,
+        // 발급 당시 주민번호(암호문). 홈택스 명세는 이 값을 쓴다.
+        residentNoEnc: profile.residentNoEnc,
         viewTokenHash: tokenHash(viewToken),
+        viewTokenExpiresAt: new Date(Date.now() + RECEIPT_VIEW_TTL_DAYS * 86_400_000),
       },
     });
 
-    // 포함한 건을 영수증에 묶는다. 그 사이 다른 발급이 가로챘으면(receipt_id 가 채워졌으면) 중단.
+    // 포함한 건을 영수증에 묶는다. 읽은 뒤 사이에 환불되었거나(상태 변경) 다른 발급이 가로챘으면
+    // (receipt_id 가 채워졌으면) 건수가 어긋난다. 그때는 트랜잭션 전체를 되돌린다(절대 규칙 9).
     const bound = await tx.charge.updateMany({
-      where: { id: { in: charges.map((c) => c.id) }, receiptId: null },
+      where: { id: { in: charges.map((c) => c.id) }, receiptId: null, status: { in: PAID_STATUSES } },
       data: { receiptId: created.id },
     });
-    if (bound.count !== charges.length) throw new ReceiptError('동시에 발급이 진행되어 중단했습니다. 다시 시도해 주세요.');
+    if (bound.count !== charges.length) {
+      throw new ReceiptError('발급하는 사이 후원 상태가 바뀌어(환불·다른 발급) 중단했습니다. 다시 시도해 주세요.');
+    }
     return created;
   });
 
+  let mtSent = false;
   if (!input.silent) {
     const link = `${env.baseUrl}/receipt/${viewToken}`;
-    await sendMtForPayer(
+    mtSent = await sendMtForPayer(
       payer.id,
       tpl.tplReceiptIssued({ merchantName: merchant.displayName, taxYear: input.taxYear, amount: total, link }),
       null,
       merchant.id,
-    ).catch((e) => logger.warn('영수증 발급 안내 문자 실패', { message: (e as Error).message }));
+    )
+      .then((r) => Boolean(r))
+      .catch((e) => {
+        logger.warn('영수증 발급 안내 문자 실패', { message: (e as Error).message });
+        return false;
+      });
   }
-  return { receipt, viewToken };
+  return { receipt, viewToken, mtSent };
+}
+
+/** 영수증 열람 링크 유효 기간(일). 지나면 마이페이지에서 다시 연다. */
+export const RECEIPT_VIEW_TTL_DAYS = 30;
+
+/** 사용자에게 보여 줄 수 있는 오류 문구로 바꾼다(Prisma 등 내부 오류 원문을 내보내지 않는다). */
+function publicReason(e: unknown): string {
+  if (e instanceof ReceiptError) return e.message;
+  logger.error('영수증 발급 내부 오류', { message: (e as Error)?.message });
+  return '처리 중 오류가 발생했습니다.';
 }
 
 /** 기관의 연도별 일괄 발급. 준비된(정보 등록된) 후원자만 발급하고 나머지는 건너뛴 이유를 돌려준다. */
@@ -292,7 +378,7 @@ export async function issueReceiptsBulk(merchantId: string, taxYear: number, iss
       result.details.push({ payerId: c.payerId, status: 'ISSUED', receiptNo: receipt.receiptNo });
     } catch (e) {
       result.failed += 1;
-      result.details.push({ payerId: c.payerId, status: 'FAILED', reason: (e as Error).message });
+      result.details.push({ payerId: c.payerId, status: 'FAILED', reason: publicReason(e) });
     }
   }
   return result;
@@ -306,7 +392,8 @@ export async function voidReceipt(receiptId: string, reason: string, by: string)
     await tx.charge.updateMany({ where: { receiptId }, data: { receiptId: null } });
     return tx.donationReceipt.update({
       where: { id: receiptId },
-      data: { status: 'VOID', voidedAt: new Date(), voidReason: `${reason} (${by})`.slice(0, 300) },
+      // 사유와 처리자를 나눠 둔다. 사유는 후원자 화면에 보이지만 처리자 ID 는 보이면 안 된다.
+      data: { status: 'VOID', voidedAt: new Date(), voidReason: reason.slice(0, 300), voidedBy: by },
     });
   });
 }
@@ -335,10 +422,10 @@ export async function reissueReceipt(receiptId: string, issuedBy: string) {
 // 열람
 // ---------------------------------------------------------------------------
 
-export async function receiptByToken(token: string) {
+export async function receiptByToken(token: string, now = new Date()) {
   if (!token || token.length < 16) return null;
   return prisma.donationReceipt.findFirst({
-    where: { viewTokenHash: tokenHash(token) },
+    where: { viewTokenHash: tokenHash(token), OR: [{ viewTokenExpiresAt: null }, { viewTokenExpiresAt: { gt: now } }] },
     include: { merchant: { select: { displayName: true, code: true } } },
   });
 }
@@ -348,7 +435,10 @@ export async function rotateReceiptToken(receiptId: string, payerId: string) {
   const r = await prisma.donationReceipt.findFirst({ where: { id: receiptId, payerId } });
   if (!r) throw new ReceiptError('영수증을 찾을 수 없습니다.');
   const token = generateToken(24);
-  await prisma.donationReceipt.update({ where: { id: receiptId }, data: { viewTokenHash: tokenHash(token) } });
+  await prisma.donationReceipt.update({
+    where: { id: receiptId },
+    data: { viewTokenHash: tokenHash(token), viewTokenExpiresAt: new Date(Date.now() + RECEIPT_VIEW_TTL_DAYS * 86_400_000) },
+  });
   return token;
 }
 
@@ -370,7 +460,10 @@ export async function payerReceiptOverview(payerId: string, taxYear: number) {
   const merchantIds = unreceipted.map((u) => u.merchantId);
   const merchants = await prisma.merchantProfile.findMany({
     where: { id: { in: merchantIds } },
-    select: { id: true, displayName: true, designatedDonee: true, businessNo: true, representativeName: true, address: true },
+    select: {
+      id: true, displayName: true, designatedDonee: true, designatedDoneeVerifiedAt: true, designatedDoneeUntil: true,
+      businessNo: true, representativeName: true, address: true,
+    },
   });
   const mm = new Map(merchants.map((m) => [m.id, m]));
   return {
@@ -409,7 +502,8 @@ export const HOMETAX_CSV_COLUMNS = [
   '기부자주소',
   '기부금코드',
   '기부유형',
-  '기부일자',
+  '기부시작일',
+  '기부종료일',
   '기부금액',
   '건수',
   '기부내용',
@@ -419,8 +513,12 @@ export const HOMETAX_CSV_COLUMNS = [
 function csvCell(v: string | number | bigint | null | undefined): string {
   const s = v == null ? '' : String(v);
   // 엑셀 수식 주입(=, +, -, @) 방지와 따옴표 이스케이프
-  const guarded = /^[=+\-@]/.test(s) ? `'${s}` : s;
-  return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+  const guarded = /^[=+\-@\t\r\n]/.test(s) ? `'${s}` : s;
+  return /[",\n\r\t]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+}
+
+function kstYmd(d: Date): string {
+  return new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 10).replace(/-/g, '');
 }
 
 export async function buildHometaxExport(merchantId: string, taxYear: number, createdBy: string) {
@@ -430,39 +528,42 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
     where: { merchantId, taxYear, status: 'ISSUED' },
     orderBy: { seq: 'asc' },
   });
-  const profiles = await prisma.payerReceiptProfile.findMany({
-    where: { payerId: { in: receipts.map((r) => r.payerId) } },
-  });
-  const pm = new Map(profiles.map((p) => [p.payerId, p]));
 
   const lines: string[] = ['﻿' + HOMETAX_CSV_COLUMNS.join(',')];
   let rows = 0;
   let total = 0n;
   const skipped: string[] = [];
   for (const r of receipts) {
-    const p = pm.get(r.payerId);
-    // 동의를 철회(정보 삭제)했거나 간소화 제출을 끈 후원자는 명세에서 제외한다.
-    if (!p || !p.hometaxOptIn) {
+    // 발급 당시 스냅샷을 쓴다. 발급 뒤 후원자가 정보를 바꾸거나 지워도 제출본은 발급본과 같아야 한다.
+    const donor = (r.donorSnapshot ?? {}) as { legalName?: string; address?: string | null; hometaxOptIn?: boolean };
+    // 발급 당시 연말정산 간소화 제출에 동의하지 않은 영수증은 명세에서 뺀다(종이 영수증만 발급).
+    if (donor.hometaxOptIn === false || !r.residentNoEnc) {
       skipped.push(r.receiptNo);
       continue;
     }
     rows += 1;
     total += r.totalAmount;
-    const resident = decrypt(p.residentNoEnc);
+    const resident = decrypt(r.residentNoEnc);
+    const items = (r.items as unknown as Array<{ paidAt?: string }> | null) ?? [];
+    const dates = items
+      .map((i) => (i.paidAt ? new Date(i.paidAt) : null))
+      .filter((d): d is Date => !!d && !Number.isNaN(d.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime());
     lines.push(
       [
         rows,
         r.receiptNo,
-        p.legalName,
+        donor.legalName ?? '',
         resident,
-        p.address ?? '',
+        donor.address ?? '',
         r.donationCode,
         DONATION_CODES[r.donationCode] ?? '',
-        `${taxYear}1231`,
+        dates.length ? kstYmd(dates[0]) : '',
+        dates.length ? kstYmd(dates[dates.length - 1]) : '',
         r.totalAmount.toString(),
         r.chargeCount,
         '금전(문자후원)',
-        r.issuedAt.toISOString().slice(0, 10).replace(/-/g, ''),
+        kstYmd(r.issuedAt),
       ]
         .map(csvCell)
         .join(','),

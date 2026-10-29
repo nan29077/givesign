@@ -17,6 +17,7 @@
  *   9 - 기브싸인 브랜드 전환(계정 도메인 givesign.kr, 사회복지기관 코드 GIV-)
  *  10 - 판매 관리 개편: 옵션 새 형식(값별 추가금·품절), 컨텐츠 상품, 고시정보, 반품 정책
  *  11 - 기브싸인 사회복지기관 도메인: 기관 정보·후원페이지·캠페인·정기후원·영수증 정보 샘플, 후원 FAQ
+ *  12 - 데모 기관의 공익법인 지정을 관리자 확인 상태로 표시(영수증 발급 통제 도입)
  */
-export const SEED_VERSION = 11;
+export const SEED_VERSION = 12;
 export const SEED_VERSION_KEY = 'seed.version';

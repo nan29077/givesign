@@ -1,10 +1,10 @@
 import Link from 'next/link';
-import { Download } from 'lucide-react';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, EmptyState, Input, Notice, SectionTitle, Select, StatTile, Table, Td, Th } from '@/components/ui';
 import { ActionForm, InlineActionForm } from '@/components/studio/action-form';
+import { HometaxExportForm } from '@/components/studio/hometax-export-form';
 import { issueReceiptAction, issueReceiptsBulkAction, reissueReceiptAction, voidReceiptAction } from '@/app/actions/fundraising';
 import { issuerReadiness, receiptCandidates, receiptStatusLabel, DONATION_CODES } from '@/server/services/receipts';
 import { formatKst } from '@/lib/datetime';
@@ -188,14 +188,10 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-[13px] text-ink-600">
-              <p>파일에는 <strong>주민등록번호 원문</strong>이 포함됩니다. 생성 때마다 이력과 감사로그가 남고, 간소화 제출에 동의하지 않은 후원자는 제외됩니다.</p>
+              <p>파일에는 <strong>주민등록번호 원문</strong>이 포함됩니다. 내려받을 때마다 비밀번호를 다시 확인하고 사유를 남기며(하루 5번까지), 생성 이력과 감사로그가 남습니다. 간소화 제출에 동의하지 않은 후원자는 제외됩니다.</p>
               <p className="mt-1 text-ink-400">포함 대상: {year}년 귀속 · 발급 상태 영수증 {formatNumber(issuedValid.length)}장</p>
             </div>
-            {issuedValid.length > 0 ? (
-              <a href={`/api/studio/receipts/export?year=${year}`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-ink-900 px-4 text-[14px] font-extrabold text-white">
-                <Download size={16} strokeWidth={1.7} /> {year}년 명세 CSV 내려받기
-              </a>
-            ) : null}
+            {issuedValid.length > 0 ? <HometaxExportForm year={year} /> : null}
           </div>
           {exports.length ? (
             <div className="mt-4 border-t border-ink-100 pt-3">

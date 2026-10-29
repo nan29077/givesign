@@ -627,8 +627,15 @@ model MerchantProfile {
   contactEmail        String?           @map("contact_email")
   /// 공익법인(구 지정기부금단체) 지정 여부. 미지정이면 영수증 발급 메뉴를 잠근다.
   designatedDonee     Boolean           @default(false) @map("designated_donee")
-  /// 공익법인 지정 만료일 (재지정 안내용)
+  /// 공익법인 지정 만료일 (재지정 안내용). 지나면 영수증 발급을 막는다.
   designatedDoneeUntil DateTime?        @map("designated_donee_until") @db.Date
+  /// 관리자가 공익법인 지정을 확인한 시각. 기관이 지정 여부·고유번호·기부금 코드를 바꾸면 비워진다.
+  /// 이 값이 없으면 영수증 발급과 공개 페이지의 "영수증 발급 가능" 표시를 막는다.
+  designatedDoneeVerifiedAt DateTime?   @map("designated_donee_verified_at") @db.Timestamptz(3)
+  /// 확인한 관리자 user id
+  designatedDoneeVerifiedBy String?     @map("designated_donee_verified_by")
+  /// 확인 근거 메모 (국세청 공익법인 조회 결과 등)
+  designatedDoneeNote  String?          @map("designated_donee_note")
   /// 기부금영수증 기부금 코드 기본값. 10 특례(법정) · 40 일반(지정) · 41 종교단체
   donationCode        String            @default("40") @map("donation_code")
   /// 기부금품법상 모집 등록번호 (연 1천만원 이상 모집 시 등록 의무). 공개 후원페이지에 표기한다.
@@ -1762,6 +1769,12 @@ model Report {
 model AdminAuditLog {
   id          String   @id
   adminId     String?  @map("admin_id")
+  /// 행위자 user id. 관리자뿐 아니라 기관 담당자·후원자의 행위도 기록한다(adminId 는 관리자일 때만 채워진다).
+  actorUserId String?  @map("actor_user_id")
+  /// 행위자 표시(이메일 등 기록 시점 스냅샷). 계정이 바뀌어도 기록은 남는다.
+  actorLabel  String?  @map("actor_label")
+  /// ADMIN · MERCHANT · PAYER · SYSTEM
+  actorRole   String?  @map("actor_role")
   action      String
   targetType  String   @map("target_type")
   targetId    String?  @map("target_id")
@@ -1774,6 +1787,7 @@ model AdminAuditLog {
   admin AdminProfile? @relation(fields: [adminId], references: [id])
 
   @@index([adminId, createdAt])
+  @@index([actorUserId, createdAt])
   @@index([targetType, targetId])
   // 감사로그는 담당자를 고르지 않고 최신순으로 보는 경우가 대부분이다.
   @@index([createdAt])
@@ -2399,10 +2413,18 @@ model DonationReceipt {
   /// 발급 주체 user id (기관 담당자·관리자) 또는 'SYSTEM'
   issuedBy    String        @map("issued_by")
   issuedAt    DateTime      @default(now()) @map("issued_at") @db.Timestamptz(3)
+  /// 발급 당시 기부자 주민등록번호(암호문). 홈택스 명세는 이 값으로 만든다 — 발급 뒤 후원자가
+  /// 정보를 바꾸거나 지워도 발급본과 제출본이 달라지지 않게 한다. (절대 규칙 6: 복호화는 명세 생성에서만)
+  residentNoEnc String?     @map("resident_no_enc")
   /// 종이 영수증 열람용 토큰 해시 (후원자 마이페이지·문자 링크)
   viewTokenHash String?     @map("view_token_hash")
+  /// 열람 토큰 만료 시각. 지나면 마이페이지에서 다시 연다.
+  viewTokenExpiresAt DateTime? @map("view_token_expires_at") @db.Timestamptz(3)
   voidedAt    DateTime?     @map("voided_at") @db.Timestamptz(3)
+  /// 후원자에게 보이는 무효 사유
   voidReason  String?       @map("void_reason")
+  /// 무효 처리자 user id 또는 'SYSTEM' (후원자 화면에는 노출하지 않는다)
+  voidedBy    String?       @map("voided_by")
   /// 재발급으로 대체된 영수증이면 새 영수증 ID
   supersededById String?    @map("superseded_by_id")
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)

@@ -49,6 +49,7 @@ export default async function AdminAuditPage({
       select: {
         id: true, action: true, targetType: true, targetId: true,
         beforeValue: true, afterValue: true, ip: true, userAgent: true, createdAt: true,
+        actorLabel: true, actorRole: true,
         admin: { select: { permission: true, user: { select: { email: true, name: true } } } },
       },
     }),
@@ -132,9 +133,11 @@ export default async function AdminAuditPage({
                   <tr key={l.id}>
                     <Td className="whitespace-nowrap">{formatKst(l.createdAt)}</Td>
                     <Td>
-                      {l.admin?.user.email ?? '시스템'}
+                      {l.admin?.user.email ?? l.actorLabel ?? '시스템'}
                       {l.admin ? (
                         <span className="mt-0.5 block text-[11px] text-ink-400">{l.admin.permission}</span>
+                      ) : l.actorRole && l.actorRole !== 'SYSTEM' ? (
+                        <span className="mt-0.5 block text-[11px] text-ink-400">{l.actorRole === 'MERCHANT' ? '기관 담당자' : l.actorRole === 'PAYER' ? '후원자' : l.actorRole}</span>
                       ) : null}
                     </Td>
                     <Td>

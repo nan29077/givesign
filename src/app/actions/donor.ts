@@ -150,7 +150,8 @@ export async function deleteReceiptProfileAction(_prev: DonorActionState, _f: Fo
   const ctx = await currentPayer();
   if (!ctx) return { ok: false, message: NO_PAYER };
   try {
-    await deleteReceiptProfile(ctx.payerId);
+    const meta = await requestMeta();
+    await deleteReceiptProfile(ctx.payerId, meta);
     revalidatePath('/my/receipts');
     return { ok: true, message: '영수증 정보를 삭제하고 동의를 철회했습니다. 이미 발급된 영수증 기록은 법정 보유 기간 동안 보관됩니다.' };
   } catch (e) {

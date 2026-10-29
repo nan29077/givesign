@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: '기부금영수증', robots: { index
 
 /**
  * 후원자가 문자 링크·마이페이지에서 여는 영수증 열람 화면.
- * 토큰은 발급 때 1회 생성되고 마이페이지에서 재발급할 수 있다. 토큰이 없으면 404.
+ * 토큰은 발급 때 1회 생성되고 30일 뒤 만료된다. 만료되면 마이페이지에서 다시 연다(새 토큰). 토큰이 없거나 만료되면 404.
  */
 export default async function PublicReceiptPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;

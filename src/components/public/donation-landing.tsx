@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { BadgeCheck, CalendarClock, HeartHandshake, MessageSquareText, Phone, Repeat, ShieldCheck, Users } from 'lucide-react';
 import { prisma } from '@/server/db';
 import { getSessionUser } from '@/server/auth';
+import { doneeVerified } from '@/server/services/receipts';
 import {
   getDonationPage,
   listCampaigns,
@@ -140,7 +141,7 @@ function Landing({
               )}
               <div>
                 <p className="text-[14px] font-extrabold">{org.displayName}</p>
-                {org.designatedDonee ? (
+                {doneeVerified(org) ? (
                   <p className="flex items-center gap-1 text-[11.5px] opacity-90"><BadgeCheck size={13} strokeWidth={2} /> 기부금영수증 발급 가능 (공익법인)</p>
                 ) : null}
               </div>
@@ -253,7 +254,7 @@ function Landing({
                 {org.representativeName ? <Row k="대표자" v={org.representativeName} /> : null}
                 {org.businessNo ? <Row k="고유번호" v={org.businessNo} /> : null}
                 {org.address ? <Row k="소재지" v={org.address} /> : null}
-                <Row k="기부금영수증" v={org.designatedDonee ? '발급 가능 (공익법인 지정)' : '기관에 문의'} />
+                <Row k="기부금영수증" v={doneeVerified(org) ? '발급 가능 (공익법인 지정)' : '기관에 문의'} />
                 {org.fundraisingRegNo ? <Row k="기부금품 모집등록" v={`${org.fundraisingRegNo}${org.fundraisingRegAuthority ? ` (${org.fundraisingRegAuthority})` : ''}`} /> : null}
                 {org.contactPhone || org.contactName ? <Row k="후원 담당" v={`${org.contactName ?? ''} ${org.contactPhone ?? ''}`.trim()} /> : null}
                 {page.transparencyUrl ? <Row k="결산·사업보고" v={<a href={page.transparencyUrl} target="_blank" rel="noreferrer" className="font-bold underline" style={{ color }}>공시 보기</a>} /> : null}

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { doneeVerified } from '@/server/services/receipts';
 import { ExternalLink } from 'lucide-react';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
@@ -19,7 +20,7 @@ export default async function DonationPageSettings() {
   const { merchantId } = await requireMerchant();
   const [page, org] = await Promise.all([
     getDonationPage(merchantId),
-    prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true, fundraisingRegNo: true, designatedDonee: true } }),
+    prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true, fundraisingRegNo: true, designatedDonee: true, designatedDoneeVerifiedAt: true, designatedDoneeUntil: true } }),
   ]);
 
   return (
@@ -97,9 +98,16 @@ export default async function DonationPageSettings() {
             연 1천만원 이상 모집하려면 기부금품법에 따른 모집 등록이 필요하며, 등록번호는 후원페이지 하단에 표기됩니다. <Link href="/studio/profile" className="font-bold underline">기관 정보</Link>에서 입력해 주세요.
           </Notice>
         ) : null}
-        {!org.designatedDonee ? (
+        {!doneeVerified(org) ? (
           <Notice tone="neutral">
-            공익법인(지정기부금단체) 지정이 확인되지 않아 후원페이지에 &ldquo;기부금영수증 발급 가능&rdquo; 안내가 표시되지 않습니다. 지정 단체라면 <Link href="/studio/profile" className="font-bold underline">기관 정보</Link>에서 체크해 주세요.
+            {org.designatedDonee
+              ? '공익법인(지정기부금단체) 지정을 관리자가 아직 확인하지 않았거나 지정 기간이 지났습니다. 확인이 끝나면 후원페이지에 “기부금영수증 발급 가능” 안내가 표시되고 영수증을 발급할 수 있습니다.'
+              : null}
+            {!org.designatedDonee ? (
+              <>
+                공익법인(지정기부금단체) 지정이 확인되지 않아 후원페이지에 &ldquo;기부금영수증 발급 가능&rdquo; 안내가 표시되지 않습니다. 지정 단체라면 <Link href="/studio/profile" className="font-bold underline">기관 정보</Link>에서 체크하고 지정서를 고객센터로 보내 주세요.
+              </>
+            ) : null}
           </Notice>
         ) : null}
       </div>

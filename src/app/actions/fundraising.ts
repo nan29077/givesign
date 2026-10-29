@@ -20,6 +20,7 @@ import {
   ReceiptError,
 } from '@/server/services/receipts';
 import type { StudioActionState } from '@/app/actions/studio';
+import { ExportGateError, issueHometaxExportToken } from '@/server/services/hometax-export-gate';
 import type { CampaignStatus, OrganizationType } from '@/generated/prisma/enums';
 
 /**
@@ -181,27 +182,61 @@ export async function saveOrganizationInfoAction(_prev: StudioActionState, f: Fo
     if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? '입력값을 확인해 주세요.' };
     const d = parsed.data;
     const bn = d.businessNo.replace(/-/g, '');
+    const businessNo = bn ? `${bn.slice(0, 3)}-${bn.slice(3, 5)}-${bn.slice(5)}` : null;
+    const until = d.designatedDoneeUntil ? new Date(`${d.designatedDoneeUntil}T00:00:00Z`) : null;
+    const before = await prisma.merchantProfile.findUnique({
+      where: { id: merchantId },
+      select: {
+        orgType: true, businessNo: true, representativeName: true, address: true, designatedDonee: true,
+        designatedDoneeUntil: true, donationCode: true, fundraisingRegNo: true, designatedDoneeVerifiedAt: true,
+      },
+    });
+    // 영수증 효력에 영향을 주는 값(지정 여부·만료일·고유번호·기부금 코드)이 바뀌면 관리자 확인을 다시 받는다.
+    const reverify =
+      !!before &&
+      (before.designatedDonee !== d.designatedDonee ||
+        before.businessNo !== businessNo ||
+        before.donationCode !== d.donationCode ||
+        (before.designatedDoneeUntil?.getTime() ?? null) !== (until?.getTime() ?? null));
     await prisma.merchantProfile.update({
       where: { id: merchantId },
       data: {
+        ...(reverify ? { designatedDoneeVerifiedAt: null, designatedDoneeVerifiedBy: null } : {}),
         orgType: d.orgType,
-        businessNo: bn ? `${bn.slice(0, 3)}-${bn.slice(3, 5)}-${bn.slice(5)}` : null,
+        businessNo,
         representativeName: d.representativeName || null,
         address: d.address || null,
         contactName: d.contactName || null,
         contactPhone: d.contactPhone || null,
         contactEmail: d.contactEmail || null,
         designatedDonee: d.designatedDonee,
-        designatedDoneeUntil: d.designatedDoneeUntil ? new Date(`${d.designatedDoneeUntil}T00:00:00Z`) : null,
+        designatedDoneeUntil: until,
         donationCode: d.donationCode,
         fundraisingRegNo: d.fundraisingRegNo || null,
         fundraisingRegAuthority: d.fundraisingRegAuthority || null,
       },
     });
+    await writeAudit({
+      action: 'ORG_INFO_UPDATE',
+      targetType: 'MerchantProfile',
+      targetId: merchantId,
+      before,
+      after: {
+        orgType: d.orgType, businessNo, representativeName: d.representativeName || null, address: d.address || null,
+        designatedDonee: d.designatedDonee, designatedDoneeUntil: until, donationCode: d.donationCode,
+        fundraisingRegNo: d.fundraisingRegNo || null, reverifyRequired: reverify && !!before?.designatedDoneeVerifiedAt,
+      },
+    }).catch((e) => logger.warn('기관 정보 감사로그 실패', { message: (e as Error).message }));
     revalidatePath('/studio/profile');
     revalidatePath('/studio/receipts');
     revalidatePath('/donate', 'layout');
-    return { ok: true, message: '기관 정보를 저장했습니다.' };
+    return {
+      ok: true,
+      message:
+        reverify && before?.designatedDoneeVerifiedAt
+          ? '기관 정보를 저장했습니다. 공익법인 지정 정보가 바뀌어 관리자 확인을 다시 받을 때까지 영수증 발급이 멈춥니다.'
+          : '기관 정보를 저장했습니다.',
+    };
   });
 }
 
@@ -220,10 +255,15 @@ export async function issueReceiptAction(_prev: StudioActionState, f: FormData):
     const year = parseYear(text(f, 'taxYear'));
     const payerId = text(f, 'payerId');
     if (!year || !payerId) return { ok: false, message: '귀속 연도와 후원자를 확인해 주세요.' };
-    const { receipt } = await issueReceipt({ merchantId, payerId, taxYear: year, issuedBy: userId });
-    await writeAudit({ adminUserId: undefined, action: 'RECEIPT_ISSUE', targetType: 'DonationReceipt', targetId: receipt.id, after: { receiptNo: receipt.receiptNo, by: userId } });
+    const { receipt, mtSent } = await issueReceipt({ merchantId, payerId, taxYear: year, issuedBy: userId });
+    await writeAudit({ adminUserId: undefined, action: 'RECEIPT_ISSUE', targetType: 'DonationReceipt', targetId: receipt.id, after: { receiptNo: receipt.receiptNo, by: userId } }).catch((e) => logger.warn('감사로그 기록 실패', { action: 'RECEIPT_ISSUE', message: (e as Error).message }));
     revalidatePath('/studio/receipts');
-    return { ok: true, message: `영수증 ${receipt.receiptNo} 를 발급하고 후원자에게 안내 문자를 보냈습니다.` };
+    return {
+      ok: true,
+      message: mtSent
+        ? `영수증 ${receipt.receiptNo} 를 발급하고 후원자에게 안내 문자를 보냈습니다.`
+        : `영수증 ${receipt.receiptNo} 를 발급했습니다. 안내 문자는 보내지 못했습니다(후원자는 마이페이지에서 볼 수 있습니다).`,
+    };
   });
 }
 
@@ -232,7 +272,7 @@ export async function issueReceiptsBulkAction(_prev: StudioActionState, f: FormD
     const year = parseYear(text(f, 'taxYear'));
     if (!year) return { ok: false, message: '귀속 연도를 확인해 주세요.' };
     const r = await issueReceiptsBulk(merchantId, year, userId);
-    await writeAudit({ action: 'RECEIPT_ISSUE_BULK', targetType: 'MerchantProfile', targetId: merchantId, after: { taxYear: year, issued: r.issued, skipped: r.skipped, failed: r.failed, by: userId } });
+    await writeAudit({ action: 'RECEIPT_ISSUE_BULK', targetType: 'MerchantProfile', targetId: merchantId, after: { taxYear: year, issued: r.issued, skipped: r.skipped, failed: r.failed, by: userId } }).catch((e) => logger.warn('감사로그 기록 실패', { action: 'RECEIPT_ISSUE_BULK', message: (e as Error).message }));
     revalidatePath('/studio/receipts');
     return {
       ok: r.failed === 0,
@@ -250,7 +290,7 @@ export async function voidReceiptAction(_prev: StudioActionState, f: FormData): 
     const own = await prisma.donationReceipt.findFirst({ where: { id, merchantId }, select: { id: true } });
     if (!own) return { ok: false, message: '영수증을 찾을 수 없습니다.' };
     const r = await voidReceipt(id, reason, userId);
-    await writeAudit({ action: 'RECEIPT_VOID', targetType: 'DonationReceipt', targetId: id, after: { receiptNo: r.receiptNo, reason, by: userId } });
+    await writeAudit({ action: 'RECEIPT_VOID', targetType: 'DonationReceipt', targetId: id, after: { receiptNo: r.receiptNo, reason, by: userId } }).catch((e) => logger.warn('감사로그 기록 실패', { action: 'RECEIPT_VOID', message: (e as Error).message }));
     revalidatePath('/studio/receipts');
     return { ok: true, message: `영수증 ${r.receiptNo} 를 무효 처리했습니다. 포함됐던 후원 건은 다시 발급 대상이 됩니다.` };
   });
@@ -262,8 +302,53 @@ export async function reissueReceiptAction(_prev: StudioActionState, f: FormData
     const own = await prisma.donationReceipt.findFirst({ where: { id, merchantId }, select: { id: true } });
     if (!own) return { ok: false, message: '영수증을 찾을 수 없습니다.' };
     const { receipt } = await reissueReceipt(id, userId);
-    await writeAudit({ action: 'RECEIPT_REISSUE', targetType: 'DonationReceipt', targetId: receipt.id, after: { receiptNo: receipt.receiptNo, from: id, by: userId } });
+    await writeAudit({ action: 'RECEIPT_REISSUE', targetType: 'DonationReceipt', targetId: receipt.id, after: { receiptNo: receipt.receiptNo, from: id, by: userId } }).catch((e) => logger.warn('감사로그 기록 실패', { action: 'RECEIPT_REISSUE', message: (e as Error).message }));
     revalidatePath('/studio/receipts');
     return { ok: true, message: `영수증 ${receipt.receiptNo} 로 재발급했습니다.` };
   });
+}
+
+// ---------------------------------------------------------------------------
+// 홈택스 제출 명세 내려받기 확인 (비밀번호 재확인 + 사유 + 하루 횟수 제한 → 5분 1회용 토큰)
+// ---------------------------------------------------------------------------
+
+export interface HometaxExportGateState {
+  ok: boolean;
+  message?: string;
+  url?: string;
+}
+
+export async function prepareHometaxExportAction(_prev: HometaxExportGateState, f: FormData): Promise<HometaxExportGateState> {
+  let me: Awaited<ReturnType<typeof requireMerchant>>;
+  try {
+    me = await requireMerchant();
+  } catch (e) {
+    return { ok: false, message: (e as Error).message || '기관 권한이 필요합니다.' };
+  }
+  const year = Number(text(f, 'year'));
+  const nowYear = new Date().getFullYear();
+  if (!Number.isInteger(year) || year < 2020 || year > nowYear) return { ok: false, message: '귀속 연도가 올바르지 않습니다.' };
+  const password = typeof f.get('password') === 'string' ? (f.get('password') as string) : '';
+  try {
+    const token = await issueHometaxExportToken({
+      userId: me.id,
+      merchantId: me.merchantId,
+      taxYear: year,
+      password,
+      reason: text(f, 'reason'),
+    });
+    return { ok: true, url: `/api/studio/receipts/export?year=${year}&t=${encodeURIComponent(token)}` };
+  } catch (e) {
+    if (e instanceof ExportGateError) {
+      await writeAudit({
+        action: 'RECEIPT_HOMETAX_EXPORT_DENIED',
+        targetType: 'MerchantProfile',
+        targetId: me.merchantId,
+        after: { taxYear: year, reason: e.message },
+      }).catch(() => undefined);
+      return { ok: false, message: e.message };
+    }
+    logger.error('홈택스 명세 확인 실패', { message: (e as Error)?.message });
+    return { ok: false, message: '처리 중 오류가 발생했습니다.' };
+  }
 }
