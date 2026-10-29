@@ -109,7 +109,7 @@ export default async function StudioDocsCategoryPage({ params }: { params: Promi
 
         {endpoints.length > 0 ? (
           <section>
-            <h2 className="mb-2 mt-1 text-[15px] font-extrabold text-ink-900">엔드후원금</h2>
+            <h2 className="mb-2 mt-1 text-[15px] font-extrabold text-ink-900">엔드포인트</h2>
 
             <Table className="min-w-[860px]">
               <thead>

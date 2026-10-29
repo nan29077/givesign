@@ -207,7 +207,7 @@ describe('결제 페이지 웹 결제 — PIN 인증 흐름', () => {
     expect(polled.transactionNo).toBeUndefined();
   });
 
-  it('[6] 같은 멱등키로 두 번 눌러도 결제과 PIN 링크는 하나만 만들어진다', async () => {
+  it('[6] 같은 멱등키로 두 번 눌러도 결제와 PIN 링크는 하나만 만들어진다', async () => {
     const phone = nextPhone();
     await seedRegisteredPayer(phone);
     const form = donateForm(phone);

@@ -254,7 +254,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
                 <div className="rounded-2xl border border-ink-100 px-4 py-8 text-center">
                   <p className="text-[14px] font-bold text-ink-900">후원 내역이 없습니다</p>
                   <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
-                    이 번호로 처리된 문자후원가 없습니다. 서비스에 안내된 번호로 문자를 보내 결제하면 이곳에서 확인할 수 있습니다.
+                    이 번호로 처리된 문자후원이 없습니다. 서비스에 안내된 번호로 문자를 보내 결제하면 이곳에서 확인할 수 있습니다.
                   </p>
                 </div>
               ) : (

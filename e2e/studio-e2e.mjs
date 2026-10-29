@@ -35,7 +35,7 @@ try {
   await p.waitForTimeout(2000);
   const consent = await bodyText(p);
   r.ok('모의 동의 화면으로 이동한다', consent.includes('테스트용 모의 동의 화면입니다'), p.url());
-  r.ok('요청 권한이 안내된다', consent.includes('기브싸인가 요청하는 권한'));
+  r.ok('요청 권한이 안내된다', consent.includes('기브싸인이 요청하는 권한'));
   r.ok('허용/거부 선택지가 있다', (await p.locator('a:has-text("채널 연결 허용")').count()) > 0 && (await p.locator('a:has-text("거부")').count()) > 0);
 
   await p.locator('a:has-text("채널 연결 허용")').click();

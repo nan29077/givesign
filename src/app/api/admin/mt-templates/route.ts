@@ -116,7 +116,7 @@ export async function POST(req: Request) {
     after: { body },
   });
 
-  // 발송 경로의 짧은 후원금를 비워 다음 발송부터 바로 적용되게 한다.
+  // 발송 경로의 짧은 캐시를 비워 다음 발송부터 바로 적용되게 한다.
   clearMtTemplateOverrideCache();
   return json({ ok: true, code: saved.code, customBody: saved.body, updatedAt: saved.updatedAt });
 }

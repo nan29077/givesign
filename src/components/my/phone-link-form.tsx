@@ -64,7 +64,7 @@ export function PhoneLinkForm({ linkedPhoneMasked }: { linkedPhoneMasked: string
                 {confirmState.linked ? '연결 완료' : linkedPhoneMasked}
               </p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
-                이 번호로 보낸 문자후원와 후원 내역이 마이페이지에 표시됩니다.
+                이 번호로 보낸 문자후원과 후원 내역이 마이페이지에 표시됩니다.
               </p>
             </div>
           </div>
@@ -95,7 +95,7 @@ export function PhoneLinkForm({ linkedPhoneMasked }: { linkedPhoneMasked: string
         <div className="min-w-0 flex-1">
           <CardTitle>휴대폰 번호 연결</CardTitle>
           <p className="mt-1 text-[13px] leading-relaxed text-ink-500">
-            문자후원는 휴대전화 번호를 기준으로 기록됩니다. 번호를 인증하면 해당 번호로 결제한 내역과 결제
+            문자후원은 휴대전화 번호를 기준으로 기록됩니다. 번호를 인증하면 해당 번호로 결제한 내역과 결제
             내역을 이 계정에서 확인하고 관리할 수 있습니다.
           </p>
 

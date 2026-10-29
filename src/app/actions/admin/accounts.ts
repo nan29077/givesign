@@ -280,7 +280,7 @@ export async function updateMerchantStatus(_prev: AdminActionState, fd: FormData
       title: status === 'APPROVED' ? '사회복지기관 승인이 완료되었습니다' : '사회복지기관 심사 상태가 변경되었습니다',
       body:
         status === 'APPROVED'
-          ? '이제 사회복지기관 관리자에서 문자후원와 정산 정보를 설정할 수 있습니다.'
+          ? '이제 사회복지기관 관리자에서 문자후원과 정산 정보를 설정할 수 있습니다.'
           : `${before.displayName} 사회복지기관의 심사 상태가 ${status}(으)로 변경되었습니다.`,
       linkUrl: '/studio',
     }).catch(() => undefined);

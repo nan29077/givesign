@@ -62,7 +62,7 @@ try {
     await m.getByRole('button', { name: '키 발급' }).click();
     await m.waitForTimeout(1500);
     const after = await bodyText(m);
-    if (!after.includes('mp_live_')) throw new Error('발급된 키가 보이지 않음');
+    if (!after.includes('gs_live_')) throw new Error('발급된 키가 보이지 않음');
     if (!after.includes('지금만 확인 가능')) throw new Error('1회 노출 안내가 없음');
     return true;
   });

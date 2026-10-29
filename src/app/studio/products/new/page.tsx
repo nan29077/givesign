@@ -10,13 +10,14 @@ import { prisma } from '@/server/db';
 import { resolvePolicy } from '@/server/services/limits';
 import { shippingPolicyOf } from '@/server/services/products';
 import { MAX_CHARGE_PRODUCTS } from '@/components/studio/shared';
+import { featureGoodsEnabled } from '@/lib/env';
 import type { ProductKind } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
 /** 종류별 화면 문구. 상품 종류가 셋이 되면서 삼항 중첩이 읽히지 않게 표로 뺀다. */
 const KIND_TEXT: Record<ProductKind, { title: string; what: string }> = {
-  DIGITAL: { title: '비실물(컨텐츠)', what: '후원금 · 상품권 · 이용권 · 컨텐츠' },
+  DIGITAL: { title: '비실물(컨텐츠)', what: '포인트 · 상품권 · 이용권 · 컨텐츠' },
   PHYSICAL: { title: '실물', what: '배송이 필요한 상품' },
   DOCUMENT: { title: '문서', what: '결제 뒤 후원자가 작성해 제출하는 약정서 · 주문서 · 계약서' },
 };
@@ -31,7 +32,9 @@ export default async function NewProductPage({
   const sp = await searchParams;
   // 종류는 등록 후 바꿀 수 없다. 오타(?kind=Digital)를 조용히 실물로 처리하면
   // 잘못 등록한 상품을 보관하고 다시 만들어야 한다.
-  const kindRaw = (sp.kind ?? '').trim();
+  const goods = featureGoodsEnabled();
+  // 상품 기능이 꺼져 있으면 후원 항목(비실물)만 만든다(점검 M-18).
+  const kindRaw = goods ? (sp.kind ?? '').trim() : 'digital';
   if (kindRaw !== 'digital' && kindRaw !== 'physical' && kindRaw !== 'document') redirect('/studio/products');
   const kind: ProductKind =
     kindRaw === 'digital' ? 'DIGITAL' : kindRaw === 'document' ? 'DOCUMENT' : 'PHYSICAL';
@@ -70,14 +73,18 @@ export default async function NewProductPage({
       </Link>
 
       <PageHeader
-        title={`${KIND_TEXT[kind].title} 상품 등록`}
-        description={`${KIND_TEXT[kind].what} 을(를) 등록합니다. 종류는 등록 후 바꿀 수 없습니다. (${count}/${MAX_CHARGE_PRODUCTS}개 사용)`}
+        title={goods ? `${KIND_TEXT[kind].title} 상품 등록` : '후원 항목 등록'}
+        description={
+          goods
+            ? `${KIND_TEXT[kind].what} 을(를) 등록합니다. 종류는 등록 후 바꿀 수 없습니다. (${count}/${MAX_CHARGE_PRODUCTS}개 사용)`
+            : `후원자가 고를 금액과 용도를 등록합니다. (${count}/${MAX_CHARGE_PRODUCTS}개 사용)`
+        }
       />
 
       {full ? (
-        <Notice tone="warning" title={`${KIND_TEXT[kind].title} 상품이 이미 ${MAX_CHARGE_PRODUCTS}개입니다`}>
-          결제 화면이 감당할 수 있는 선택지 수라 종류별로 {MAX_CHARGE_PRODUCTS}개까지만 등록할 수 있습니다. 먼저 쓰지
-          않는 상품을 보관해 주세요.
+        <Notice tone="warning" title={`${goods ? `${KIND_TEXT[kind].title} 상품` : '후원 항목'}이 이미 ${MAX_CHARGE_PRODUCTS}개입니다`}>
+          후원 화면이 감당할 수 있는 선택지 수라 종류별로 {MAX_CHARGE_PRODUCTS}개까지만 등록할 수 있습니다. 먼저 쓰지
+          않는 항목을 보관해 주세요.
         </Notice>
       ) : kind === 'DOCUMENT' && documentTemplates.length === 0 ? (
         <Notice tone="warning" title="먼저 문서 서식을 등록해 주세요">
@@ -98,8 +105,9 @@ export default async function NewProductPage({
           shipping={shippingPolicyOf(shippingRow)}
           effMin={effMin}
           effMax={effMax}
-          submitLabel="상품 등록"
+          submitLabel={goods ? '상품 등록' : '후원 항목 등록'}
           documentTemplates={documentTemplates}
+          donationMode={!goods && kind === 'DIGITAL'}
         />
       )}
     </>

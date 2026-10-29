@@ -163,7 +163,7 @@ export const MERCHANT_MT_VARIABLE_MAX_LENGTH = 40;
  * 이 검사가 없으면 "{사회복지기관} 주문하신 {상품} 이(가) 발송되었습니다" 처럼 무해하게 승인받은
  * 템플릿의 `{상품}` 자리에 광고 문구와 단축 URL 을 넣어, 기브싸인 발신 이름으로 광고
  * 문자를 보낼 수 있다. 정보성 문자만 보낸다는 전제가 깨지면 광고 표기·수신거부 의무가
- * 통째로 따라오고, 그 책임은 발신자인 기브싸인가 진다.
+ * 통째로 따라오고, 그 책임은 발신자인 기브싸인이 진다.
  *
  * 본문 검수와 달리 여기서는 광고 표현도 **거부**한다. 보류시킬 사람이 없기 때문이다.
  */
@@ -329,14 +329,14 @@ export async function resolveRecipient(
         phoneMasked: link.payer.phoneMasked,
       };
     }
-    // 후원금가 비어 있어서 못 찾은 것일 수 있다. 남은 것을 모두 채운 뒤 한 번 더 본다.
+    // 캐시가 비어 있어서 못 찾은 것일 수 있다. 남은 것을 모두 채운 뒤 한 번 더 본다.
     if (attempt === 0 && (await backfillPayerRefs(merchantId)) === 0) break;
   }
   return null;
 }
 
 /**
- * payerRef 후원금 채우기.
+ * payerRef 캐시 채우기.
  *
  * 이 기능이 생기기 전에 만들어진 연결 행에는 payerRef 가 없다.
  * HMAC 비밀키가 애플리케이션에만 있어 마이그레이션 SQL 로는 채울 수 없으므로 여기서 채운다.
@@ -372,7 +372,7 @@ export async function backfillPayerRefs(merchantId: string, max = BACKFILL_MAX):
     // 후원자 행이 없어 채울 수 없는 연결만 남았다면 같은 배치를 무한히 다시 읽게 된다.
     if (filledInBatch === 0) break;
   }
-  if (filled > 0) logger.info('payerRef 후원금를 채웠습니다', { merchantId, filled });
+  if (filled > 0) logger.info('payerRef 캐시를 채웠습니다', { merchantId, filled });
   return filled;
 }
 

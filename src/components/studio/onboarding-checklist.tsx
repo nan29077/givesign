@@ -44,16 +44,16 @@ export async function OnboardingChecklist({ merchantId }: { merchantId: string }
   const items: ChecklistItem[] = [
     {
       key: 'product',
-      label: '판매할 상품 등록',
-      hint: '노출 중인 상품이 없습니다. 상품이 없고 직접 입력도 꺼져 있으면 후원자가 결제를 진행할 수 없습니다.',
+      label: '후원 금액(후원 항목) 준비',
+      hint: '노출 중인 후원 항목이 없습니다. 후원 항목이 없고 직접 입력도 꺼져 있으면 후원자가 후원을 진행할 수 없습니다.',
       done: productCount > 0 || (settings?.allowCustomAmount ?? false),
-      href: '/studio/products/new?kind=physical',
+      href: '/studio/products/new',
       linkLabel: '등록하러 가기',
     },
     {
       key: 'moNumber',
-      label: '결제 수신번호 배정',
-      hint: '아직 배정된 결제 수신번호가 없습니다. 관리자에게 문의하세요.',
+      label: '후원 문자 수신번호(MO) 배정',
+      hint: '아직 배정된 후원 문자 수신번호가 없습니다. 관리자에게 문의하세요.',
       done: Boolean(moNumber),
       href: '/support',
       linkLabel: '문의하기',

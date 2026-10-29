@@ -8,9 +8,9 @@ import { ActionForm } from '@/components/studio/action-form';
 import { markPointsGivenAction, markPointsHeldAction } from '@/app/actions/studio';
 
 /**
- * 후원금 지급 대기 건 일괄 처리.
+ * 포인트 지급 대기 건 일괄 처리.
  *
- * 사회복지기관이 자기 서비스에 후원금를 넣은 뒤, 어떤 건을 처리했는지 여기서 한 번에 표시한다.
+ * 사회복지기관이 자기 서비스에 포인트를 넣은 뒤, 어떤 건을 처리했는지 여기서 한 번에 표시한다.
  * 건수가 많은 사회복지기관이 버튼을 수백 번 누르지 않도록 체크박스 + 일괄 처리로 만든다.
  */
 
@@ -41,7 +41,7 @@ export function PointBulkPanel({ rows, total }: { rows: PendingChargeRow[]; tota
           <div>
             <CardTitle>지급 대기 건이 없습니다</CardTitle>
             <p className="mt-0.5 text-[12.5px] text-ink-500">
-              새 결제가 들어오면 여기에 쌓입니다. 후원금를 넣은 뒤 지급 완료로 표시해 주세요.
+              새 결제가 들어오면 여기에 쌓입니다. 포인트를 넣은 뒤 지급 완료로 표시해 주세요.
             </p>
           </div>
         </div>
@@ -54,7 +54,7 @@ export function PointBulkPanel({ rows, total }: { rows: PendingChargeRow[]; tota
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-4 py-3">
         <p className="flex items-center gap-2 text-[13px] font-bold text-ink-900">
           <Clock3 size={16} strokeWidth={1.8} className="text-warning-500" />
-          후원금 지급 대기
+          포인트 지급 대기
           <Badge tone="warning">{total}건</Badge>
         </p>
         <button
@@ -113,7 +113,7 @@ export function PointBulkPanel({ rows, total }: { rows: PendingChargeRow[]; tota
             submitLabel="선택 건 지급 완료"
             size="sm"
             confirmTitle="지급 완료로 표시할까요?"
-            confirmMessage="내 서비스에 후원금를 이미 넣은 건만 표시해 주세요. 잘못 눌렀으면 되돌릴 수 있습니다."
+            confirmMessage="내 서비스에 포인트를 이미 넣은 건만 표시해 주세요. 잘못 눌렀으면 되돌릴 수 있습니다."
             doneTitle="지급 완료로 표시했습니다"
           >
             {selected.map((id) => (

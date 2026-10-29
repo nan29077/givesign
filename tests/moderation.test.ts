@@ -137,7 +137,7 @@ describe('후원자 차단', () => {
     expect(res.status).toBe('LIMIT_BLOCKED');
     expect(await prisma.paymentTransaction.count()).toBe(0);
 
-    // 사회복지기관가 차단했다가 해제해도(blocked_payer 행 생성 후 삭제)
+    // 사회복지기관이 차단했다가 해제해도(blocked_payer 행 생성 후 삭제)
     // 후원자가 건 차단은 그대로 남아야 한다. 예전에는 한 컬럼을 공유해 함께 풀렸다.
     await prisma.blockedPayer.create({
       data: { id: newId(), merchantId: fx.merchantId, payerId: payer.id, reason: '검수' },

@@ -130,7 +130,7 @@ describe('MO 번호 라우팅', () => {
     });
 
     // 충돌 상태에서는 아무에게도 배달하지 않는다.
-    // (고치기 전에는 DEDICATED 가 먼저 매칭돼 ZZZ 결제까지 fx 사회복지기관가 가져갔다)
+    // (고치기 전에는 DEDICATED 가 먼저 매칭돼 ZZZ 결제까지 fx 사회복지기관이 가져갔다)
     expect(await routeMerchant(route.phoneNumber, 'ZZZ 응원합니다')).toBeNull();
     expect(await routeMerchant(route.phoneNumber, '그냥 응원')).toBeNull();
   });

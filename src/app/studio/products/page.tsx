@@ -22,6 +22,7 @@ import {
 } from '@/server/services/products';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
+import { featureGoodsEnabled } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,14 +33,23 @@ export const dynamic = 'force-dynamic';
  * 목록에 폼을 펼쳐 두면 상품 수만큼 저장 버튼이 생겨 어느 것을 저장했는지 알 수 없다.
  */
 
-const TABS = [
+const ALL_TABS = [
   { key: 'physical', label: '실물 상품' },
   { key: 'digital', label: '비실물(컨텐츠)' },
   { key: 'document', label: '문서' },
   { key: 'archived', label: '보관함' },
 ] as const;
 
-type Tab = (typeof TABS)[number]['key'];
+type Tab = (typeof ALL_TABS)[number]['key'];
+
+/** 상품 기능(FEATURE_GOODS)이 꺼져 있으면 실물·문서 탭을 숨기고 "후원 항목" 하나만 둔다(점검 M-18). */
+function tabsFor(goods: boolean): ReadonlyArray<{ key: Tab; label: string }> {
+  if (goods) return ALL_TABS;
+  return [
+    { key: 'digital', label: '후원 항목' },
+    { key: 'archived', label: '보관함' },
+  ];
+}
 
 export default async function StudioProductsPage({
   searchParams,
@@ -48,7 +58,9 @@ export default async function StudioProductsPage({
 }) {
   const { merchantId } = await requireMerchant();
   const sp = await searchParams;
-  const tab: Tab = TABS.some((t) => t.key === sp.tab) ? (sp.tab as Tab) : 'physical';
+  const goods = featureGoodsEnabled();
+  const TABS = tabsFor(goods);
+  const tab: Tab = TABS.some((t) => t.key === sp.tab) ? (sp.tab as Tab) : TABS[0].key;
 
   const [merchant, products, archived, archivedTotal, policy, shippingRow, soldByProduct] = await Promise.all([
     prisma.merchantProfile.findUnique({
@@ -56,20 +68,21 @@ export default async function StudioProductsPage({
       select: { id: true, displayName: true, allowCustomAmount: true, minAmount: true, maxAmount: true },
     }),
     prisma.chargeProduct.findMany({
-      where: { merchantId, archivedAt: null },
+      // 상품 기능이 꺼져 있으면 실물·문서 항목은 목록에서도 뺀다(데이터는 남아 있다).
+      where: { merchantId, archivedAt: null, ...(goods ? {} : { kind: 'DIGITAL' as const }) },
       orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
       // 문서 상품은 어떤 서식을 가리키는지 목록에서 바로 보여야 한다.
       include: { documentTemplate: { select: { name: true, active: true } } },
     }),
     prisma.chargeProduct.findMany({
-      where: { merchantId, archivedAt: { not: null } },
+      where: { merchantId, archivedAt: { not: null }, ...(goods ? {} : { kind: 'DIGITAL' as const }) },
       orderBy: { archivedAt: 'desc' },
       take: 50,
       // 보관 목록도 같은 카드로 그린다. include 가 다르면 두 목록의 타입이 갈린다.
       include: { documentTemplate: { select: { name: true, active: true } } },
     }),
     // 배지에 잘린 목록 길이를 쓰면 보관 상품이 50개를 넘을 때 숫자가 50 에서 멈춘다.
-    prisma.chargeProduct.count({ where: { merchantId, archivedAt: { not: null } } }),
+    prisma.chargeProduct.count({ where: { merchantId, archivedAt: { not: null }, ...(goods ? {} : { kind: 'DIGITAL' as const }) } }),
     resolvePolicy(merchantId, null),
     prisma.merchantShippingPolicy.findUnique({ where: { merchantId } }),
     prisma.charge.groupBy({
@@ -102,9 +115,15 @@ export default async function StudioProductsPage({
     <>
       <PageHeader
         title="후원 항목 관리"
-        description="후원자가 문자를 보내면 여기에 등록한 상품 중에서 고르고 결제합니다."
+        description="후원자가 문자를 보내면 여기에 등록한 후원 항목(금액·용도) 중에서 고르고 후원합니다."
       />
 
+      {!goods ? (
+        <div className="mb-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <StatTile label="후원 항목" value={formatNumber(digital.length)} sub={`노출 중 ${digital.filter((p) => p.active).length}개`} tone="brand" />
+          <StatTile label="직접 입력" value={merchant.allowCustomAmount ? '허용' : '꺼짐'} sub="후원자가 금액을 직접 입력" />
+        </div>
+      ) : (
       <div className="mb-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <StatTile
           label="실물 상품"
@@ -130,10 +149,14 @@ export default async function StudioProductsPage({
           tone={soldOut.length > 0 ? 'danger' : 'neutral'}
         />
       </div>
+      )}
 
       <nav
         aria-label="후원 항목 관리 메뉴"
-        className="mb-4 grid grid-cols-2 overflow-hidden rounded-2xl border border-ink-100 bg-white p-1 shadow-[0_8px_24px_rgba(23,22,26,0.05)] sm:grid-cols-4"
+        className={cx(
+          'mb-4 grid grid-cols-2 overflow-hidden rounded-2xl border border-ink-100 bg-white p-1 shadow-[0_8px_24px_rgba(23,22,26,0.05)]',
+          goods ? 'sm:grid-cols-4' : '',
+        )}
       >
         {TABS.map((t) => (
           <Link
@@ -162,18 +185,20 @@ export default async function StudioProductsPage({
       {tab !== 'archived' ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <SectionTitle
-            title={tab === 'physical' ? '실물 상품' : tab === 'document' ? '문서 상품' : '비실물(컨텐츠) 상품'}
+            title={!goods ? '후원 항목' : tab === 'physical' ? '실물 상품' : tab === 'document' ? '문서 상품' : '비실물(컨텐츠) 상품'}
             description={
-              tab === 'physical'
+              !goods
+                ? '후원자가 고를 수 있는 금액과 용도입니다. 예: "김장 나눔 1만원", "도시락 한 끼 5천원".'
+                : tab === 'physical'
                 ? '배송이 필요한 상품입니다. 배송비·재고·옵션·반품 조건을 상품별로 지정합니다.'
                 : tab === 'document'
                   ? '약정서 · 주문서 · 계약서처럼 결제 뒤 후원자가 작성해 제출하는 상품입니다.'
-                  : '후원금 · 상품권 · 이용권 · 컨텐츠처럼 배송이 없는 상품입니다.'
+                  : '포인트 · 상품권 · 이용권 · 컨텐츠처럼 배송이 없는 상품입니다.'
             }
           />
           <LinkButton href={`/studio/products/new?kind=${newKind.toLowerCase()}`} variant="primary">
             <Plus size={15} strokeWidth={1.6} />
-            상품 등록
+            {goods ? '상품 등록' : '후원 항목 등록'}
           </LinkButton>
         </div>
       ) : (
@@ -185,10 +210,10 @@ export default async function StudioProductsPage({
         </div>
       )}
 
-      {tab === 'digital' ? (
+      {goods && tab === 'digital' ? (
         <div className="mb-4">
           <Notice tone="neutral" title="지급은 사회복지기관이 합니다">
-            기브싸인는 결제와 정산만 대행합니다. 후원금·상품권·이용권의 발행과 지급은 사회복지기관이 하며, 상품마다
+            기브싸인은 결제와 정산만 대행합니다. 상품권·이용권 같은 비실물 상품의 발행과 지급은 사회복지기관이 하며, 상품마다
             지급 방식(수동 / 연동 API / 결제 즉시 문자 발급)을 정할 수 있습니다.
           </Notice>
         </div>
@@ -202,24 +227,24 @@ export default async function StudioProductsPage({
               문서 관리
             </Link>{' '}
             에 등록한 서식을 가리킵니다. 결제가 끝나면 후원자에게 작성 링크가 문자로 가고, 제출된 문서는 문서 관리에서
-            확인합니다. 배송과 후원금 지급은 일어나지 않습니다.
+            확인합니다. 배송과 지급은 일어나지 않습니다.
           </Notice>
         </div>
       ) : null}
 
       {rows.length === 0 ? (
         <EmptyState
-          title={tab === 'archived' ? '보관한 상품이 없습니다' : '등록된 상품이 없습니다'}
+          title={tab === 'archived' ? '보관한 항목이 없습니다' : '등록된 후원 항목이 없습니다'}
           description={
             tab === 'archived'
-              ? '상품을 보관하면 여기에서 되살릴 수 있습니다.'
-              : '상품이 하나도 없고 직접 입력도 꺼져 있으면 후원자가 결제를 진행할 수 없습니다.'
+              ? '항목을 보관하면 여기에서 되살릴 수 있습니다.'
+              : '후원 항목이 하나도 없고 직접 입력도 꺼져 있으면 후원자가 후원을 진행할 수 없습니다.'
           }
           action={
             tab !== 'archived' ? (
               <LinkButton href={`/studio/products/new?kind=${newKind.toLowerCase()}`} variant="primary">
                 <Plus size={15} strokeWidth={1.6} />
-                첫 상품 등록하기
+                {goods ? '첫 상품 등록하기' : '첫 후원 항목 등록하기'}
               </LinkButton>
             ) : undefined
           }
@@ -267,7 +292,7 @@ export default async function StudioProductsPage({
                               {p.name}
                             </Link>
                           )}
-                          {p.kind === 'DIGITAL' ? (
+                          {p.kind === 'DIGITAL' && goods ? (
                             <Badge tone="brand">{digitalTypeLabel[p.digitalType ?? 'POINT']}</Badge>
                           ) : p.kind === 'DOCUMENT' ? (
                             <Badge tone="brand">문서</Badge>
@@ -323,7 +348,7 @@ export default async function StudioProductsPage({
                                 {p.documentTemplate ? `${p.documentTemplate.name} 작성` : '서식 미연결'}
                               </span>
                             ) : (
-                              <span className="ml-1.5">{giveText(p) ? `${giveText(p)} 지급` : ''}</span>
+                              <span className="ml-1.5">{goods && giveText(p) ? `${giveText(p)} 지급` : ''}</span>
                             )}
                             {p.sku ? (
                               <span className="ml-1.5 font-mono text-[11px] text-ink-400">{p.sku}</span>
@@ -332,13 +357,13 @@ export default async function StudioProductsPage({
                         )}
 
                         <p className="mt-0.5 text-[11.5px] text-ink-400">
-                          판매 {formatNumber(soldOf(p.id))}건
+                          후원 {formatNumber(soldOf(p.id))}건
                           {tab === 'archived' && p.archivedAt ? ` · 보관 ${formatKst(p.archivedAt, false)}` : ''}
                         </p>
 
                         {overLimit ? (
                           <p className="mt-1 text-[11.5px] font-bold text-danger-500">
-                            배송비를 더하면 결제 한도({formatWon(effMax)})를 넘어 후원자가 결제할 수 없습니다.
+                            {p.kind === 'PHYSICAL' ? '배송비를 더하면 ' : ''}후원 한도({formatWon(effMax)})를 넘어 후원자가 고를 수 없습니다.
                           </p>
                         ) : null}
 
@@ -358,7 +383,7 @@ export default async function StudioProductsPage({
                           submitLabel="되살리기"
                           variant="secondary"
                           fields={{ productId: p.id }}
-                          confirmMessage={`${p.name} 상품을 되살립니다. 숨김 상태로 돌아오니 값을 확인한 뒤 노출해 주세요.`}
+                          confirmMessage={`${p.name} 을(를) 되살립니다. 숨김 상태로 돌아오니 값을 확인한 뒤 노출해 주세요.`}
                         />
                       ) : (
                         <>
@@ -398,7 +423,7 @@ export default async function StudioProductsPage({
                             submitLabel="보관"
                             variant="ghost"
                             fields={{ productId: p.id }}
-                            confirmMessage={`${p.name} 상품을 보관합니다. 선택 화면에서 사라지며, 지난 후원 내역은 그대로 남습니다. 보관함에서 되살릴 수 있습니다.`}
+                            confirmMessage={`${p.name} 을(를) 보관합니다. 선택 화면에서 사라지며, 지난 후원 내역은 그대로 남습니다. 보관함에서 되살릴 수 있습니다.`}
                           />
                         </>
                       )}
@@ -415,7 +440,7 @@ export default async function StudioProductsPage({
         <p className="mt-3 flex items-center gap-1.5 text-[11.5px] text-ink-400">
           <ArrowUp size={13} strokeWidth={1.8} />
           <ArrowDown size={13} strokeWidth={1.8} />
-          위/아래 버튼으로 결제 화면에 보이는 순서를 바꿉니다.
+          위/아래 버튼으로 후원 화면에 보이는 순서를 바꿉니다.
         </p>
       ) : null}
     </>

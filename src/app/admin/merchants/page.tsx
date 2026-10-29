@@ -203,7 +203,7 @@ export default async function AdminMerchantsPage({
     <>
       <PageHeader
         title="사회복지기관 심사"
-        description="심사 대기 건을 먼저 처리하고, 승인 후에는 MO 번호를 배정해야 문자후원가 접수됩니다."
+        description="심사 대기 건을 먼저 처리하고, 승인 후에는 MO 번호를 배정해야 문자후원이 접수됩니다."
       />
 
       <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">

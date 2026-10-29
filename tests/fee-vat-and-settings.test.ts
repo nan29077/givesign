@@ -259,7 +259,7 @@ describe('사회복지기관 감사 문자 커스터마이즈', () => {
     await seedRegisteredPayer(fx.payerPhone);
     await inbound(moPayload({ to: fx.moNumber, text: '화이팅' }));
 
-    const success = readMockOutbox(10).find((m) => m.text.includes('후원되었습니다'));
+    const success = readMockOutbox(10).find((m) => m.text.includes('후원이 완료되었습니다'));
     expect(success?.text).toContain('누적 후원');
   });
 
@@ -350,7 +350,7 @@ describe('카드 빌링키 구조', () => {
     expect(charge.paidAt).not.toBeNull();
 
     // (4) 감사 문자도 동일하게 발송된다.
-    expect(readMockOutbox(10).some((m) => m.text.includes('후원되었습니다'))).toBe(true);
+    expect(readMockOutbox(10).some((m) => m.text.includes('후원이 완료되었습니다'))).toBe(true);
   });
 
   it('계좌로 등록하면 method 는 ACCOUNT 로 남는다 (기본값 유지)', async () => {

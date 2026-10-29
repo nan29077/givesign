@@ -68,7 +68,7 @@ export default async function RegistrationCompletePage({
   const [link, owner] = await Promise.all([
     prisma.secureLink.findUnique({
       where: { tokenHash: tokenHash(token) },
-      // merchantId 는 완료 후 이동할 결제 페이지를 찾는 데 쓴다.
+      // merchantId 는 완료 후 이동할 후원 페이지를 찾는 데 쓴다.
       // (등록 건에 사회복지기관이 비어 있는 예전 데이터의 대비책)
       select: { purpose: true, phoneHash: true, merchantId: true },
     }),
@@ -176,7 +176,7 @@ export default async function RegistrationCompletePage({
   return (
     <LinkShell>
       <div className="space-y-3">
-        {/* 가입 완료 후에는 바로 문자를 보낼 수 있도록 사회복지기관 결제 페이지로 이동시킨다. */}
+        {/* 가입 완료 후에는 바로 문자를 보낼 수 있도록 사회복지기관 후원 페이지로 이동시킨다. */}
         {merchant ? <CompleteRedirect merchantCode={merchant.code} merchantName={merchant.displayName} /> : null}
 
         <Card>
@@ -240,7 +240,7 @@ export default async function RegistrationCompletePage({
         {merchant ? (
           <LinkButton href={`/c/${merchant.code}`} size="lg" variant="secondary">
             <MessageSquare size={17} strokeWidth={1.7} />
-            {merchant.displayName} 결제 페이지 보기
+            {merchant.displayName} 후원 페이지 보기
           </LinkButton>
         ) : null}
 

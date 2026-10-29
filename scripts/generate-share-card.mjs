@@ -14,7 +14,7 @@ const copy = {
   eyebrow: 'CREATOR SUPPORT',
   titleA: '문자 한 통으로',
   titleB: '마음을 방송에 전하세요',
-  description: '사회복지기관와 후원자를 잇는 가장 간단한 응원',
+  description: '사회복지기관과 후원자를 잇는 가장 간단한 응원',
   badge: '안전한 문자 후원  ·  실시간 방송 연동',
 };
 

@@ -6,7 +6,7 @@ import type { DigitalProductType, FulfillmentMode, ProductKind } from '@/generat
  * 상품과 배송비.
  *
  * 상품은 두 종류다.
- *  - 비실물(DIGITAL) : 후원금 · 상품권 · 이용권 · 컨텐츠. 배송이 없고 재고도 세지 않는다.
+ *  - 비실물(DIGITAL) : 후원 항목 · 포인트 · 상품권 · 이용권 · 컨텐츠. 배송이 없고 재고도 세지 않는다.
  *  - 실물(PHYSICAL)  : 배송비 · 조건부 무료 · 재고 · 옵션 · 반품/교환을 관리한다.
  *
  * **배송비 계산은 반드시 이 파일의 함수 하나만 쓴다.**
@@ -450,7 +450,7 @@ export const productKindShort: Record<ProductKind, string> = {
 };
 
 export const digitalTypeLabel: Record<DigitalProductType, string> = {
-  POINT: '후원금',
+  POINT: '포인트',
   VOUCHER: '상품권',
   PASS: '이용권',
   CONTENT: '컨텐츠',
@@ -471,12 +471,12 @@ export const fulfillmentLabel: Record<FulfillmentMode, { text: string; hint: str
   },
 };
 
-/** 지급 수량 안내 문구. 후원금는 금액과 1:1 이 기본이다. */
+/** 지급 수량 안내 문구. 포인트는 금액과 1:1 이 기본이다. */
 export function giveText(p: Pick<ChargeProduct, 'kind' | 'digitalType' | 'amount' | 'giveAmount' | 'giveUnit' | 'validDays'>): string | null {
   if (p.kind !== 'DIGITAL') return null;
   const unit =
     p.giveUnit?.trim() ||
-    (p.digitalType === 'POINT' ? '후원금' : p.digitalType === 'VOUCHER' ? '매' : p.digitalType === 'PASS' ? '개월' : '개');
+    (p.digitalType === 'POINT' ? '포인트' : p.digitalType === 'VOUCHER' ? '매' : p.digitalType === 'PASS' ? '개월' : '개');
   const value = p.giveAmount ?? (p.digitalType === 'POINT' ? p.amount : null);
   if (value === null) return null;
   const base = `${value.toLocaleString('ko-KR')}${unit}`;

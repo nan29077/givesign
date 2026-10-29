@@ -26,7 +26,7 @@ export function RevokeForm() {
         <Checkbox
           checked={confirmed}
           onChange={(e) => setConfirmed(e.target.checked)}
-          label="해지 시 문자후원가 더 이상 접수되지 않는다는 점을 확인했습니다."
+          label="해지 시 문자후원이 더 이상 접수되지 않는다는 점을 확인했습니다."
           description="다시 이용하려면 계좌를 새로 등록해야 합니다."
         />
       </div>

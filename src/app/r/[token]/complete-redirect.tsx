@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, CircleCheck } from 'lucide-react';
 
 /**
- * 계좌(빌키) 등록 완료 후 사회복지기관 결제 페이지(/c/[code])로 자동 이동한다.
+ * 계좌(빌키) 등록 완료 후 사회복지기관 후원 페이지(/c/[code])로 자동 이동한다.
  *
  * 주의
  *  - 서버에서 redirect() 하지 않는다. 완료 화면에는 등록 계좌·해지 방법 안내가 함께 있고,

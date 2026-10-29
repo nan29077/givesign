@@ -19,7 +19,7 @@ interface AckBody {
 /**
  * POST /api/partner/v1/charges/ack
  *
- * 사회복지기관이 후원금 적립을 끝냈다고(또는 보류했다고) 알린다.
+ * 사회복지기관이 처리(포인트 적립·감사 처리 등)를 끝냈다고(또는 보류했다고) 알린다.
  * 알린 건은 다음 /charges?status=pending 조회에서 빠진다.
  *
  * body

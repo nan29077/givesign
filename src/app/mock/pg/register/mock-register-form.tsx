@@ -158,7 +158,7 @@ export function MockRegisterForm({
       </Card>
 
       <p className="text-center text-[11.5px] leading-relaxed text-ink-400">
-        실제 연동 시에는 헥토파이낸셜 결제창에서 본인 명의 계좌 확인과 출금이체 동의가 진행되며, 기브싸인는 계좌번호
+        실제 연동 시에는 헥토파이낸셜 결제창에서 본인 명의 계좌 확인과 출금이체 동의가 진행되며, 기브싸인은 계좌번호
         원문을 전달받지 않습니다.
       </p>
     </div>

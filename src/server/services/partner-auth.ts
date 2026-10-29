@@ -10,9 +10,9 @@ import { clientIpFromRequest, normalizeIp } from '@/server/rate-limit';
 /**
  * 사회복지기관 연동 API 인증.
  *
- * 기브싸인는 사회복지기관에 API 연동을 **요구하지 않는다.** 사회복지기관은 기브싸인 관리자
- * 화면에서 후원 내역을 확인하고 후원금 지급 처리를 할 수 있다.
- * 이 API 는 자기 사이트에서 후원금를 자동 적립하려는 사회복지기관을 위한 선택 기능이다.
+ * 기브싸인은 사회복지기관에 API 연동을 **요구하지 않는다.** 사회복지기관은 기브싸인 관리자
+ * 화면에서 후원 내역을 확인하고 처리 상태를 표시할 수 있다.
+ * 이 API 는 자기 시스템(후원자 관리 프로그램 등)에 후원 내역을 자동으로 가져가려는 사회복지기관을 위한 선택 기능이다.
  *
  * 인증 규칙
  *  - 모든 요청: Authorization: Bearer <API 키>
@@ -130,7 +130,7 @@ export function signPartnerRequest(
 export async function issueMerchantApiKey(merchantId: string, name: string, mode: ApiKeyMode = 'LIVE') {
   // 접두사를 모드별로 갈라 둔다. 운영 키를 테스트 코드에 붙여 놓고 실제 결제가
   // 나가는 사고가 가장 흔한데, 눈으로 바로 구분되면 대부분 걸러진다.
-  const apiKey = `${mode === 'TEST' ? 'mp_test_' : 'mp_live_'}${generateToken(24)}`;
+  const apiKey = `${mode === 'TEST' ? 'gs_test_' : 'gs_live_'}${generateToken(24)}`;
   const signingSecret = generateToken(32);
 
   const row = await prisma.merchantApiKey.create({

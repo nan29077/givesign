@@ -193,7 +193,7 @@ export async function checkLimits(input: LimitCheckInput): Promise<LimitCheckRes
 
   if (input.blockedByMerchant) return deny('BLOCKED', '사회복지기관이 차단한 후원자입니다.');
   if (input.payer.blockedAt) return deny('BLOCKED', '이용이 제한된 후원자입니다.');
-  // 회원 계정 제재(User.status)는 웹 로그인만 막을 뿐 문자후원를 막지 못했다.
+  // 회원 계정 제재(User.status)는 웹 로그인만 막을 뿐 문자후원을 막지 못했다.
   // 관리자가 /admin/users 에서 정지시킨 계정이 문자로는 계속 결제할 수 있으면 제재가 아니다.
   if (input.payer.userId) {
     const linkedUser = await db.user.findUnique({

@@ -112,7 +112,7 @@ export default async function MyLimitsPage() {
       </section>
 
       <section>
-        <SectionTitle title="기본 정책" description="아래 값은 기브싸인가 모든 후원자에게 공통 적용하는 상한입니다." />
+        <SectionTitle title="기본 정책" description="아래 값은 기브싸인이 모든 후원자에게 공통 적용하는 상한입니다." />
         <Card>
           <div className="mb-2 flex items-center gap-2">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-ink-50 text-brand-700">

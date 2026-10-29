@@ -53,7 +53,7 @@ export default async function StudioDocsPage() {
                 }
               />
               <DataRow
-                label="엔드후원금"
+                label="엔드포인트"
                 value={`제공 중 ${counts.live}개 · 준비 중 ${counts.planned}개`}
               />
             </div>
@@ -127,7 +127,7 @@ export default async function StudioDocsPage() {
                   <span className="text-[11.5px] font-semibold text-ink-400">
                     {endpoints.length === 0
                       ? '설명 문서'
-                      : `엔드후원금 ${endpoints.length}개${live > 0 ? ` · 제공 중 ${live}` : ''}${planned > 0 ? ` · 준비 중 ${planned}` : ''}`}
+                      : `엔드포인트 ${endpoints.length}개${live > 0 ? ` · 제공 중 ${live}` : ''}${planned > 0 ? ` · 준비 중 ${planned}` : ''}`}
                   </span>
                   <ChevronRight
                     size={16}

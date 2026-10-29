@@ -88,7 +88,7 @@ export function tplRegisterGuide(
   // 등록 화면에서 표시 이름도 정할 수 있다는 것을 미리 알려 입력률을 높인다.
   // (선택 항목이라 안내가 없으면 대부분 그냥 지나친다)
   const text = withLink(
-    `[기브싸인] ${merchantName} 사회복지기관 문자후원를 이용하려면 ${what}과 이용 동의가 필요합니다. 최초 문자는 결제 처리되지 않았습니다. 등록 화면에서 후원 내역에 표시될 이름도 정할 수 있습니다. 등록:`,
+    `[기브싸인] ${merchantName} 후원을 하려면 ${what}과 이용 동의가 필요합니다. 보내신 문자로는 아직 후원되지 않았습니다. 등록 화면에서 후원 내역에 표시될 이름도 정할 수 있습니다. 등록:`,
     link,
   );
   return { code: MT_TEMPLATE.REGISTER_GUIDE, text, masked: maskLink(text) };
@@ -144,7 +144,7 @@ export function tplSelectAmount(input: MoGuideInput): TemplateOutput {
 
 export function tplConfirmPayment(merchantName: string, amount: bigint, link: string, ttlMin: number): TemplateOutput {
   const text = withLink(
-    `[기브싸인] ${merchantName} 사회복지기관에 ${formatNumber(amount)}원을 후원하시려면 아래 링크에서 확인해 주세요. ${ttlMin}분 내 미확인 시 자동 취소됩니다. 확인:`,
+    `[기브싸인] ${merchantName}에 ${formatNumber(amount)}원을 후원하시려면 아래 링크에서 확인해 주세요. ${ttlMin}분 내 미확인 시 자동 취소됩니다. 확인:`,
     link,
   );
   return { code: MT_TEMPLATE.CONFIRM_PAYMENT, text, masked: maskLink(text) };
@@ -168,7 +168,7 @@ export function tplPinRequest(input: {
 }): TemplateOutput {
   const tag = input.mock ? ' [MOCK]' : '';
   const text = withLink(
-    `[기브싸인]${tag} ${input.merchantName} 사회복지기관에 ${formatNumber(input.amount)}원 결제를 진행합니다. ` +
+    `[기브싸인]${tag} ${input.merchantName}에 ${formatNumber(input.amount)}원 후원을 진행합니다. ` +
       `아직 결제되지 않았습니다. 결제 PIN 입력 링크: `,
     `${input.pinUrl} (유효시간: ${input.ttlMin}분)`,
   );
@@ -229,7 +229,7 @@ export function renderThanksMessage(template: string, input: ChargeSuccessInput)
 /** 감사 문자 기본 문구 (사회복지기관 설정이 없을 때) */
 export function defaultThanksMessage(input: ChargeSuccessInput): string {
   return (
-    `${input.payerName}님, ${input.merchantName} 사회복지기관에 ${formatNumber(input.amount)}원이 후원되었습니다. 이용해 주셔서 감사합니다. ` +
+    `${input.payerName}님, ${input.merchantName}에 ${formatNumber(input.amount)}원 후원이 완료되었습니다. 따뜻한 마음에 감사드립니다. ` +
     `메시지: "${input.message}" 누적 후원: ${formatNumber(input.cumulative)}원`
   );
 }
@@ -336,7 +336,7 @@ export function tplDocumentRequest(input: {
 
 export function tplChargeFailed(merchantName: string, reason?: string): TemplateOutput {
   const text =
-    `[기브싸인] ${merchantName} 사회복지기관 결제가 완료되지 않았습니다. ` +
+    `[기브싸인] ${merchantName} 후원이 완료되지 않았습니다. ` +
     `${reason ? `사유: ${reason} ` : ''}계좌 상태 또는 이용 한도를 확인해 주세요. 결제되지 않은 요청은 후원으로 반영되지 않습니다.`;
   return {
     code: MT_TEMPLATE.CHARGE_FAILED,
@@ -397,23 +397,23 @@ export function tplAccountInactive(merchantName: string): TemplateOutput {
   // 대신 실제로 다시 등록할 수 있는 경로를 알려 준다. 예전 문구("이용 상태를 확인하거나
   // 고객센터로 문의")는 다음에 무엇을 해야 하는지 알려 주지 않아 후원자가 막혔다.
   const text =
-    `[기브싸인] ${merchantName} 사회복지기관 결제를 진행할 수 없습니다. ` +
-    '결제 페이지에서 휴대폰 번호 인증을 거쳐 계좌를 다시 등록해 주세요. 결제는 진행되지 않았습니다.';
+    `[기브싸인] ${merchantName} 후원을 진행할 수 없습니다. ` +
+    '후원 페이지에서 휴대폰 번호 인증을 거쳐 계좌를 다시 등록해 주세요. 결제는 진행되지 않았습니다.';
   return { code: MT_TEMPLATE.ACCOUNT_INACTIVE, text, masked: text, vars: { 사회복지기관: merchantName } };
 }
 
 export function tplLimitBlocked(merchantName: string, reason: string): TemplateOutput {
-  const text = `[기브싸인] ${merchantName} 사회복지기관 결제가 제한되었습니다. 사유: ${reason} 결제는 진행되지 않았습니다.`;
+  const text = `[기브싸인] ${merchantName} 후원이 제한되었습니다. 사유: ${reason} 후원은 진행되지 않았습니다.`;
   return { code: MT_TEMPLATE.LIMIT_BLOCKED, text, masked: text, vars: { 사회복지기관: merchantName, 사유: reason } };
 }
 
 export function tplContentBlocked(merchantName: string): TemplateOutput {
-  const text = `[기브싸인] ${merchantName} 사회복지기관에 보낸 메시지가 운영정책에 따라 차단되었습니다. 결제는 진행되지 않았습니다.`;
+  const text = `[기브싸인] ${merchantName}에 보낸 메시지가 운영정책에 따라 차단되었습니다. 후원은 진행되지 않았습니다.`;
   return { code: MT_TEMPLATE.CONTENT_BLOCKED, text, masked: text, vars: { 사회복지기관: merchantName } };
 }
 
 export function tplRefundDone(merchantName: string, amount: bigint): TemplateOutput {
-  const text = `[기브싸인] ${merchantName} 사회복지기관 결제 ${formatNumber(amount)}원이 취소되어 환불 처리되었습니다.`;
+  const text = `[기브싸인] ${merchantName} 후원 ${formatNumber(amount)}원이 취소되어 환불 처리되었습니다.`;
   return {
     code: MT_TEMPLATE.REFUND_DONE,
     text,
@@ -424,7 +424,7 @@ export function tplRefundDone(merchantName: string, amount: bigint): TemplateOut
 
 export function tplUnknownRoute(): TemplateOutput {
   const text =
-    '[기브싸인] 결제 대상 사회복지기관을 찾을 수 없습니다. 사회복지기관 화면에 안내된 번호와 코드를 다시 확인해 주세요. 결제는 진행되지 않았습니다.';
+    '[기브싸인] 후원할 기관을 찾을 수 없습니다. 기관이 안내한 번호와 키워드를 다시 확인해 주세요. 후원은 진행되지 않았습니다.';
   return { code: MT_TEMPLATE.UNKNOWN_ROUTE, text, masked: text, vars: {} };
 }
 
@@ -466,7 +466,7 @@ export function tplPhoneLinkVerify(code: string): TemplateOutput {
 
 /** 결제 페이지 PC 웹 결제 인증번호. */
 export function tplPaymentVerify(code: string): TemplateOutput {
-  return verifyTemplate(MT_TEMPLATE.PAYMENT_VERIFY, '결제 페이지 결제', code);
+  return verifyTemplate(MT_TEMPLATE.PAYMENT_VERIFY, '후원 페이지 후원', code);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +511,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '처음 문자를 보낸 후원자에게 계좌/카드 등록 링크를 보냅니다.',
     editable: false,
     defaultBody:
-      '{사회복지기관} 사회복지기관 문자후원를 이용하려면 계좌 등록과 이용 동의가 필요합니다. 최초 문자는 결제 처리되지 않았습니다. 등록: [보안링크]',
+      '{사회복지기관} 후원을 하려면 계좌 등록과 이용 동의가 필요합니다. 보내신 문자로는 아직 후원되지 않았습니다. 등록: [보안링크]',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.SELECT_AMOUNT]: {
@@ -519,14 +519,14 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '문자를 받으면 후원 금액을 고르고 PIN 을 입력하는 링크를 보냅니다. 이 시점에는 금액이 정해지지 않았습니다.',
     editable: false,
     defaultBody:
-      '{사회복지기관} 후원을 진행합니다. 아직 결제되지 않았습니다. 아래 링크에서 후원 금액을 고르고 PIN 을 입력해 주세요. [보안링크]',
+      '{사회복지기관} 후원을 진행합니다. 아직 후원되지 않았습니다. 아래 링크에서 후원 금액을 고르고 PIN 을 입력해 주세요. [보안링크]',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.CONFIRM_PAYMENT]: {
     label: '결제 확인 링크',
     description: '결제 진행 여부를 확인받는 링크를 보냅니다.',
     editable: false,
-    defaultBody: '{사회복지기관} 사회복지기관에 {금액}을 후원하시려면 아래 링크에서 확인해 주세요. 확인: [보안링크]',
+    defaultBody: '{사회복지기관}에 {금액}을 후원하시려면 아래 링크에서 확인해 주세요. 확인: [보안링크]',
     variables: [V.merchant, V.amount],
   },
   [MT_TEMPLATE.PIN_REQUEST]: {
@@ -534,7 +534,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '결제사 PIN 입력 링크를 보냅니다. 이 시점에는 아직 출금되지 않았습니다.',
     editable: false,
     defaultBody:
-      '{사회복지기관} 사회복지기관에 {금액} 결제를 진행합니다. 아직 결제되지 않았습니다. 결제 PIN 입력 링크: [보안링크]',
+      '{사회복지기관}에 {금액} 후원을 진행합니다. 아직 후원되지 않았습니다. PIN 입력 링크: [보안링크]',
     variables: [V.merchant, V.amount],
   },
   [MT_TEMPLATE.RECURRING_STARTED]: {
@@ -579,7 +579,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
       '결제가 완료되었을 때 후원자에게 보냅니다. 사회복지기관이 스튜디오에서 직접 문구를 설정한 경우에는 그 문구가 우선합니다.',
     editable: true,
     defaultBody:
-      '{후원자}님, {사회복지기관} 사회복지기관에 {금액}이 후원되었습니다. 이용해 주셔서 감사합니다. 메시지: "{메시지}" 누적 후원: {누적}',
+      '{후원자}님, {사회복지기관}에 {금액} 후원이 완료되었습니다. 따뜻한 마음에 감사드립니다. 메시지: "{메시지}" 누적 후원: {누적}',
     variables: [V.payer, V.merchant, V.amount, V.message, V.cumulative],
   },
   [MT_TEMPLATE.CHARGE_FAILED]: {
@@ -587,7 +587,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '결제가 완료되지 않았을 때 보냅니다.',
     editable: true,
     defaultBody:
-      '{사회복지기관} 사회복지기관 결제가 완료되지 않았습니다. 사유: {사유} 계좌 상태 또는 이용 한도를 확인해 주세요. 결제되지 않은 요청은 후원으로 반영되지 않습니다.',
+      '{사회복지기관} 후원이 완료되지 않았습니다. 사유: {사유} 계좌 상태 또는 이용 한도를 확인해 주세요. 결제되지 않은 요청은 후원으로 반영되지 않습니다.',
     variables: [V.merchant, V.reason],
   },
   [MT_TEMPLATE.ACCOUNT_INACTIVE]: {
@@ -595,28 +595,28 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '등록된 결제수단을 쓸 수 없을 때 보냅니다.',
     editable: true,
     defaultBody:
-      '{사회복지기관} 사회복지기관 결제를 진행할 수 없습니다. 내통장결제 이용 상태를 확인하거나 고객센터로 문의해 주세요. 결제는 진행되지 않았습니다.',
+      '{사회복지기관} 후원을 진행할 수 없습니다. 내통장결제 이용 상태를 확인하거나 고객센터로 문의해 주세요. 후원은 진행되지 않았습니다.',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.LIMIT_BLOCKED]: {
     label: '한도 초과 안내',
     description: '일일/월간 한도나 이상거래 탐지로 결제가 막혔을 때 보냅니다.',
     editable: true,
-    defaultBody: '{사회복지기관} 사회복지기관 결제가 제한되었습니다. 사유: {사유} 결제는 진행되지 않았습니다.',
+    defaultBody: '{사회복지기관} 후원이 제한되었습니다. 사유: {사유} 후원은 진행되지 않았습니다.',
     variables: [V.merchant, V.reason],
   },
   [MT_TEMPLATE.CONTENT_BLOCKED]: {
     label: '금칙어 차단 안내',
     description: '메시지가 운영정책(금칙어)에 걸렸을 때 보냅니다.',
     editable: true,
-    defaultBody: '{사회복지기관} 사회복지기관에 보낸 메시지가 운영정책에 따라 차단되었습니다. 결제는 진행되지 않았습니다.',
+    defaultBody: '{사회복지기관}에 보낸 메시지가 운영정책에 따라 차단되었습니다. 후원은 진행되지 않았습니다.',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.REFUND_DONE]: {
     label: '환불 완료 안내',
     description: '결제가 취소되어 환불 처리되었을 때 보냅니다.',
     editable: true,
-    defaultBody: '{사회복지기관} 사회복지기관 결제 {금액}이 취소되어 환불 처리되었습니다.',
+    defaultBody: '{사회복지기관} 후원 {금액}이 취소되어 환불 처리되었습니다.',
     variables: [V.merchant, V.amount],
   },
   [MT_TEMPLATE.UNKNOWN_ROUTE]: {
@@ -624,7 +624,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '어느 사회복지기관에 보낸 문자인지 찾지 못했을 때 보냅니다.',
     editable: true,
     defaultBody:
-      '결제 대상 사회복지기관을 찾을 수 없습니다. 사회복지기관 화면에 안내된 번호와 코드를 다시 확인해 주세요. 결제는 진행되지 않았습니다.',
+      '후원할 기관을 찾을 수 없습니다. 기관이 안내한 번호와 키워드를 다시 확인해 주세요. 후원은 진행되지 않았습니다.',
     variables: [],
   },
   [MT_TEMPLATE.LOOKUP_VERIFY]: {
@@ -642,10 +642,10 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     variables: [V.verifyCode, V.ttl],
   },
   [MT_TEMPLATE.PAYMENT_VERIFY]: {
-    label: '결제 페이지 결제 인증번호',
-    description: 'PC 웹 결제 페이지에서 결제 전 본인확인을 할 때 보내는 인증번호입니다.',
+    label: '후원 페이지 후원 인증번호',
+    description: 'PC 웹 후원 페이지에서 후원 전 본인확인을 할 때 보내는 인증번호입니다.',
     editable: true,
-    defaultBody: '결제 페이지 결제 인증번호는 {인증번호} 입니다. {유효시간}분 안에 입력해 주세요.',
+    defaultBody: '후원 페이지 후원 인증번호는 {인증번호} 입니다. {유효시간}분 안에 입력해 주세요.',
     variables: [V.verifyCode, V.ttl],
   },
   [MT_TEMPLATE.SHIPMENT_SENT]: {
@@ -660,7 +660,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     label: '비실물 즉시 지급 안내',
     description: '지급 방식이 [결제 즉시 문자 발급] 인 비실물 상품이 결제되면 나가는 문자입니다.',
     editable: true,
-    defaultBody: '{사회복지기관} {상품} 결제가 완료되었습니다. {안내}',
+    defaultBody: '{사회복지기관} {상품} 후원이 완료되었습니다. {안내}',
     variables: [V.merchant, V.product, V.fulfillNote],
   },
   [MT_TEMPLATE.DOCUMENT_REQUEST]: {
@@ -740,7 +740,7 @@ export function validateMtTemplateBody(code: MtTemplateCode, body: string): stri
 const OVERRIDE_CACHE_TTL_MS = 30_000;
 let overrideCache: { at: number; map: Map<string, string> } | null = null;
 
-/** 관리자가 본문을 저장/초기화한 직후 즉시 반영되도록 후원금를 비운다. */
+/** 관리자가 본문을 저장/초기화한 직후 즉시 반영되도록 캐시를 비운다. */
 export function clearMtTemplateOverrideCache(): void {
   overrideCache = null;
 }

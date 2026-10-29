@@ -46,7 +46,7 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase,
     title: { default: shareTitle, template: '%s | 기브싸인' },
     description: shareDescription,
-    keywords: ['기브싸인', 'GiveSign', '문자후원', '후원금 후원', '간편결제', 'SMS 결제', '선불 후원'],
+    keywords: ['기브싸인', 'GIVESIGN', '문자후원', 'MO 후원', '사회복지기관 후원', '정기후원', '기부금영수증'],
     icons: {
       icon: [
         { url: '/givesign-mark.svg?v=1', type: 'image/svg+xml', sizes: 'any' },

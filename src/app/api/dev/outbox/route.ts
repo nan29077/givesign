@@ -18,7 +18,7 @@ export async function GET() {
   }
   return NextResponse.json({
     ok: true,
-    warning: '개발 전용 엔드후원금입니다. 운영 환경에서는 비활성화됩니다.',
+    warning: '개발 전용 엔드포인트입니다. 운영 환경에서는 비활성화됩니다.',
     outbox: readMockOutbox(30),
   });
 }

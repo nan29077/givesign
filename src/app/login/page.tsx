@@ -110,7 +110,7 @@ export default async function LoginPage({
       </Card>
 
       <div className="mt-4">
-        <Notice tone="neutral" title="문자후원는 회원가입 없이도 이용할 수 있습니다">
+        <Notice tone="neutral" title="문자후원은 회원가입 없이도 이용할 수 있습니다">
           문자와 결제수단 등록만으로 결제할 수 있습니다. 회원가입은 후원 내역과 한도 설정을 웹에서 관리하기 위한 선택
           기능입니다.
         </Notice>

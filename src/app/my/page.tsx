@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { EmptyState, LinkButton, Badge, Card } from '@/components/ui';
+import { featureGoodsEnabled } from '@/lib/env';
 import { RefundRequestForm } from '@/components/my/refund-request-form';
 import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components/my/payer';
 import { prisma } from '@/server/db';
@@ -34,6 +35,7 @@ export default async function MyChargesPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   const { payerId } = await requirePayerContext('/my');
+  const goodsEnabled = featureGoodsEnabled();
   const sp = await searchParams;
   const pageRaw = Math.max(1, Number.parseInt(sp.page ?? '1', 10) || 1);
 
@@ -112,13 +114,11 @@ export default async function MyChargesPage({
             const refund = d.refunds[0] ?? null;
             const refundOpen = refund ? ['REQUESTED', 'APPROVED', 'DONE'].includes(refund.status) : false;
             const canRefund = REFUNDABLE.includes(d.status) && !refundOpen;
-            // 후원금는 사회복지기관이 발행·지급한다. 기브싸인는 결제와 정산만 담당하므로
-            // "사회복지기관이 지급 처리를 했는지"만 그대로 보여준다.
+            // 지급 상태는 상품 기능(FEATURE_GOODS)을 켠 기관의 디지털 항목에만 의미가 있다.
+            // 후원에는 기관이 따로 지급할 것이 없으므로 기본 설정에서는 아무것도 표시하지 않는다(점검 M-17).
             const paidCharge = REFUNDABLE.includes(d.status);
-            // SKIPPED(= 지급 대상 아님)를 빠뜨리면 실물 상품 주문이 영원히 "후원금 지급 대기" 로 보인다.
-            // 존재하지 않는 미지급 건에 대한 문의가 사회복지기관으로 간다. 다른 화면과 같은 라벨 사전을 쓴다.
             const point =
-              !paidCharge || d.pointStatus === 'SKIPPED'
+              !goodsEnabled || !paidCharge || d.pointStatus === 'SKIPPED'
                 ? null
                 : d.pointStatus === 'SENT'
                   ? { text: pointStatusLabel.SENT.text, tone: 'success' as const }
@@ -174,7 +174,7 @@ export default async function MyChargesPage({
                       </div>
                       {point ? (
                         <div className="flex items-center justify-between gap-3">
-                          <dt className="text-ink-400">후원금 지급</dt>
+                          <dt className="text-ink-400">상품 지급</dt>
                           <dd className="tabular-nums text-ink-700">
                             {d.pointStatus === 'SENT'
                               ? d.pointGivenAt
@@ -187,8 +187,8 @@ export default async function MyChargesPage({
                     </dl>
                     {point && d.pointStatus !== 'SENT' ? (
                       <p className="mt-2 rounded-lg bg-ink-50 px-2.5 py-2 text-[11.5px] leading-relaxed text-ink-500">
-                        후원금는 <strong className="text-ink-700">{d.merchant.displayName}</strong>가 직접 지급합니다.
-                        결제는 정상 완료되었으며, 지급이 늦어지면 해당 서비스 고객센터로 문의해 주세요.
+                        상품은 <strong className="text-ink-700">{d.merchant.displayName}</strong>에서 직접 보내 드립니다.
+                        후원은 정상 완료되었으며, 받지 못하셨다면 기관으로 문의해 주세요.
                       </p>
                     ) : null}
                     <div className="mt-3 space-y-2">

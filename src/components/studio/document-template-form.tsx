@@ -168,7 +168,7 @@ export function DocumentTemplateForm({
           </Field>
           {templateType === 'PRESET' ? (
             <Notice tone="warning" title="기본 서식은 뼈대입니다">
-              기브싸인가 준비한 기본 서식은 작성 편의를 위한 예시이며, 법률 검토를 받은 표준 약관이 아닙니다.
+              기브싸인이 준비한 기본 서식은 작성 편의를 위한 예시이며, 법률 검토를 받은 표준 약관이 아닙니다.
               사회복지기관 사정과 관계 법령에 맞게 반드시 손봐서 쓰세요.
             </Notice>
           ) : null}

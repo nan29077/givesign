@@ -273,7 +273,7 @@ describe('고시 · 이미지 · 배송 기본값', () => {
 describe('표기', () => {
   it('[11] 포인트는 금액과 1:1 로 안내한다', () => {
     expect(giveText({ kind: 'DIGITAL', digitalType: 'POINT', amount: 10000n, giveAmount: null, giveUnit: null, validDays: null }))
-      .toBe('10,000후원금');
+      .toBe('10,000포인트');
   });
 
   it('[12] 이용권은 유효기간을 함께 보여준다', () => {

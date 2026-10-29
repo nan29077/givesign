@@ -275,7 +275,7 @@ export default async function AdminMerchantDetailPage({ params }: { params: Prom
               {merchant.moRoutes.length === 0 ? (
                 <EmptyState
                   title="배정된 MO 번호가 없습니다"
-                  description="MO 번호 관리 화면에서 수신 번호를 배정해야 문자후원가 접수됩니다."
+                  description="MO 번호 관리 화면에서 수신 번호를 배정해야 문자후원이 접수됩니다."
                 />
               ) : (
                 <Table className="min-w-0">

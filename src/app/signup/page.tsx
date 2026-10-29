@@ -22,7 +22,7 @@ export default function SignupPage() {
 
       <div className="mb-4">
         <Notice tone="brand" title="회원가입은 선택입니다">
-          문자후원는 회원가입 없이 문자 발송과 계좌 등록만으로 이용할 수 있습니다. 회원가입은 이용 내역을 웹에서
+          문자후원은 회원가입 없이 문자 발송과 계좌 등록만으로 이용할 수 있습니다. 회원가입은 이용 내역을 웹에서
           관리하기 위한 기능입니다.
         </Notice>
       </div>

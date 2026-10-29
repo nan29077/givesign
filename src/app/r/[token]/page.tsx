@@ -143,7 +143,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
       </p>
       <div className="mt-3">
         <Notice tone="warning" title="주의">
-          기브싸인는 문자로 발송한 링크 외에 다른 경로로 계좌 정보를 요구하지 않습니다.
+          기브싸인은 문자로 발송한 링크 외에 다른 경로로 계좌 정보를 요구하지 않습니다.
         </Notice>
       </div>
     </Card>
@@ -227,7 +227,7 @@ async function RegisterScreen({ token }: { token: string }) {
           계좌 등록과 이용 동의
         </h1>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          보내주신 최초 문자는 결제 처리되지 않았습니다. 아래 내용을 확인하고 등록을 완료해 주세요.
+          보내주신 문자로는 아직 후원되지 않았습니다. 아래 내용을 확인하고 등록을 완료해 주세요.
         </p>
         <div className="mt-3">
           <DataRow label="결제 대상" value={ctx.merchantName ?? '-'} />

@@ -87,7 +87,7 @@ export const fieldTypeLabel: Record<DocumentFieldType, { text: string; hint: str
 export const documentTemplateTypeLabel: Record<DocumentTemplateType, { text: string; hint: string }> = {
   EDITOR: { text: '직접 작성', hint: '본문과 빈칸을 콘솔에서 직접 만든다. 후원자는 화면에서 채운다.' },
   FILE: { text: '파일 업로드', hint: 'PDF·워드 서식을 올린다. 후원자는 내려받아 작성한다.' },
-  PRESET: { text: '기본 서식', hint: '기브싸인가 준비한 서식에서 고른다. 내용은 그대로 손볼 수 있다.' },
+  PRESET: { text: '기본 서식', hint: '기브싸인이 준비한 서식에서 고른다. 내용은 그대로 손볼 수 있다.' },
 };
 
 export const documentStatusLabel: Record<DocumentSubmissionStatus, { text: string; tone: Tone }> = {
@@ -195,7 +195,7 @@ function f(
 }
 
 /**
- * 기브싸인가 준비한 기본 서식.
+ * 기브싸인이 준비한 기본 서식.
  *
  * 법률 자문을 받은 표준 약관이 아니라 **작성 편의를 위한 뼈대**다.
  * 그래서 화면에도 그대로 쓰지 말고 사회복지기관 사정에 맞게 손보라고 안내한다.

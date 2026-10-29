@@ -14,7 +14,7 @@ describe('키워드 정규화 — 등록과 매칭이 같은 규칙을 쓴다', 
   /**
    * 이전: 등록은 `toUpperCase() + 공백 제거`, 매칭은 `toUpperCase() + 하이픈 제거`.
    * "GIV-1234" 로 등록하면 DB 에는 `GIV-1234`, 수신 파싱값은 `GIV1234` 가 되어
-   * 그 사회복지기관의 문자후원가 전건 UNKNOWN_ROUTE 로 떨어졌다.
+   * 그 사회복지기관의 문자후원이 전건 UNKNOWN_ROUTE 로 떨어졌다.
    */
   it('구분 기호·대소문자·전각을 같은 표준형으로 접는다', () => {
     expect(normalizeKeyword('GIV-1234')).toBe('GIV1234');

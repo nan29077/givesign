@@ -149,7 +149,7 @@ export async function insertDevMo(
  * 문자를 실제로 넣지 않고 계산만 하므로 결제가 생기지 않는다.
  *
  * 순수 계산이라 Server Action 으로 둘 이유가 없다. `'use server'` 파일에 있으면
- * 인증 없이 호출 가능한 엔드후원금가 하나 더 생기므로 여기(일반 모듈)에 둔다.
+ * 인증 없이 호출 가능한 엔드포인트가 하나 더 생기므로 여기(일반 모듈)에 둔다.
  */
 export function previewSplitModes(fullNumber: string) {
   const modes: MoSplitMode[] = ['BASE_SUB', 'PREFIX_REST', 'WHOLE'];

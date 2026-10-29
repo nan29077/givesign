@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { initialPointStatus } from './point-status';
 import { newId, newOrderNo, newTransactionNo } from '@/lib/id';
 import { decrypt, encrypt, maskPhone, normalizePhone, phoneHash as hashPhone } from '@/lib/crypto';
 import { payerDisplayName } from '@/lib/payer-name';
@@ -529,7 +530,7 @@ async function processMoRow(
   const merchant = routed.merchant;
   // 사회복지기관주 계정이 정지·탈퇴됐으면 결제를 받지 않는다.
   // 공개 결제 페이지(/c/[code])는 이미 user.status 를 확인하는데 문자 경로만 빠져 있으면,
-  // 관리자가 계정을 제재해도 문자후원로 계속 돈이 쌓인다.
+  // 관리자가 계정을 제재해도 문자후원으로 계속 돈이 쌓인다.
   const merchantUser = await prisma.user.findUnique({
     where: { id: merchant.userId },
     select: { status: true, deletedAt: true },
@@ -719,6 +720,7 @@ async function processMoRow(
         status: 'PENDING_AMOUNT',
         statusReason: campaignMatch.campaign ? `후원 금액 선택 대기 (캠페인 ${campaignMatch.campaign.code})` : '후원 금액 선택 대기',
         paymentMode: 'CONFIRM_LINK',
+        pointStatus: initialPointStatus(),
         campaignId: campaignMatch.campaign?.id ?? null,
       },
     });
@@ -1435,8 +1437,8 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     charge.merchantId,
   );
 
-  // 후원금 지급은 사회복지기관이 한다. 기브싸인는 결제·정산까지만 책임지고,
-  // 사회복지기관이 콘솔(또는 조회 API)에서 이 결제 건을 보고 자기 서비스에 후원금를 넣는다.
+  // 포인트 지급(상품 기능)은 사회복지기관이 한다. 기브싸인은 결제·정산까지만 책임지고,
+  // 사회복지기관이 콘솔(또는 조회 API)에서 이 결제 건을 보고 자기 서비스에 포인트를 넣는다.
   // 그래서 여기서 외부를 호출하지 않는다. 지급 여부는 charge.pointStatus 로 추적한다.
   //
   // 예외는 지급 방식이 INSTANT 인 비실물 상품이다. 코드·다운로드 주소처럼

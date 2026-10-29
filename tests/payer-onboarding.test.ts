@@ -75,7 +75,7 @@ describe('전화번호별 내통장결제 가입 상태', () => {
     });
     // 닉네임을 정하지 않은 후원자는 번호 끝 4자리로 만든 기본 이름으로 표시된다.
     // (예전에는 마스킹 번호 010-****-5678 을 그대로 썼다)
-    expect(success.bodyMasked).toContain('후원자5678님, 테스트사회복지기관 사회복지기관에 3,000원이 후원되었습니다.');
+    expect(success.bodyMasked).toContain('후원자5678님, 테스트사회복지기관에 3,000원 후원이 완료되었습니다.');
     expect(success.bodyMasked).not.toContain('010-');
   });
 

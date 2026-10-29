@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { featureGoodsEnabled } from '@/lib/env';
 import { ExternalLink, Info } from 'lucide-react';
 import {
   Badge, Card, CardTitle, DataRow, Field, Input, LinkButton, Notice, SectionTitle, Select, Textarea, cx,
@@ -54,23 +55,23 @@ export const dynamic = 'force-dynamic';
  * 탭을 하나씩 주면 실제로 설정할 것이 어디 있는지 흐려진다.
  */
 
-const TABS = [
-  { key: 'amount', label: '결제·금액' },
+const ALL_TABS = [
+  { key: 'amount', label: '후원 금액' },
   { key: 'shipping', label: '배송 정책' },
   { key: 'message', label: '안내 문자' },
-  { key: 'page', label: '결제페이지' },
+  { key: 'page', label: '간편 후원 화면' },
   { key: 'api', label: '연동' },
-  { key: 'channel', label: '수신·결제 방식' },
+  { key: 'channel', label: '수신·후원 방식' },
 ] as const;
 
-type Tab = (typeof TABS)[number]['key'];
+type Tab = (typeof ALL_TABS)[number]['key'];
 
 /** 감사 문자 미리보기 예시값. 실제 발송과 같은 템플릿 함수에 넣어 결과를 보여준다. */
 const THANKS_PREVIEW = {
   payerName: '홍길동',
   merchantName: '기브싸인',
   amount: 3_000n,
-  message: '후원금 후원합니다',
+  message: '늘 응원합니다',
   cumulative: 12_000n,
 } as const;
 
@@ -81,6 +82,8 @@ export default async function StudioSettingsPage({
 }) {
   const { merchantId } = await requireMerchant();
   const requested = (await searchParams).tab;
+  // 배송 정책은 상품 기능(FEATURE_GOODS)을 켠 기관에만 보인다(점검 M-18).
+  const TABS = featureGoodsEnabled() ? ALL_TABS : ALL_TABS.filter((t) => t.key !== 'shipping');
   const tab: Tab = TABS.some((t) => t.key === requested) ? (requested as Tab) : 'amount';
 
   const [merchant, products, moNumbers, policy, apiKeys, shippingRow, callLogs, mtTemplates, webhooks, deliveries] =
@@ -170,7 +173,7 @@ export default async function StudioSettingsPage({
 
   return (
     <>
-      <PageHeader title="후원 설정" description="금액·배송·안내 문자·결제페이지 등 판매 조건을 관리합니다." />
+      <PageHeader title="후원 설정" description="후원 금액·안내 문자·간편 후원 화면·연동 등 후원 받는 조건을 관리합니다." />
 
       <nav
         aria-label="후원 설정 메뉴"
@@ -448,7 +451,7 @@ export default async function StudioSettingsPage({
               defaultPreview={moGuideDefaultPreview}
               notice={
                 <Notice tone="warning" title="링크는 직접 넣을 수 없습니다">
-                  안내 문자에는 링크(http, www)나 전화번호·계좌번호를 넣을 수 없습니다. 결제 링크는 기브싸인가 본문
+                  안내 문자에는 링크(http, www)나 전화번호·계좌번호를 넣을 수 없습니다. 결제 링크는 기브싸인이 본문
                   끝에 자동으로 붙이며, <strong>&ldquo;아직 결제되지 않았습니다&rdquo;</strong> 고지도 시스템이 함께
                   붙입니다. 이 고지는 오인 결제 민원을 막기 위한 것이라 사회복지기관이 지울 수 없습니다.
                 </Notice>
@@ -568,10 +571,15 @@ export default async function StudioSettingsPage({
         {tab === 'page' ? (
           <section>
             <SectionTitle
-              title="결제페이지 꾸미기"
-              description="후원자에게 공유하는 페이지의 배너와 소개를 관리합니다."
+              title="간편 후원 화면 꾸미기"
+              description="문자 링크로 바로 여는 간편 후원 화면(/c)의 배너와 소개입니다."
             />
-            <Card>
+            <Notice tone="neutral" title="기관 소개·캠페인을 담은 후원페이지는 따로 있습니다">
+              기관 소개, 캠페인, 정기후원 안내를 담은 공개 후원페이지(/donate)는{' '}
+              <Link href="/studio/donation-page" className="font-bold text-brand-700">후원페이지</Link> 메뉴에서 꾸밉니다.
+              홍보용으로 공유할 주소는 후원페이지 주소를 권장합니다.
+            </Notice>
+            <Card className="mt-3">
               <div className="mb-5">
                 <ChargePageShare url={chargePageUrl} merchantName={merchant.displayName} />
               </div>
@@ -583,7 +591,7 @@ export default async function StudioSettingsPage({
                 </LinkButton>
               </div>
 
-              <ActionForm action={updateChargePageAction} submitLabel="결제페이지 설정 저장">
+              <ActionForm action={updateChargePageAction} submitLabel="간편 후원 화면 설정 저장">
                 <div>
                   <p className="text-[13px] font-bold text-ink-900">상단 배너</p>
                   <p className="mb-2 mt-0.5 text-[12px] text-ink-400">
@@ -668,7 +676,7 @@ export default async function StudioSettingsPage({
             <Card>
               <CardTitle>이 API 가 필요한 경우</CardTitle>
               <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
-                사회복지기관 사이트에서 <strong>후원금를 자동으로 적립</strong>하거나, 자체 물류 시스템에서{' '}
+                사회복지기관 사이트에서 <strong>후원 내역을 자동으로 가져가</strong>거나, 자체 물류 시스템에서{' '}
                 <strong>배송 상태를 올려보내고</strong> 싶을 때 사용합니다. 사회복지기관 서버가 결제 건을 주기적으로
                 가져가(pull) 처리한 뒤 결과를 기브싸인에 알려주는 방식이라, 사회복지기관 쪽에 수신 서버를 두지 않아도
                 됩니다.
@@ -679,7 +687,6 @@ export default async function StudioSettingsPage({
                 <DataRow label="배송 상태 갱신" value={<code className="font-mono text-[12px]">POST /api/partner/v1/charges/shipment</code>} />
                 <DataRow label="연결 점검" value={<code className="font-mono text-[12px]">GET /api/partner/v1/ping</code>} />
                 <DataRow label="후원자 식별" value="마스킹 번호(payerPhoneMasked) 또는 사회복지기관 전용 고정 식별자(payerRef)" />
-                <DataRow label="금액 ↔ 후원금" value="1 : 1 (10,000원 결제 = 10,000 후원금)" />
               </div>
               <div className="mt-3">
                 <LinkButton href="/studio/docs/partner-api" variant="secondary" size="sm" prefetch={false}>
@@ -702,8 +709,8 @@ export default async function StudioSettingsPage({
                     hint="테스트 키는 문자가 나가지 않고 돈도 빠지지 않습니다. 정산에도 잡히지 않습니다."
                   >
                     <Select name="mode" defaultValue="LIVE">
-                      <option value="LIVE">운영 (mp_live_) — 실제 결제·정산</option>
-                      <option value="TEST">테스트 (mp_test_) — 샌드박스 전용</option>
+                      <option value="LIVE">운영 (gs_live_) — 실제 결제·정산</option>
+                      <option value="TEST">테스트 (gs_test_) — 샌드박스 전용</option>
                     </Select>
                   </Field>
                   <Field label="키 이름" hint="어디에 쓰는 키인지 적어 두세요. (예: 운영 서버)">
@@ -916,7 +923,7 @@ export default async function StudioSettingsPage({
               </div>
               {moNumbers.length === 0 ? (
                 <Notice tone="warning">
-                  배정된 수신번호가 없습니다. 번호가 배정되기 전에는 문자후원를 받을 수 없습니다. 고객센터로 배정을
+                  배정된 수신번호가 없습니다. 번호가 배정되기 전에는 문자후원을 받을 수 없습니다. 고객센터로 배정을
                   요청해 주세요.
                 </Notice>
               ) : (

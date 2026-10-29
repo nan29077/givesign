@@ -17,7 +17,7 @@ import {
   THANKS_MT_MAX_LENGTH, THANKS_MT_VARIABLES, MO_GUIDE_MAX_LENGTH, MO_GUIDE_VARIABLES,
   tplChargeSuccess, tplSelectAmount, tplShipmentSent,
 } from '@/server/services/mt-templates';
-import { env } from '@/lib/env';
+import { env, featureGoodsEnabled } from '@/lib/env';
 import { getPublicBaseUrl } from '@/server/public-base-url';
 import { bannedNeedle, filterContent } from '@/server/services/content-filter';
 import { upsertMerchantTemplate } from '@/server/services/merchant-mt';
@@ -170,15 +170,15 @@ export async function unblockPayerAction(
 // ===========================================================================
 
 // ===========================================================================
-// 후원금 지급 처리
+// 포인트 지급 처리 (상품 기능)
 // ===========================================================================
 
 /**
- * 후원금 지급은 사회복지기관이 자기 서비스에서 한다.
- * 기브싸인는 "이 결제 건을 처리했는가" 만 기록해, 빠뜨린 건과 환불 회수 대상을 알 수 있게 한다.
+ * 포인트 지급은 사회복지기관이 자기 서비스에서 한다.
+ * 기브싸인은 "이 결제 건을 처리했는가" 만 기록해, 빠뜨린 건과 환불 회수 대상을 알 수 있게 한다.
  *
  * 지급 대상은 결제가 완료된 건뿐이다. 결제되지 않은 건을 지급 완료로 표시하면
- * 사회복지기관이 받지도 않은 돈에 후원금를 주게 된다.
+ * 사회복지기관이 받지도 않은 돈에 포인트를 주게 된다.
  */
 const POINT_PAYABLE_STATUSES = PAID_STATUSES;
 
@@ -537,7 +537,7 @@ function amountOrNull(formData: FormData, key: string): bigint | null | 'ERR' {
 /**
  * 폼에서 상품 값을 읽어 검증한다.
  *
- * 비실물(후원금·상품권·이용권·컨텐츠)과 실물(배송비·재고·옵션·반품)은 필요한 값이 다르다.
+ * 비실물(후원 항목·포인트·상품권·이용권·컨텐츠)과 실물(배송비·재고·옵션·반품)은 필요한 값이 다르다.
  * 두 경로가 각각 검증하면 규칙이 갈라지므로 여기 한 곳에서만 판단한다.
  */
 async function parseProductForm(
@@ -615,11 +615,11 @@ async function parseProductForm(
   if (kind === 'DIGITAL') {
     const typeRaw = text(formData, 'digitalType').toUpperCase();
     if (typeRaw !== 'POINT' && typeRaw !== 'VOUCHER' && typeRaw !== 'PASS' && typeRaw !== 'CONTENT') {
-      return { ok: false, message: '비실물 상품 유형(후원금·상품권·이용권·컨텐츠)을 선택해 주세요.' };
+      return { ok: false, message: '비실물 상품 유형(포인트·상품권·이용권·컨텐츠)을 선택해 주세요.' };
     }
     const digitalType = typeRaw as DigitalProductType;
 
-    // 후원금는 금액과 1:1 이 원칙이다. 보너스를 주려면 지급 수량을 따로 적는다.
+    // 포인트는 금액과 1:1 이 원칙이다. 보너스를 주려면 지급 수량을 따로 적는다.
     const giveRaw = text(formData, 'giveAmount');
     let giveAmount = giveRaw ? parseAmount(giveRaw) : null;
     if (giveRaw && (giveAmount === null || giveAmount <= 0n)) {
@@ -713,7 +713,7 @@ async function parseProductForm(
       data: {
         ...base,
         documentTemplateId: template.id,
-        // 문서 상품은 후원금·상품권을 주는 거래가 아니다. 지급 대기 목록에 섞이지 않게
+        // 문서 상품은 포인트·상품권을 주는 거래가 아니다. 지급 대기 목록에 섞이지 않게
         // 결제 확정(charge-select)에서 pointStatus 를 SKIPPED 로 둔다.
         fulfillment: 'MANUAL',
       },
@@ -795,6 +795,10 @@ export async function createChargeProductAction(
   return withMerchant(async (merchantId) => {
     const parsed = await parseProductForm(merchantId, formData);
     if (!parsed.ok) return { ok: false, message: parsed.message };
+    // 상품 기능이 꺼져 있으면 실물·문서 항목을 새로 만들 수 없다(화면에서 숨긴 것을 요청으로 우회하지 못하게).
+    if (!featureGoodsEnabled() && parsed.data.kind !== 'DIGITAL') {
+      return { ok: false, message: '실물·문서 상품 기능이 꺼져 있습니다. 후원 항목만 등록할 수 있습니다.' };
+    }
 
     const count = await prisma.chargeProduct.count({
       where: { merchantId, kind: parsed.data.kind, archivedAt: null },
@@ -1287,7 +1291,7 @@ export async function updateMoGuideMessageAction(
       return { ok: false, message: `안내 문자는 ${MO_GUIDE_MAX_LENGTH}자 이내로 입력해 주세요. (현재 ${raw.length}자) 결제 링크가 뒤에 붙으므로 여유를 두세요.` };
     }
     if (/https?:\/\/|www\./i.test(raw)) {
-      return { ok: false, message: '안내 문자에는 링크를 넣을 수 없습니다. 결제 링크는 기브싸인가 본문 끝에 자동으로 붙입니다.' };
+      return { ok: false, message: '안내 문자에는 링크를 넣을 수 없습니다. 결제 링크는 기브싸인이 본문 끝에 자동으로 붙입니다.' };
     }
 
     const unknown = [...raw.matchAll(/\{([^{}]*)\}/g)]
@@ -1713,7 +1717,7 @@ export async function updateChargePageAction(
     revalidatePath('/studio');
     return {
       ok: true,
-      message: '결제 페이지 설정을 저장했습니다.',
+      message: '간편 후원 화면 설정을 저장했습니다.',
     };
   });
 }
@@ -2278,7 +2282,7 @@ export async function createWebhookAction(
       secret: result.secret,
       secretLabel: '웹훅 서명 비밀키 (지금만 확인 가능)',
       secretHint:
-        '받은 요청이 진짜 기브싸인가 보낸 것인지 확인할 때 씁니다. 검증하지 않으면 누구나 가짜 결제 완료 이벤트를 보낼 수 있습니다.',
+        '받은 요청이 진짜 기브싸인이 보낸 것인지 확인할 때 씁니다. 검증하지 않으면 누구나 가짜 결제 완료 이벤트를 보낼 수 있습니다.',
     };
   });
 }

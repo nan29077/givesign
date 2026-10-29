@@ -196,7 +196,7 @@ export default async function AdminPayerDetailPage({ params }: { params: Promise
               </div>
 
               {!payer.blockedAt ? (
-                <ActionForm disabled={!canEdit} action={setPayerBlock} submitLabel="이용 제한 적용" variant="danger" confirm="이후 이 후원자의 문자후원가 접수되지 않습니다.">
+                <ActionForm disabled={!canEdit} action={setPayerBlock} submitLabel="이용 제한 적용" variant="danger" confirm="이후 이 후원자의 문자후원이 접수되지 않습니다.">
                   <input type="hidden" name="payerId" value={payer.id} />
                   <input type="hidden" name="next" value="BLOCK" />
                   <AdminField label="제한 사유">

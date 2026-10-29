@@ -51,7 +51,7 @@
 
 | 값 | 용도 |
 | --- | --- |
-| `API 키` (`mp_live_…`) | 모든 요청의 `Authorization: Bearer` 헤더 |
+| `API 키` (`gs_live_…`) | 모든 요청의 `Authorization: Bearer` 헤더 |
 | `서명 비밀키` | 쓰기 요청의 HMAC 서명 |
 
 두 값 모두 기브싸인 서버에 **원문으로 저장되지 않습니다**(키는 해시, 서명 비밀키는 암호화).
@@ -61,7 +61,7 @@
 ### 2.2 공통 헤더
 
 ```
-Authorization: Bearer mp_live_xxxxxxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer gs_live_xxxxxxxxxxxxxxxxxxxxxxxx
 Content-Type: application/json          (POST 만)
 X-Givesign-Timestamp: 1790000000        (POST 필수, GET 선택)
 X-Givesign-Signature: <hex>             (POST 필수, GET 선택)

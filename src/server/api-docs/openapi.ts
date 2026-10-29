@@ -6,7 +6,7 @@ import type { ApiEndpoint } from './types';
  * OpenAPI 3.1 문서 생성.
  *
  * 손으로 쓰지 않고 레지스트리에서 만든다. 문서 화면과 같은 값을 읽으므로
- * 화면과 규격 파일이 어긋날 수 없다. 새 엔드후원금를 레지스트리에 등록하면
+ * 화면과 규격 파일이 어긋날 수 없다. 새 엔드포인트를 레지스트리에 등록하면
  * 여기에도 자동으로 올라온다.
  *
  * 준비 중(PLANNED) 항목도 포함하되 `deprecated` 가 아니라 설명 첫 줄에 명시한다.
@@ -72,7 +72,7 @@ function operationOf(categoryTitle: string, endpoint: ApiEndpoint) {
       ...(p.example ? { example: p.example } : {}),
     }));
 
-  // 경로에 `{id}` 같은 자리가 있는데 params 에 적어 두지 않은 엔드후원금가 있다.
+  // 경로에 `{id}` 같은 자리가 있는데 params 에 적어 두지 않은 엔드포인트가 있다.
   // OpenAPI 는 경로 변수가 parameters 에 없으면 잘못된 문서로 보고, 코드 생성기가
   // 호출할 수 없는 클라이언트를 만든다. 빠진 것은 여기서 채워 넣는다.
   const pathVars = [...endpoint.path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!);

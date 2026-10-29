@@ -53,7 +53,7 @@ export interface PanelProduct {
 }
 
 const KIND_BADGE: Record<string, string> = {
-  POINT: '후원금',
+  POINT: '포인트',
   VOUCHER: '상품권',
   PASS: '이용권',
   CONTENT: '컨텐츠',

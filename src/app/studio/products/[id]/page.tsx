@@ -5,6 +5,7 @@ import { Badge, Card, CardTitle, DataRow, Field, Input, Notice, cx } from '@/com
 import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm, InlineActionForm } from '@/components/studio/action-form';
 import { ProductForm } from '@/components/studio/product-form';
+import { featureGoodsEnabled } from '@/lib/env';
 import {
   adjustProductStockAction,
   archiveChargeProductAction,
@@ -46,6 +47,9 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     }),
   ]);
   if (!product || !merchant) notFound();
+  // 상품 기능이 꺼져 있으면 실물·문서 항목은 편집 화면도 열지 않는다(점검 M-18).
+  const goods = featureGoodsEnabled();
+  if (!goods && product.kind !== 'DIGITAL') notFound();
 
   const shipping = shippingPolicyOf(shippingRow);
   const effMin = merchant.minAmount > policy.minAmount ? merchant.minAmount : policy.minAmount;
@@ -111,8 +115,9 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               shipping={shipping}
               effMin={effMin}
               effMax={effMax}
-              submitLabel="상품 저장"
+              submitLabel={goods ? '상품 저장' : '저장'}
               documentTemplates={templateOptions}
+              donationMode={!goods && product.kind === 'DIGITAL'}
             />
 
             <Card className="mt-4">

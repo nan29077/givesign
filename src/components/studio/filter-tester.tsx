@@ -17,7 +17,7 @@ export function FilterTester() {
       <form action={action} className="flex flex-col gap-2 sm:flex-row">
         <input
           name="sample"
-          placeholder="테스트할 문장을 입력하세요 (예: 후원금 후원합니다)"
+          placeholder="테스트할 문장을 입력하세요 (예: 늘 응원합니다)"
           maxLength={200}
           className="h-11 flex-1 rounded-xl border border-ink-200 px-3.5 text-[14px] outline-none focus:border-brand-400"
         />

@@ -137,7 +137,7 @@ export default async function MyAccountPage() {
               <CardTitle>등록된 계좌가 없습니다</CardTitle>
               <p className="mt-1 text-[13px] leading-relaxed text-ink-500">
                 자동출금 동의가 해지되었거나 아직 계좌를 등록하지 않았습니다. 처음 등록이라면 사회복지기관의 결제 수신번호로
-                문자를 보내면 등록 안내 문자가 발송되고, 해지한 뒤 다시 등록하려면 사회복지기관 결제 페이지에서 휴대폰 번호
+                문자를 보내면 등록 안내 문자가 발송되고, 해지한 뒤 다시 등록하려면 사회복지기관 후원 페이지에서 휴대폰 번호
                 인증을 거쳐야 합니다.
               </p>
             </div>
@@ -149,14 +149,14 @@ export default async function MyAccountPage() {
         <section>
           <SectionTitle
             title="자동출금 동의 해지"
-            description="해지하면 등록된 결제수단이 즉시 폐기되고 이후 문자후원가 접수되지 않습니다."
+            description="해지하면 등록된 결제수단이 즉시 폐기되고 이후 문자후원이 접수되지 않습니다."
           />
           <Card>
             <Notice tone="warning" title="해지 전에 확인해 주세요">
               <ul className="list-disc space-y-1 pl-4">
                 <li>이미 결제가 완료된 결제는 해지와 무관하게 유지됩니다.</li>
                 <li>결제 확인을 기다리는 요청이 있다면 해지 후 결제되지 않습니다.</li>
-                <li>다시 이용하려면 사회복지기관 결제 페이지에서 휴대폰 번호 인증을 거쳐 계좌를 새로 등록해야 합니다. (해지 후에는 문자만으로 등록 링크가 재발송되지 않습니다)</li>
+                <li>다시 이용하려면 사회복지기관 후원 페이지에서 휴대폰 번호 인증을 거쳐 계좌를 새로 등록해야 합니다. (해지 후에는 문자만으로 등록 링크가 재발송되지 않습니다)</li>
               </ul>
             </Notice>
             <div className="mt-4">
@@ -178,7 +178,7 @@ export default async function MyAccountPage() {
                   <strong className="font-bold">처음 등록</strong>이라면 사회복지기관의 결제 수신번호로 문자를 보내면 계좌 등록용
                   1회용 보안 링크가 문자로 발송됩니다(이때 보낸 문자는 결제로 접수되지 않습니다).
                   <br />
-                  <strong className="font-bold">해지한 뒤 다시 등록</strong>하려면 사회복지기관 결제 페이지에서 휴대폰 번호 인증을
+                  <strong className="font-bold">해지한 뒤 다시 등록</strong>하려면 사회복지기관 후원 페이지에서 휴대폰 번호 인증을
                   거쳐 주세요. 안전을 위해 해지 이후에는 문자만으로 등록 링크를 다시 보내지 않습니다.
                 </p>
                 <LinkButton href="/how-it-works" variant="secondary" size="sm" className="mt-2.5">

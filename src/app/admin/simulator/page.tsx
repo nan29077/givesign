@@ -126,7 +126,7 @@ export default async function AdminSimulatorPage() {
               label="문자 내용"
               hint="대표번호 공유 모드에서는 맨 앞에 키워드를 붙여야 사회복지기관이 식별됩니다."
             >
-              <AdminTextarea name="content" rows={4} placeholder="후원금 10,000원 후원" required />
+              <AdminTextarea name="content" rows={4} placeholder="늘 응원합니다" required />
             </AdminField>
             <AdminField label="사업자 메시지 ID" hint="비우면 자동 생성됩니다. 같은 값을 재사용하면 중복으로 처리됩니다.">
               <AdminInput name="messageId" placeholder="자동 생성" />

@@ -3,7 +3,7 @@ import { normalizePhone, phoneTail4 } from '@/lib/phone';
 /**
  * 후원자 표시 이름(닉네임) 규칙.
  *
- * 문자후원는 휴대폰 번호만 수집하므로, 닉네임을 설정하기 전에는
+ * 문자후원은 휴대폰 번호만 수집하므로, 닉네임을 설정하기 전에는
  * 사회복지기관 화면과 후원 내역에 번호가 그대로 노출된다.
  * 그래서 기본값을 "후원자{끝 4자리}" 로 두어
  *  - 이름처럼 읽히고
@@ -105,7 +105,7 @@ export function checkPayerName(raw: string): PayerNameCheck {
   const value = normalizePayerName(raw);
   if (value.length === 0) return { ok: true, value: '' };
 
-  // 이모지·한글 등은 코드 후원금 기준으로 세야 길이가 사람 감각과 맞는다.
+  // 이모지·한글 등은 코드 포인트 기준으로 세야 길이가 사람 감각과 맞는다.
   const length = [...value].length;
   if (length < PAYER_NAME_MIN) {
     return { ok: false, value, message: `닉네임은 ${PAYER_NAME_MIN}자 이상 입력해 주세요.` };

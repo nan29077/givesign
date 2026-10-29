@@ -22,7 +22,7 @@ import { setCryptoProvider, type CryptoProvider } from '@/lib/crypto';
  *  2) GenerateDataKey 로 데이터키를 발급받아 평문키로 AES-256-GCM 암호화하고,
  *     암호문에는 **암호화된 데이터키**를 함께 담는다. (형식: v1:kms:<encDataKey>:<iv>:<tag>:<ct>)
  *  3) 복호화는 Decrypt 로 데이터키를 푼 뒤 같은 방식으로 되돌린다.
- *  4) 데이터키는 요청마다 새로 발급받지 말고 짧은 TTL 로 후원금한다(KMS 호출 비용/한도).
+ *  4) 데이터키는 요청마다 새로 발급받지 말고 짧은 TTL 로 캐시한다(KMS 호출 비용/한도).
  *  5) 기존 v1:local 암호문을 함께 읽을 수 있도록 복호화는 접두어로 분기한다(무중단 전환).
  *
  * 지금은 구조만 잡혀 있으며 실제 KMS 호출은 없다.

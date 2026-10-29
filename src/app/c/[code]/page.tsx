@@ -27,7 +27,7 @@ import { resolveWebChargeChannel } from '@/server/services/web-charge';
 export const dynamic = 'force-dynamic';
 
 /**
- * 사회복지기관 전용 결제 페이지.
+ * 사회복지기관 전용 후원 페이지.
  *
  * 메인 서비스(PublicShell)의 하단 탭·우측 메뉴를 쓰지 않는 완전히 독립된 페이지다.
  * 사회복지기관 안내 페이지에 붙는 "사회복지기관 자신의 링크"로 보여야 하므로
@@ -57,7 +57,7 @@ function formatMoNumber(raw: string) {
 
 /**
  * 로그인한 방문자의 후원자 프로필. 없으면 null.
- * 세션·프로필 조회 실패가 결제 페이지 자체를 막지 않도록 전부 흡수한다.
+ * 세션·프로필 조회 실패가 후원 페이지 자체를 막지 않도록 전부 흡수한다.
  */
 async function currentViewerPayer() {
   try {
@@ -79,7 +79,7 @@ async function findMerchant(rawCode: string) {
     where: {
       code,
       status: 'APPROVED',
-      // 계정 자체가 정지·탈퇴된 사회복지기관의 결제 페이지은 닫아야 한다.
+      // 계정 자체가 정지·탈퇴된 사회복지기관의 후원 페이지는 닫아야 한다.
       // merchantProfile.status 만 보면 User 를 SUSPENDED 로 제재해도 샵이 계속 열려
       // 결제를 받고 정지 계정에 돈이 계속 쌓인다.
       user: { status: 'ACTIVE' },
@@ -327,7 +327,7 @@ export default async function MerchantChargePage({ params, searchParams }: Param
                 </span>
                 <p className="mt-3 text-[15px] font-extrabold text-ink-900">결제 수신번호가 아직 배정되지 않았습니다</p>
                 <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
-                  아직 문자 수신 번호가 배정되지 않아 문자후원를 접수할 수 없습니다. 번호가 배정되면 이 페이지에
+                  아직 문자 수신 번호가 배정되지 않아 문자후원을 접수할 수 없습니다. 번호가 배정되면 이 페이지에
                   표시됩니다. PC 에서는 지금도 결제하실 수 있습니다.
                 </p>
               </div>
@@ -519,7 +519,7 @@ export default async function MerchantChargePage({ params, searchParams }: Param
           <p className="text-[11.5px] leading-relaxed text-ink-400">
             이 페이지는 <span className="font-bold text-ink-500">기브싸인 문자후원</span>로 운영됩니다.
             <br />
-            사회복지기관와 제휴한 문자 결제 서비스입니다.
+            사회복지기관과 제휴한 문자 결제 서비스입니다.
           </p>
           <div className="mt-3 flex items-center justify-center gap-4 text-[12px] font-semibold text-ink-400">
             <Link href="/how-it-works" className="transition-colors hover:text-ink-900">이용방법</Link>

@@ -20,7 +20,7 @@ export { mockPinUrl } from './mock-pin';
  *   7) 취소/환불                            → cancel
  *
  * 주의: 헥토 공식 제약상 결제인증 완료 후 10분 이내에 승인 API 를 호출해야 한다.
- *       기브싸인는 CONFIRM_LINK 유효시간을 그보다 짧게(기본 300초) 운용한다.
+ *       기브싸인은 CONFIRM_LINK 유효시간을 그보다 짧게(기본 300초) 운용한다.
  */
 
 /**

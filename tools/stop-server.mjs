@@ -38,7 +38,7 @@ for (const t of running) {
     failed = true;
     const who = (res.blockedBy ?? []).map((p) => `${p.name}(PID ${p.pid})`).join(', ');
     console.error(`[경고] ${t.label} 를 종료하지 못했습니다.`);
-    if (who) console.error(`       기브싸인가 아닌 다른 프로그램이 사용 중입니다: ${who}`);
+    if (who) console.error(`       기브싸인이 아닌 다른 프로그램이 사용 중입니다: ${who}`);
     else console.error('       작업 관리자에서 Node.js 프로세스를 직접 종료해 주세요.');
   }
 }

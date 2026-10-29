@@ -34,7 +34,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
     expect(await prisma.paymentTransaction.count()).toBe(0);
 
     const mt = readMockOutbox(1)[0];
-    expect(mt.text).toContain('최초 문자는 결제 처리되지 않았습니다');
+    expect(mt.text).toContain('아직 후원되지 않았습니다');
 
     const link = await prisma.secureLink.findFirst({ where: { purpose: 'REGISTER_ACCOUNT' } });
     expect(link).not.toBeNull();
@@ -104,7 +104,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
     expect(summary.totalGross).toBe(3000n);
     expect(summary.balance).toBe(2496n);
 
-    const success = readMockOutbox(10).find((m) => m.text.includes('후원되었습니다'));
+    const success = readMockOutbox(10).find((m) => m.text.includes('후원이 완료되었습니다'));
     expect(success).toBeDefined();
   });
 
@@ -114,7 +114,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
 
     expect(res.result).toBe('ROUTED');
     const charge = await prisma.charge.findFirstOrThrow({ where: { id: res.chargeId } });
-    // 파싱된 10000원이 아니라 사회복지기관가 설정한 3000원이 청구된다.
+    // 파싱된 10000원이 아니라 사회복지기관이 설정한 3000원이 청구된다.
     expect(charge.amount).toBe(3000n);
     // 금액 표기를 잘라내지 않고 본문 전체를 결제 메시지로 사용한다.
     expect(charge.message).toBe('10000원 화이팅');
@@ -133,7 +133,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
     expect(charge.message).toBe('오늘도 응원합니다');
   });
 
-  it('[4-3] 사회복지기관가 고정 금액을 바꾸면 바뀐 금액으로 결제된다', async () => {
+  it('[4-3] 사회복지기관이 고정 금액을 바꾸면 바뀐 금액으로 결제된다', async () => {
     await seedRegisteredPayer(fx.payerPhone);
     setChargeAmount(5000n);
 
@@ -240,7 +240,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
     expect(charge.messageRawEnc).not.toBeNull();
   });
 
-  it('[14] 사회복지기관가 차단한 후원자는 결제되지 않는다', async () => {
+  it('[14] 사회복지기관이 차단한 후원자는 결제되지 않는다', async () => {
     const payer = await seedRegisteredPayer(fx.payerPhone);
     await prisma.blockedPayer.create({
       data: { id: newId(), merchantId: fx.merchantId, payerId: payer.id, reason: '테스트 차단' },
@@ -358,7 +358,7 @@ describe('대표번호 + 키워드 라우팅', () => {
     });
   });
 
-  it('키워드로 사회복지기관를 식별하고 키워드는 메시지에서 제거된다', async () => {
+  it('키워드로 사회복지기관을 식별하고 키워드는 메시지에서 제거된다', async () => {
     await seedRegisteredPayer(fx.payerPhone);
     const res = await inbound(moPayload({ to: '15889000', text: 'MSG3QP7 응원합니다' }));
 

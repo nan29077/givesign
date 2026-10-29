@@ -48,7 +48,7 @@ describe('PIN 인증 결제 흐름 (CONFIRM_LINK 기본 경로)', () => {
     expect(await prisma.paymentTransaction.count()).toBe(0);
 
     const mt = readMockOutbox(1)[0];
-    expect(mt.text).toContain('최초 문자는 결제 처리되지 않았습니다');
+    expect(mt.text).toContain('아직 후원되지 않았습니다');
     expect(await prisma.secureLink.count({ where: { purpose: 'REGISTER_ACCOUNT' } })).toBe(1);
   });
 

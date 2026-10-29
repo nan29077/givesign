@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { initialPointStatus } from './point-status';
 import { openCampaigns } from './fundraising';
 import { resolveSecureLink, consumeSecureLink } from './secure-link';
 import { checkLimits, resolvePolicy } from './limits';
@@ -420,9 +421,8 @@ export async function confirmChargeAmount(input: {
 
   // 금액 확정. PENDING_AMOUNT 일 때만 바뀌므로 동시 요청이 두 번 확정하지 못한다.
   //
-  // pointStatus 는 여기서 정한다. 실물 주문과 문서 상품은 후원금·상품권을 주는 거래가
-  // 아니므로 SKIPPED 로 둔다. 이걸 기본값(PENDING)으로 두면 그 주문이 "지급 대기" 목록과
-  // 연동 API 의 pending 응답에 섞여 들어가 사회복지기관이 후원금를 또 준다.
+  // pointStatus(후원 처리 상태)는 여기서 정한다. 기관이 따로 지급할 것이 없는 후원은 SKIPPED.
+  // 상품 기능(FEATURE_GOODS)을 켠 경우에만 디지털 항목을 PENDING 으로 둔다(point-status.ts).
   const claimed = await prisma.charge.updateMany({
     where: { id: charge.id, status: 'PENDING_AMOUNT' },
     data: {
@@ -433,7 +433,7 @@ export async function confirmChargeAmount(input: {
       quantity,
       optionText,
       shippingFee,
-      pointStatus: selected && selected.kind !== 'DIGITAL' ? 'SKIPPED' : 'PENDING',
+      pointStatus: initialPointStatus(selected?.kind),
       ...(campaignId !== undefined ? { campaignId } : {}),
       ...(input.anonymous !== undefined ? { anonymous: input.anonymous } : {}),
     },

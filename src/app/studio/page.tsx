@@ -104,7 +104,7 @@ export default async function StudioDashboardPage() {
     }),
   ]);
 
-  // 사이드바 배지와 같은 집계다(요청 단위 후원금라 이 호출은 쿼리를 새로 돌리지 않는다).
+  // 사이드바 배지와 같은 집계다(요청 단위 캐시라 이 호출은 쿼리를 새로 돌리지 않는다).
   const [pending, activeProducts, donation, campaignsAll, trend, receiptCandidatesNow] = await Promise.all([
     getStudioPendingCounts(merchantId),
     prisma.chargeProduct.count({ where: { merchantId, active: true, archivedAt: null } }),

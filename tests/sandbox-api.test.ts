@@ -75,8 +75,8 @@ beforeEach(async () => {
 
 describe('키 모드', () => {
   it('[1] 접두사가 모드별로 갈린다', () => {
-    expect(liveKey.apiKey.startsWith('mp_live_')).toBe(true);
-    expect(testKey.apiKey.startsWith('mp_test_')).toBe(true);
+    expect(liveKey.apiKey.startsWith('gs_live_')).toBe(true);
+    expect(testKey.apiKey.startsWith('gs_test_')).toBe(true);
   });
 
   it('[2] ping 이 지금 붙은 키의 모드를 알려준다', async () => {

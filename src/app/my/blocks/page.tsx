@@ -65,7 +65,7 @@ export default async function MyBlocksPage() {
       {links.length === 0 ? (
         <EmptyState
           title="결제한 사회복지기관이 없습니다"
-          description="문자후원를 이용하면 사회복지기관별 차단을 설정할 수 있습니다."
+          description="문자후원을 이용하면 사회복지기관별 차단을 설정할 수 있습니다."
         />
       ) : (
         <div className="space-y-2.5">
@@ -111,7 +111,7 @@ export default async function MyBlocksPage() {
       <Card>
         <CardTitle>전체 이용을 중단하고 싶다면</CardTitle>
         <p className="mt-1.5 text-[13px] leading-relaxed text-ink-500">
-          모든 사회복지기관에 대한 문자후원를 멈추려면 등록 계좌 관리에서 자동출금 동의를 해지해 주세요.
+          모든 사회복지기관에 대한 문자후원을 멈추려면 등록 계좌 관리에서 자동출금 동의를 해지해 주세요.
         </p>
         <LinkButton href="/my/account" variant="secondary" size="md" className="mt-3">
           등록 계좌 관리

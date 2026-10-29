@@ -17,7 +17,7 @@ const DEFAULT_LIMIT = 100;
  * GET /api/partner/v1/charges
  *
  * 결제가 완료된 후원 건을 오래된 순으로 내려준다.
- * 사회복지기관은 이 목록을 받아 자기 사이트의 회원에게 후원금를 적립하고,
+ * 사회복지기관은 이 목록을 받아 자기 사이트의 회원에게 포인트를 적립하거나 후원 내역을 반영하고,
  * 처리한 건을 /charges/ack 로 알려주면 다음 조회에서 빠진다.
  *
  * query
@@ -109,7 +109,7 @@ export async function GET(req: Request) {
     merchantId: auth.merchantId,
     status: { in: PAID_STATUSES },
     paidAt: since ? { gte: since } : { not: null },
-    // 환불된 건은 후원금 지급 대상이 아니다.
+    // 환불된 건은 처리 대상이 아니다.
     refundedAt: null,
     ...(status === 'pending' ? { pointStatus: { in: ['PENDING', 'FAILED'] } } : {}),
   };
@@ -170,7 +170,7 @@ export async function GET(req: Request) {
   return jsonOk({
     items: rows.map((r) => ({
       transactionNo: r.transactionNo,
-      // 금액과 후원금는 1:1 이다.
+      // 금액과 포인트는 1:1 이다(상품 기능).
       amount: Number(r.amount),
       points: Number(r.amount),
       currency: 'KRW',
@@ -201,7 +201,7 @@ export async function GET(req: Request) {
             digitalType: r.product.digitalType,
             name: r.product.name,
             sku: r.product.sku,
-            // 지급할 수량. 비어 있으면 결제 금액과 1:1(후원금 기준)로 본다.
+            // 지급할 수량. 비어 있으면 결제 금액과 1:1(포인트 기준)로 본다.
             giveAmount: r.product.giveAmount != null ? Number(r.product.giveAmount) : null,
             giveUnit: r.product.giveUnit,
             validDays: r.product.validDays,
@@ -209,7 +209,7 @@ export async function GET(req: Request) {
         : null,
       quantity: r.quantity,
       optionText: r.optionText,
-      // 결제 금액에 포함된 배송비. 후원금 적립 금액을 계산할 때 빼야 한다.
+      // 결제 금액에 포함된 배송비. 포인트 적립 금액을 계산할 때 빼야 한다.
       shippingFee: Number(r.shippingFee),
       goodsAmount: Number(r.amount - r.shippingFee),
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { prisma } from '@/server/db';
 import { inboundAndPay, resetDb, seedBasics, seedRegisteredPayer, moPayload, type Fixture } from './helpers';
 import {
@@ -55,6 +55,15 @@ async function fund(count = 3) {
   }
 }
 
+// 처리 대기(pending)·처리 결과 통보(ack)는 상품 기능(FEATURE_GOODS)을 켠 기관용이다.
+// 기본 설정에서는 후원 건이 처음부터 SKIPPED 라 대기 목록에 오르지 않는다(점검 M-17).
+beforeAll(() => {
+  vi.stubEnv('FEATURE_GOODS', 'true');
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 beforeEach(async () => {
   await resetDb();
   fx = await seedBasics();
@@ -71,7 +80,7 @@ describe('인증', () => {
 
   it('[2] 잘못된 키는 401', async () => {
     const result = await authenticatePartner(
-      req('/api/partner/v1/ping', { headers: { authorization: 'Bearer mp_live_nope' } }),
+      req('/api/partner/v1/ping', { headers: { authorization: 'Bearer gs_live_nope' } }),
       '',
     );
     expect(result.ok).toBe(false);

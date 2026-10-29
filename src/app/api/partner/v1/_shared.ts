@@ -117,14 +117,14 @@ export function sandboxOnly(mode: 'LIVE' | 'TEST') {
   return jsonError(
     403,
     'TEST_KEY_REQUIRED',
-    '샌드박스는 테스트 키(mp_test_)로만 호출할 수 있습니다. 후원 설정 → 연동 탭에서 테스트 키를 발급해 주세요.',
+    '샌드박스는 테스트 키(gs_test_)로만 호출할 수 있습니다. 후원 설정 → 연동 탭에서 테스트 키를 발급해 주세요.',
   );
 }
 
 /**
  * 운영 전용 라우트 가드.
  *
- * 테스트 키(mp_test_)로는 운영 데이터를 **읽지도 쓰지도** 못한다.
+ * 테스트 키(gs_test_)로는 운영 데이터를 **읽지도 쓰지도** 못한다.
  *
  * 이 가드가 없으면 "테스트 키니까 안전하겠지" 하고 돌린 연동 스크립트가 운영 상품을
  * 지우고 운영 웹훅을 갈아 끼운다. 샌드박스는 운영과 완전히 분리된 공간이어야 하고,
@@ -140,7 +140,7 @@ export function liveOnly(mode: 'LIVE' | 'TEST') {
   return jsonError(
     403,
     'LIVE_KEY_REQUIRED',
-    '테스트 키(mp_test_)로는 호출할 수 없는 API 입니다. 운영 키(mp_live_)를 사용하시고, 테스트는 /sandbox/* 와 문자 발송 API 로 진행해 주세요.',
+    '테스트 키(gs_test_)로는 호출할 수 없는 API 입니다. 운영 키(gs_live_)를 사용하시고, 테스트는 /sandbox/* 와 문자 발송 API 로 진행해 주세요.',
   );
 }
 

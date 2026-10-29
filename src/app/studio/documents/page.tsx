@@ -222,7 +222,7 @@ export default async function StudioDocumentsPage({
 
           <div className="mt-4">
             <Notice tone="neutral" title="문서는 사회복지기관이 확인합니다">
-              기브싸인는 결제와 작성 링크 전달까지만 맡습니다. 제출된 내용의 검토·보관·후속 처리는 사회복지기관이 하며,
+              기브싸인은 결제와 작성 링크 전달까지만 맡습니다. 제출된 내용의 검토·보관·후속 처리는 사회복지기관이 하며,
               작성 링크는 발송 시점부터 {DOCUMENT_LINK_TTL_DAYS}일간 유효합니다.
             </Notice>
           </div>

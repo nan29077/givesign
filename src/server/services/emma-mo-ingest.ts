@@ -70,7 +70,7 @@ export async function ingestEmmaMo(message: EmmaMoMessage): Promise<string> {
 
 /**
  * EMMA MO 폴링 1회 실행.
- * 크론 엔드후원금(/api/cron/emma-mo)에서 호출한다.
+ * 크론 엔드포인트(/api/cron/emma-mo)에서 호출한다.
  */
 export async function runEmmaMoPolling(): Promise<EmmaPollResult> {
   return pollEmmaMo(ingestEmmaMo);

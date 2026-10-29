@@ -229,7 +229,7 @@ export function SupportWidget({
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               {faqs.length === 0 ? (
                 <div className="rounded-xl bg-ink-50 px-3.5 py-4 text-[12.5px] leading-relaxed text-ink-600">
-                  GiveSign는 문자 한 통으로 결제와 후원금 후원을 연결하는 서비스입니다. 이용 문의와 도입 상담은 1:1 문의로 남겨주세요.
+                  기브싸인은 문자 한 통으로 사회복지기관에 후원할 수 있는 서비스입니다. 이용 문의와 도입 상담은 1:1 문의로 남겨주세요.
                 </div>
               ) : (
                 <div className="space-y-1.5">

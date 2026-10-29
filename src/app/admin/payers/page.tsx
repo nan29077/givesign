@@ -245,7 +245,7 @@ export default async function AdminPayersPage({
                                   submitLabel="제한 적용"
                                   variant="danger"
                                   compact
-                                  confirm="이 후원자의 이용을 제한합니다. 이후 문자후원가 접수되지 않습니다."
+                                  confirm="이 후원자의 이용을 제한합니다. 이후 문자후원이 접수되지 않습니다."
                                 >
                                   <input type="hidden" name="payerId" value={d.id} />
                                   <input type="hidden" name="next" value="BLOCK" />

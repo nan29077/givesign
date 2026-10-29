@@ -44,7 +44,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ token
             <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
             <div className="mt-3">
               <Notice tone="warning" title="주의">
-                기브싸인는 문자로 발송한 링크 외에 다른 경로로 개인정보나 계좌 정보를 요구하지 않습니다.
+                기브싸인은 문자로 발송한 링크 외에 다른 경로로 개인정보나 계좌 정보를 요구하지 않습니다.
               </Notice>
             </div>
           </Card>

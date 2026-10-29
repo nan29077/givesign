@@ -25,7 +25,7 @@ export function WithdrawForm() {
           <p className="text-[15px] font-bold text-ink-900">회원 탈퇴</p>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
             탈퇴하면 계정 정보가 삭제되고 다시 로그인할 수 없습니다. 등록된 자동출금 수단은 즉시 해지되어 이후
-            문자후원가 접수되지 않습니다. 다만 이미 발생한 결제·정산 기록은 관계 법령에 따라 보관됩니다.
+            문자후원이 접수되지 않습니다. 다만 이미 발생한 결제·정산 기록은 관계 법령에 따라 보관됩니다.
           </p>
 
           {!open ? (

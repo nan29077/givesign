@@ -59,7 +59,7 @@ export async function saveMtTemplateAction(_prev: AdminActionState, fd: FormData
       after: { body },
     });
 
-    // 발송 경로가 30초 후원금를 쓰므로, 저장 직후 바로 반영되도록 비운다.
+    // 발송 경로가 30초 캐시를 쓰므로, 저장 직후 바로 반영되도록 비운다.
     clearMtTemplateOverrideCache();
     revalidatePath('/admin/mt-templates');
     return `"${MT_TEMPLATE_META[code].label}" 문자 본문을 저장했습니다. 다음 발송부터 적용됩니다.`;

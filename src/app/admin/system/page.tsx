@@ -94,7 +94,7 @@ export default async function AdminSystemPage() {
             tone={db.ok ? 'success' : 'danger'}
           />
           <StatTile
-            label="후원금(Redis)"
+            label="캐시(Redis)"
             value={cache.ok ? '정상' : '오류'}
             sub={`${cache.latencyMs}ms · ${env.redisUrl ? 'Redis' : `인메모리 폴백 ${env.allowInMemoryFallback ? '허용' : '금지'}`}`}
             tone={cache.ok ? 'success' : 'danger'}
@@ -139,7 +139,7 @@ export default async function AdminSystemPage() {
                 <tr>
                   <Th>수신 시각</Th>
                   <Th>출처</Th>
-                  <Th>엔드후원금</Th>
+                  <Th>엔드포인트</Th>
                   <Th>서명</Th>
                   <Th className="text-right">상태코드</Th>
                   <Th className="text-right">지연</Th>
@@ -249,10 +249,10 @@ export default async function AdminSystemPage() {
               <span className="grid h-8 w-8 place-items-center rounded-lg bg-ink-50 text-brand-700">
                 <Server size={16} strokeWidth={1.7} />
               </span>
-              <CardTitle>후원금</CardTitle>
+              <CardTitle>캐시</CardTitle>
             </div>
             <p className="text-[13px] leading-relaxed text-ink-500">
-              한도·속도 제한 카운터는 후원금에 저장되고 ChargeCounter 가 영속 원본입니다. 운영에서는 인메모리 폴백을
+              한도·속도 제한 카운터는 캐시에 저장되고 ChargeCounter 가 영속 원본입니다. 운영에서는 인메모리 폴백을
               금지해야 합니다.
             </p>
           </Card>
@@ -265,7 +265,7 @@ export default async function AdminSystemPage() {
               <span>
                 {!db.ok ? `DB: ${db.detail}` : ''}
                 {!db.ok && !cache.ok ? ' / ' : ''}
-                {!cache.ok ? `후원금: ${cache.detail}` : ''}
+                {!cache.ok ? `캐시: ${cache.detail}` : ''}
               </span>
             </span>
           </Notice>

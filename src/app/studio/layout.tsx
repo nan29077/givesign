@@ -81,16 +81,16 @@ function buildGroups(pending: {
 
 const STATUS_NOTICE: Record<string, { title: string; body: string }> = {
   PENDING: {
-    title: '채널 심사가 진행 중입니다',
-    body: '가입해 주셔서 감사합니다. 담당자가 채널 정보를 확인하고 있으며, 승인이 완료되면 등록하신 연락처로 안내드립니다. 승인 후 스튜디오의 모든 기능을 사용하실 수 있습니다.',
+    title: '기관 등록 심사가 진행 중입니다',
+    body: '신청해 주셔서 감사합니다. 담당자가 기관 정보를 확인하고 있으며, 승인이 완료되면 등록하신 연락처로 안내드립니다. 승인 후 기관 콘솔의 모든 기능을 사용하실 수 있습니다.',
   },
   REJECTED: {
-    title: '채널 심사가 반려되었습니다',
-    body: '제출하신 채널 정보로는 승인이 어려웠습니다. 사유 확인과 재심사 요청은 고객센터 문의로 접수해 주세요.',
+    title: '기관 등록 심사가 반려되었습니다',
+    body: '제출하신 기관 정보로는 승인이 어려웠습니다. 사유 확인과 재심사 요청은 고객센터 문의로 접수해 주세요.',
   },
   SUSPENDED: {
-    title: '채널이 정지되었습니다',
-    body: '운영정책 위반 또는 관리자 조치로 채널이 정지된 상태입니다. 정지 사유와 해제 절차는 고객센터로 문의해 주세요.',
+    title: '기관 이용이 정지되었습니다',
+    body: '운영정책 위반 또는 관리자 조치로 기관 이용이 정지된 상태입니다. 정지 사유와 해제 절차는 고객센터로 문의해 주세요.',
   },
 };
 
@@ -123,7 +123,7 @@ export default async function StudioLayout({ children }: { children: React.React
   if (!user) redirect('/login?next=/studio');
 
   // 밀린 일을 메뉴에서 바로 보이게 한다.
-  // 대시보드도 같은 집계를 쓰므로 요청 단위 후원금로 묶어 한 번만 실행한다.
+  // 대시보드도 같은 집계를 쓰므로 요청 단위 캐시로 묶어 한 번만 실행한다.
   const pending = await getStudioPendingCounts(user.merchantId);
 
   return (

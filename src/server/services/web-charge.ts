@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { initialPointStatus } from './point-status';
 import { newId, newTransactionNo } from '@/lib/id';
 import { encrypt } from '@/lib/crypto';
 import { payerDisplayName } from '@/lib/payer-name';
@@ -142,6 +143,7 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         messageRawEnc: encrypt(input.message),
         status: 'RECEIVED',
         statusReason: '후원 페이지 웹 후원',
+        pointStatus: initialPointStatus(),
         paymentMode: resolvePaymentMode(merchant.paymentMode),
         campaignId,
         anonymous: Boolean(input.anonymous),

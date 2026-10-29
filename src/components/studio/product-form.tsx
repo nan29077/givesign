@@ -67,6 +67,7 @@ export function ProductForm({
   effMax,
   submitLabel,
   documentTemplates = [],
+  donationMode = false,
 }: {
   action: Action;
   kind: ProductKind;
@@ -80,6 +81,11 @@ export function ProductForm({
   submitLabel: string;
   /** 문서 상품에 연결할 수 있는 서식. 문서 종류에서만 쓴다. */
   documentTemplates?: Array<{ id: string; name: string }>;
+  /**
+   * 상품 기능(FEATURE_GOODS)이 꺼진 기본 설정. 비실물 항목을 "후원 항목"(금액·용도)으로만 다루고
+   * 지급 유형·지급 수량·지급 방식처럼 상품 판매에만 쓰는 입력은 감춘다(점검 M-18).
+   */
+  donationMode?: boolean;
 }) {
   const isPhysical = kind === 'PHYSICAL';
   const isDocument = kind === 'DOCUMENT';
@@ -95,14 +101,14 @@ export function ProductForm({
       {product ? <input type="hidden" name="productId" value={product.id} /> : null}
 
       {/* ── 1. 기본 정보 ───────────────────────────────────────── */}
-      <Section step={1} title="기본 정보" description="결제 화면에 그대로 보이는 이름과 노출 여부입니다.">
+      <Section step={1} title="기본 정보" description="후원 화면에 그대로 보이는 이름과 노출 여부입니다.">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="상품 이름" hint="40자 이내. 같은 이름은 쓸 수 없습니다." required>
+          <Field label={donationMode ? '항목 이름' : '상품 이름'} hint="40자 이내. 같은 이름은 쓸 수 없습니다." required>
             <Input
               name="name"
               maxLength={40}
               defaultValue={product?.name ?? ''}
-              placeholder={isPhysical ? '기념 굿즈 티셔츠' : '10,000 후원금'}
+              placeholder={isPhysical ? '기념 굿즈 티셔츠' : donationMode ? '김장 나눔 1만원' : '10,000원 이용권'}
             />
           </Field>
 
@@ -135,10 +141,12 @@ export function ProductForm({
                 </Select>
               )}
             </Field>
+          ) : donationMode ? (
+            <input type="hidden" name="digitalType" value={product?.digitalType ?? 'POINT'} />
           ) : (
             <Field label="유형" required>
               <Select name="digitalType" defaultValue={product?.digitalType ?? 'POINT'}>
-                <option value="POINT">후원금</option>
+                <option value="POINT">포인트</option>
                 <option value="VOUCHER">상품권</option>
                 <option value="PASS">이용권</option>
                 <option value="CONTENT">컨텐츠</option>
@@ -155,19 +163,19 @@ export function ProductForm({
         <input type="hidden" name="activePresent" value="1" />
         <label className="flex items-center gap-2 text-[13px] font-semibold text-ink-800">
           <input type="checkbox" name="active" defaultChecked={product ? product.active : true} className="h-4 w-4" />
-          결제 화면에 노출
+          후원 화면에 노출
         </label>
       </Section>
 
       {/* ── 2. 판매 정보 ───────────────────────────────────────── */}
       <Section
         step={2}
-        title="판매 정보"
+        title={donationMode ? '후원 금액' : '판매 정보'}
         description={`등록 가능한 금액은 ${formatWon(effMin)} ~ ${formatWon(effMax)} 입니다.`}
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <Field
-            label="판매 금액 (원)"
+            label={donationMode ? '후원 금액 (원)' : '판매 금액 (원)'}
             hint={isPhysical ? '배송비를 뺀 상품 1개 가격' : undefined}
             required
           >
@@ -180,16 +188,18 @@ export function ProductForm({
             />
           </Field>
 
-          <div className="flex items-end">
-            <label className="flex items-center gap-2 pb-3 text-[13px] font-semibold text-ink-800">
-              <input type="checkbox" name="taxFree" defaultChecked={product?.taxFree ?? false} className="h-4 w-4" />
-              면세 상품
-              <span className="font-normal text-ink-400">(정산 부가세 계산 기준)</span>
-            </label>
-          </div>
+          {donationMode ? null : (
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 pb-3 text-[13px] font-semibold text-ink-800">
+                <input type="checkbox" name="taxFree" defaultChecked={product?.taxFree ?? false} className="h-4 w-4" />
+                면세 상품
+                <span className="font-normal text-ink-400">(정산 부가세 계산 기준)</span>
+              </label>
+            </div>
+          )}
         </div>
 
-        {isDocument ? null : isPhysical ? (
+        {isDocument || donationMode ? null : isPhysical ? (
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="재고" hint="비우면 무제한. 결제 승인 시 차감됩니다.">
               <Input
@@ -221,7 +231,7 @@ export function ProductForm({
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="지급 수량" hint="비우면 후원금는 금액과 1:1">
+            <Field label="지급 수량" hint="비우면 포인트는 금액과 1:1">
               <Input
                 name="giveAmount"
                 inputMode="numeric"
@@ -230,8 +240,8 @@ export function ProductForm({
                 className="tabular-nums"
               />
             </Field>
-            <Field label="지급 단위" hint="후원금 · 매 · 개월 · 개">
-              <Input name="giveUnit" maxLength={10} defaultValue={product?.giveUnit ?? ''} placeholder="후원금" />
+            <Field label="지급 단위" hint="포인트 · 매 · 개월 · 개">
+              <Input name="giveUnit" maxLength={10} defaultValue={product?.giveUnit ?? ''} placeholder="포인트" />
             </Field>
             <Field label="유효기간 (일)" hint="이용권은 필수. 비우면 무기한.">
               <Input
@@ -267,12 +277,14 @@ export function ProductForm({
             <Link href="/studio/documents?tab=submissions" className="font-bold text-brand-700">
               문서 관리 &gt; 제출된 문서
             </Link>{' '}
-            에서 확인합니다. 배송과 후원금 지급은 일어나지 않습니다.
+            에서 확인합니다. 배송과 지급은 일어나지 않습니다.
           </Notice>
           <Notice tone="warning" title="서식을 중지하면 결제할 수 없습니다">
             연결한 서식을 중지·보관하면 이 상품은 결제 화면에서 고를 수 없습니다. 판매 중에는 서식을 그대로 두세요.
           </Notice>
         </Section>
+      ) : donationMode ? (
+        <input type="hidden" name="fulfillment" value="MANUAL" />
       ) : (
         <Section step={3} title="지급 방식" description="결제가 끝난 뒤 후원자에게 무엇을 어떻게 주는지 정합니다.">
           <Field label="지급 방식" required>
@@ -319,13 +331,13 @@ export function ProductForm({
       )}
 
       {/* ── 4. 이미지 ─────────────────────────────────────────── */}
-      <Section step={4} title="이미지" description="결제 화면 목록의 썸네일과 상세 이미지로 쓰입니다.">
+      <Section step={donationMode ? 3 : 4} title="이미지" description="후원 화면 목록의 썸네일과 상세 이미지로 쓰입니다.">
         <ImageUploadField
           name="imageUrl"
           label="대표 이미지"
           aspect="square"
           defaultValue={product?.imageUrl ?? ''}
-          hint="상품 목록의 썸네일과 상세 상단에 쓰입니다. 정사각형 권장."
+          hint="목록의 썸네일과 상세 상단에 쓰입니다. 정사각형 권장."
         />
         <GalleryField
           name="extraImage"
@@ -337,14 +349,14 @@ export function ProductForm({
       </Section>
 
       {/* ── 5. 상세 설명 ──────────────────────────────────────── */}
-      <Section step={5} title="상세 설명" description="결제 화면에서 상품을 고르면 펼쳐집니다.">
-        <Field label="상품 설명" hint="2,000자 이내. 줄바꿈이 그대로 유지됩니다.">
+      <Section step={donationMode ? 4 : 5} title="상세 설명" description="후원 화면에서 항목을 고르면 펼쳐집니다.">
+        <Field label={donationMode ? '항목 설명' : '상품 설명'} hint="2,000자 이내. 줄바꿈이 그대로 유지됩니다.">
           <Textarea
             name="description"
             rows={6}
             maxLength={2000}
             defaultValue={product?.description ?? ''}
-            placeholder={'소재 · 사용법 · 주의사항 등을 적어 주세요.'}
+            placeholder={donationMode ? '후원금이 어디에 어떻게 쓰이는지 적어 주세요.' : '소재 · 사용법 · 주의사항 등을 적어 주세요.'}
           />
         </Field>
       </Section>

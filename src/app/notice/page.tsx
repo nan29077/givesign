@@ -61,7 +61,7 @@ function NoticeAside() {
       <Card>
         <CardTitle>운영 상태</CardTitle>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          기브싸인는 현재 준비 단계로, 실제 결제와 문자 발송은 비활성화되어 있습니다. 화면에 보이는 결제·문자 관련
+          기브싸인은 현재 준비 단계로, 실제 결제와 문자 발송은 비활성화되어 있습니다. 화면에 보이는 결제·문자 관련
           동작은 모의(mock) 처리입니다.
         </p>
       </Card>

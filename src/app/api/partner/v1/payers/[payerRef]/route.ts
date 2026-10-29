@@ -27,7 +27,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ payerRef: strin
   if (testDenied) return testDenied;
 
   const { payerRef } = await ctx.params;
-  // 옛 행은 payerRef 후원금가 비어 있다. 못 찾으면 한 번 채우고 다시 본다.
+  // 옛 행은 payerRef 캐시가 비어 있다. 못 찾으면 한 번 채우고 다시 본다.
   let link = await prisma.payerMerchantLink.findFirst({
     where: { merchantId: auth.merchantId, payerRef },
     select: {

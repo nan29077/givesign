@@ -31,7 +31,7 @@ export function MoNumberPanel({ numbers, guideText }: { numbers: MoNumberView[];
           <div>
             <p className="text-[14px] font-bold text-ink-900">배정된 수신번호가 없습니다</p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
-              번호가 배정되기 전에는 문자후원를 받을 수 없습니다. 통합 관리자에게 번호 배정을 요청해 주세요.
+              번호가 배정되기 전에는 문자후원을 받을 수 없습니다. 통합 관리자에게 번호 배정을 요청해 주세요.
             </p>
           </div>
         </div>

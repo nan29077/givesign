@@ -10,7 +10,7 @@ import { decideMessageType, type MtAdapter, type MtSendRequest, type MtSendResul
  * ─────────────────────────────────────────────────────────────────────────────
  * 규격 (SOLAPI Messages v4)
  *
- *  1) 엔드후원금
+ *  1) 엔드포인트
  *     POST https://api.coolsms.co.kr/messages/v4/send
  *     Content-Type: application/json
  *

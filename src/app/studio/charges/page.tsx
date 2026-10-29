@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { LayoutGrid, Rows3, Search } from 'lucide-react';
+import { featureGoodsEnabled } from '@/lib/env';
 import { Badge, Button, Card, EmptyState, Field, Input, Notice, Select, Table, Td, Th, cx } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
 import {
@@ -41,7 +42,7 @@ const PERIODS = [
 // 코드가 한 번도 기록하지 않는 상태(구 방송 송출 잔재 등)는 필터에서 뺀다.
 const STATUS_VALUES = SELECTABLE_CHARGE_STATUSES;
 
-/** 후원금 지급 처리 상태 필터 */
+/** 포인트 지급 처리 상태 필터 (상품 기능) */
 const POINT_FILTERS = [
   { value: '', label: '전체' },
   { value: 'pending', label: '지급 대기' },
@@ -139,7 +140,7 @@ export default async function StudioChargesPage({
         {/* 지급 처리는 후원 처리 > 비실물(컨텐츠) 판매로 옮겼다.
             후원 내역은 "돈이 어떻게 됐나" 를 보는 화면이고, 지급은 "무엇을 줘야 하나" 라
             섞어 두면 실물 주문까지 지급 목록에 끼어든다. */}
-        {pendingTotal > 0 ? (
+        {featureGoodsEnabled() && pendingTotal > 0 ? (
           <Notice tone="warning" title={`지급 대기 ${formatNumber(pendingTotal)}건`}>
             비실물(컨텐츠) 상품의 지급 처리는{' '}
             <Link href="/studio/orders?tab=digital" className="font-bold text-brand-700">
@@ -170,7 +171,7 @@ export default async function StudioChargesPage({
                 ))}
               </Select>
             </Field>
-            <Field label="후원금 지급">
+            <Field label="상품 지급">
               <Select name="point" defaultValue={point}>
                 {POINT_FILTERS.map((f) => (
                   <option key={f.value} value={f.value}>
@@ -335,7 +336,7 @@ export default async function StudioChargesPage({
                             variant="ghost"
                             size="sm"
                             confirmTitle="지급 대기로 되돌릴까요?"
-                            confirmMessage="지급 완료 표시를 지우고 대기 목록으로 되돌립니다. 내 서비스에 넣은 후원금는 직접 회수해 주세요."
+                            confirmMessage="지급 완료 표시를 지우고 대기 목록으로 되돌립니다. 내 서비스에 넣은 포인트는 직접 회수해 주세요."
                             doneTitle="지급 대기로 되돌렸습니다"
                           >
                             <input type="hidden" name="chargeIds" value={d.id} />

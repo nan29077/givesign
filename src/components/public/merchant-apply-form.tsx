@@ -48,7 +48,7 @@ export function MerchantApplyForm({ loggedIn, sessionEmail }: { loggedIn: boolea
       <Card className="space-y-4">
         <CardTitle>기관 정보</CardTitle>
 
-        <Field label="표시명" required hint="결제 페이지에 표시되는 이름입니다.">
+        <Field label="표시명" required hint="후원 페이지에 표시되는 이름입니다.">
           <Input name="displayName" required maxLength={30} defaultValue={state.values?.displayName} placeholder="햇살종합사회복지관" />
         </Field>
 
@@ -67,7 +67,7 @@ export function MerchantApplyForm({ loggedIn, sessionEmail }: { loggedIn: boolea
           />
         </Field>
 
-        <Field label="소개" hint="결제 페이지에 표시할 짧은 소개입니다. (300자 이내)">
+        <Field label="소개" hint="후원 페이지에 표시할 짧은 소개입니다. (300자 이내)">
           <Textarea name="description" rows={4} maxLength={300} defaultValue={state.values?.description} placeholder="문자 한 통으로 후원할 수 있습니다." />
         </Field>
       </Card>
@@ -184,7 +184,7 @@ function ApplyDone({ code, displayName }: { code: string; displayName?: string }
           </p>
           <p className="mt-1.5 font-mono text-[26px] font-extrabold tracking-[0.12em] text-ink-900">{code}</p>
           <p className="mt-1.5 text-[12px] leading-relaxed text-ink-500">
-            승인 후 후원자가 이 코드로 결제 페이지에 접속할 수 있습니다.
+            승인 후 후원자가 이 코드로 후원 페이지에 접속할 수 있습니다.
           </p>
         </div>
       </Card>
@@ -203,7 +203,7 @@ function ApplyDone({ code, displayName }: { code: string; displayName?: string }
           <li>
             <span className="font-bold text-ink-900">2. MO 결제 수신번호 배정</span>
             <br />
-            문자 수신 번호는 관리자 승인 이후에 배정됩니다. 승인 전에는 결제 페이지가 공개되지 않고 문자후원도 접수되지
+            문자 수신 번호는 관리자 승인 이후에 배정됩니다. 승인 전에는 후원 페이지가 공개되지 않고 문자후원도 접수되지
             않습니다.
           </li>
           <li>
@@ -215,7 +215,7 @@ function ApplyDone({ code, displayName }: { code: string; displayName?: string }
       </Card>
 
       <Notice tone="warning" title="현재 준비 단계 안내">
-        기브싸인는 준비 단계로 실제 문자 발송과 결제는 비활성화되어 있습니다. 승인 및 번호 배정 일정은 별도로
+        기브싸인은 준비 단계로 실제 문자 발송과 결제는 비활성화되어 있습니다. 승인 및 번호 배정 일정은 별도로
         안내드립니다.
       </Notice>
 

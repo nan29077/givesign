@@ -40,7 +40,7 @@ export default async function MerchantApplyPage() {
           </div>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
             {existing.status === 'PENDING'
-              ? '관리자 심사가 진행 중입니다. 승인되면 MO 결제 수신번호가 배정되고 결제 페이지가 공개됩니다.'
+              ? '관리자 심사가 진행 중입니다. 승인되면 MO 결제 수신번호가 배정되고 후원 페이지가 공개됩니다.'
               : existing.status === 'APPROVED'
                 ? '승인이 완료되었습니다. 사회복지기관 콘솔에서 후원 설정과 정산을 설정하세요.'
                 : '신청 상태에 대한 자세한 안내가 필요하면 고객센터로 문의해 주세요.'}
@@ -62,8 +62,8 @@ export default async function MerchantApplyPage() {
         <>
           <div className="mb-4">
             <Notice tone="warning" title="MO 결제 수신번호는 승인 후 배정됩니다">
-              신청 즉시 문자후원가 시작되지 않습니다. 관리자 승인 후 전용 번호(또는 대표번호 + 키워드)가 배정되며, 그
-              전까지는 결제 페이지가 공개되지 않습니다.
+              신청 즉시 문자후원이 시작되지 않습니다. 관리자 승인 후 전용 번호(또는 대표번호 + 키워드)가 배정되며, 그
+              전까지는 후원 페이지가 공개되지 않습니다.
             </Notice>
           </div>
           <MerchantApplyForm loggedIn={Boolean(user)} sessionEmail={user?.email ?? null} />

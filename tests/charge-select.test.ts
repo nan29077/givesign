@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '@/server/db';
 import { mockMoAdapter } from '@/server/adapters/mo';
 import { readMockOutbox } from '@/server/adapters/mt';
@@ -227,20 +227,34 @@ describe('후원 금액 선택', () => {
     expect(await prisma.secureLink.count({ where: { purpose: 'SELECT_AMOUNT' } })).toBe(0);
   });
 
-  it('[13] 결제가 승인돼도 포인트 지급은 대기 상태로 남는다 (지급은 사회복지기관이 한다)', async () => {
+  async function payWithProduct() {
     const res = await inbound(moPayload({ to: fx.moNumber }));
     const token = lastSelectAmountToken()!;
     const product = await prisma.chargeProduct.findFirstOrThrow({ where: { amount: 3000n } });
     await confirmChargeAmount({ token, productId: product.id });
-
     const session = await prisma.paymentPinSession.findFirstOrThrow();
     await completePinAuthorization({ sessionId: session.sessionId });
+    return prisma.charge.findUniqueOrThrow({ where: { id: res.chargeId! } });
+  }
 
-    const paid = await prisma.charge.findUniqueOrThrow({ where: { id: res.chargeId! } });
+  it('[13] 후원은 기관이 따로 지급할 것이 없어 결제가 승인되면 처리 상태가 "해당 없음(SKIPPED)"이다', async () => {
+    const paid = await payWithProduct();
     expect(paid.paidAt).not.toBeNull();
-    // 기브싸인는 사회복지기관 서버를 호출하지 않는다. 지급 여부는 사회복지기관이 콘솔에서 표시한다.
-    expect(paid.pointStatus).toBe('PENDING');
-    expect(paid.pointGivenAt).toBeNull();
+    // "지급 대기"로 쌓이지 않는다(점검 M-17).
+    expect(paid.pointStatus).toBe('SKIPPED');
+  });
+
+  it('[13-1] 상품 기능(FEATURE_GOODS)을 켜면 디지털 항목은 예전처럼 지급 대기로 남는다', async () => {
+    vi.stubEnv('FEATURE_GOODS', 'true');
+    try {
+      const paid = await payWithProduct();
+      expect(paid.paidAt).not.toBeNull();
+      // 기브싸인은 기관 서버를 호출하지 않는다. 지급 여부는 기관이 콘솔·연동 API 로 표시한다.
+      expect(paid.pointStatus).toBe('PENDING');
+      expect(paid.pointGivenAt).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
 });

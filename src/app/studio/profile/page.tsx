@@ -52,7 +52,7 @@ export default async function StudioSettingsProfilePage() {
         <section>
           <SectionTitle
             title="프로필 수정"
-            description="결제 페이지와 결제 알림에 표시되는 정보입니다. 사회복지기관 소개는 후원 설정 > 결제 페이지 탭에서 수정합니다."
+            description="후원 페이지와 결제 알림에 표시되는 정보입니다. 사회복지기관 소개는 후원 설정 > 후원 페이지 탭에서 수정합니다."
           />
           <Card>
             <div className="mb-5 flex items-center gap-3 rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
@@ -131,7 +131,7 @@ export default async function StudioSettingsProfilePage() {
         </section>
 
         <Notice tone="neutral">
-          표시명과 소개는 결제 페이지에 그대로 노출됩니다. 개인 연락처나 계좌번호 등 개인정보는 입력하지 마세요.
+          표시명과 소개는 후원 페이지에 그대로 노출됩니다. 개인 연락처나 계좌번호 등 개인정보는 입력하지 마세요.
           채널 상태 변경(승인·정지)과 사회복지기관 코드 변경은 통합 관리자를 통해서만 가능합니다.
         </Notice>
       </div>

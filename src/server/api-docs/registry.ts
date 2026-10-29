@@ -27,9 +27,9 @@ export const API_CATEGORIES: ApiCategory[] = [
       {
         heading: '역할 분담',
         body: [
-          '기브싸인가 하는 일 — 후원자에게서 결제를 받고, 결제 결과를 확정하고, 정산합니다. 문자(MO 수신·MT 발송)는 기브싸인가 처리합니다.',
-          '사회복지기관이 하는 일 — 결제된 건을 자기 서비스에 반영합니다. 후원금를 적립하거나, 상품을 발송하거나, 컨텐츠를 지급합니다. 반영이 끝나면 기브싸인에 알려줍니다.',
-          '후원금를 발행하는 주체는 사회복지기관입니다. 기브싸인는 결제와 정산까지만 책임집니다.',
+          '기브싸인이 하는 일 — 후원자에게서 결제를 받고, 결제 결과를 확정하고, 정산합니다. 문자(MO 수신·MT 발송)는 기브싸인이 처리합니다.',
+          '사회복지기관이 하는 일 — 후원된 건을 자기 시스템에 반영합니다. 후원자 관리 프로그램에 기록하거나 감사 처리를 하고, 상품 기능을 쓰는 기관은 포인트를 적립하거나 상품을 발송합니다. 반영이 끝나면 기브싸인에 알려줍니다.',
+          '후원을 받는 주체는 사회복지기관입니다. 기브싸인은 결제와 정산까지만 책임집니다.',
         ],
       },
       {
@@ -47,7 +47,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         body: [
           '후원(charge) — 후원자가 돈을 내고 사회복지기관에 반영되는 한 건. 거래번호는 MP 로 시작합니다.',
           'payerRef — 사회복지기관 전용 후원자 고정 식별자. 휴대폰 번호를 직접 주고받지 않기 위해 씁니다.',
-          'MO — 후원자가 보낸 문자(수신). MT — 기브싸인가 보내는 문자(발신).',
+          'MO — 후원자가 보낸 문자(수신). MT — 기브싸인이 보내는 문자(발신).',
         ],
       },
     ],
@@ -68,8 +68,8 @@ export const API_CATEGORIES: ApiCategory[] = [
       {
         heading: '키 종류',
         body: [
-          '운영 키(mp_live_) — 실제 결제·실제 문자·정산 대상입니다.',
-          '테스트 키(mp_test_) — 샌드박스 전용입니다. 문자가 나가지 않고, 돈이 빠지지 않고, 정산에 잡히지 않습니다.',
+          '운영 키(gs_live_) — 실제 결제·실제 문자·정산 대상입니다.',
+          '테스트 키(gs_test_) — 샌드박스 전용입니다. 문자가 나가지 않고, 돈이 빠지지 않고, 정산에 잡히지 않습니다.',
           '테스트 키가 닿는 범위는 /sandbox/*, /charges 계열, /mt/* 뿐입니다. 상품·웹훅·후원자·정산·통계·수수료 API 는 운영 키로만 호출할 수 있습니다(403 LIVE_KEY_REQUIRED).',
           '모드는 발급할 때 고르며 나중에 바꿀 수 없습니다. 운영 키가 조용히 테스트로 바뀌면 어느 쪽 데이터를 건드리는지 알 수 없게 되기 때문입니다. 후원 설정 → 연동 탭에서 각각 발급하세요.',
           '접두사를 다르게 두는 이유는 운영 키를 테스트 코드에 넣는 사고를 눈으로 걸러내기 위해서입니다.',
@@ -190,7 +190,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         body: [
           '테스트 키로 `/charges`, `/charges/ack`, `/charges/shipment`, `/mt/*` 를 호출하면 샌드박스 데이터를 대상으로 동작합니다. 경로도 응답 모양도 운영과 같습니다.',
           '그래서 결제 연동과 문자 발송을 테스트 키로 완성한 뒤, 키만 운영 키로 바꾸면 그대로 동작합니다. 코드를 고칠 필요가 없습니다.',
-          '아래 `/sandbox/*` 엔드후원금는 테스트 키로만 호출할 수 있습니다. 운영 키로 부르면 403 TEST_KEY_REQUIRED 가 납니다.',
+          '아래 `/sandbox/*` 엔드포인트는 테스트 키로만 호출할 수 있습니다. 운영 키로 부르면 403 TEST_KEY_REQUIRED 가 납니다.',
           '반대로 위에 적힌 것 밖의 API — 상품(/products), 웹훅(/webhooks), 후원자(/payers), 정산(/settlements), 통계(/stats), 수수료(/fees) — 는 테스트 키로 호출할 수 없습니다. 403 LIVE_KEY_REQUIRED 가 납니다.',
           '샌드박스 사본이 없는 영역이라, 테스트 키를 허용하면 시험 삼아 돌린 스크립트가 운영 상품을 지우고 운영 웹훅을 갈아 끼우게 됩니다. 이 API 들은 운영 키로만 부르고, 지워도 되는 값으로 시험해 주세요.',
         ],
@@ -296,8 +296,8 @@ export const API_CATEGORIES: ApiCategory[] = [
     ],
     sections: [
       {
-        heading: '금액과 후원금',
-        body: ['금액은 원 단위 정수입니다. 소수점이 없습니다. 후원금 환산은 사회복지기관이 정합니다(기본 안내는 1원 = 1후원금).'],
+        heading: '금액',
+        body: ['금액은 원 단위 정수입니다. 소수점이 없습니다. 상품 기능을 쓰는 기관의 포인트 환산은 기관이 정합니다(기본 안내는 1원 = 1포인트).'],
       },
       {
         heading: '중복 처리 방지',
@@ -322,7 +322,12 @@ export const API_CATEGORIES: ApiCategory[] = [
           { name: 'cursor', in: 'query', type: 'string', description: '직전 응답의 nextCursor' },
         ],
         responseExample:
-          '{\n  "ok": true,\n  "items": [\n    {\n      "transactionNo": "MP...",\n      "amount": 10000,\n      "message": "응원합니다",\n      "payerRef": "...",\n      "payerPhoneMasked": "010--5678",\n      "paidAt": "2026-09-05T03:34:56.000Z",\n      "product": { "name": "후원금 10,000", "kind": "DIGITAL" }\n    }\n  ],\n  "nextCursor": null\n}',
+          '{\n  "ok": true,\n  "items": [\n    {\n      "transactionNo": "TRD-...",\n      "amount": 10000,\n      "message": "응원합니다",\n      "payerRef": "...",\n      "payerPhoneMasked": "010--5678",\n      "paidAt": "2026-09-05T03:34:56.000Z",\n      "product": { "name": "김장 나눔 1만원", "kind": "DIGITAL" },\n      "anonymous": false,\n      "campaign": { "id": "...", "code": "김장", "title": "김장 나눔" },\n      "recurring": false\n    }\n  ],\n  "nextCursor": null\n}',
+        notes: [
+          'anonymous 가 true 인 건은 후원자가 이름 비공개를 원한 것입니다. 기관 내부 기록에만 쓰고 공개 명단·감사 게시물에 이름이나 메시지를 싣지 마세요.',
+          'campaign 은 지정후원(캠페인) 건에만 값이 있고, 일반 후원이면 null 입니다. recurring 이 true 면 정기후원 자동 출금 건입니다.',
+          'status=pending 과 /charges/ack 는 상품 기능(FEATURE_GOODS)을 켠 기관용입니다. 일반 후원 건은 처리할 것이 없어 처음부터 pending 목록에 오르지 않습니다.',
+        ],
       },
       {
         method: 'POST',
@@ -330,7 +335,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         summary: '처리 결과 통보',
         status: 'LIVE',
         signed: true,
-        description: '후원금 적립을 끝냈다고(또는 보류했다고) 알립니다. 알린 건은 다음 pending 조회에서 빠집니다.',
+        description: '처리(감사 처리·포인트 적립 등)를 끝냈다고(또는 보류했다고) 알립니다. 알린 건은 다음 pending 조회에서 빠집니다.',
         params: [
           { name: 'transactionNos', in: 'body', type: 'string[]', required: true, description: '처리한 거래번호 목록' },
           { name: 'status', in: 'body', type: 'string', required: true, description: 'SENT | FAILED' },
@@ -352,7 +357,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         summary: '환불 요청',
         status: 'PLANNED',
         signed: true,
-        description: '사회복지기관이 환불을 요청합니다. 승인과 실제 환불 처리는 기브싸인가 합니다.',
+        description: '사회복지기관이 환불을 요청합니다. 승인과 실제 환불 처리는 기브싸인이 합니다.',
       },
       {
         method: 'GET',
@@ -378,11 +383,11 @@ export const API_CATEGORIES: ApiCategory[] = [
     slug: 'products',
     order: 5,
     title: '상품·재고',
-    summary: '사회복지기관 사이트의 상품을 기브싸인와 맞춥니다.',
+    summary: '사회복지기관 사이트의 상품을 기브싸인과 맞춥니다.',
     status: 'LIVE',
     intro: [
       '지금까지는 사회복지기관 사이트에 있는 상품을 기브싸인 콘솔에 한 번 더 손으로 등록해야 했습니다. 파는 물건이 바뀔 때마다 두 곳을 맞춰야 하니 반드시 어긋납니다. 이 연동이 그 이중 등록을 없앱니다.',
-      '실물 상품과 비실물 상품(후원금·상품권·이용권·컨텐츠)을 모두 다룹니다.',
+      '후원 항목과, 상품 기능을 켠 기관의 실물·비실물 상품(포인트·상품권·이용권·컨텐츠)을 모두 다룹니다.',
     ],
     sections: [
       {
@@ -919,7 +924,7 @@ export const API_CATEGORIES: ApiCategory[] = [
     title: '공통 규약',
     summary: '응답 형식, 오류 코드, 멱등성, 개인정보, 변경 이력.',
     status: 'LIVE',
-    intro: ['모든 엔드후원금에 공통으로 적용되는 규칙입니다. 개별 문서에서 따로 설명하지 않습니다.'],
+    intro: ['모든 엔드포인트에 공통으로 적용되는 규칙입니다. 개별 문서에서 따로 설명하지 않습니다.'],
     sections: [
       {
         heading: '기본 URL',
@@ -1008,7 +1013,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         heading: 'OpenAPI 규격 파일',
         body: [
           '`GET /api/partner/v1/openapi.json` 을 Postman·Insomnia 나 코드 생성기에 그대로 넣으면 됩니다. 인증 없이 열립니다.',
-          '준비 중인 엔드후원금도 들어 있습니다. 설명 첫 줄에 [준비 중] 이 붙고 x-status 로도 구분됩니다.',
+          '준비 중인 엔드포인트도 들어 있습니다. 설명 첫 줄에 [준비 중] 이 붙고 x-status 로도 구분됩니다.',
         ],
       },
       {
@@ -1042,14 +1047,14 @@ export function orderedCategories(): ApiCategory[] {
   return [...API_CATEGORIES].sort((a, b) => a.order - b.order);
 }
 
-/** 레지스트리에 등록된 모든 엔드후원금(카테고리 정보 포함). */
+/** 레지스트리에 등록된 모든 엔드포인트(카테고리 정보 포함). */
 export function allEndpoints() {
   return orderedCategories().flatMap((category) =>
     (category.endpoints ?? []).map((endpoint) => ({ category, endpoint })),
   );
 }
 
-/** 상태별 엔드후원금 개수. 허브 화면의 요약 숫자에 쓴다. */
+/** 상태별 엔드포인트 개수. 허브 화면의 요약 숫자에 쓴다. */
 export function endpointCounts() {
   const rows = allEndpoints();
   return {
