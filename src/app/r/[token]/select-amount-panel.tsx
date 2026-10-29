@@ -74,6 +74,8 @@ export function SelectAmountPanel({
   shippingGuide,
   carrier,
   remoteFee,
+  campaigns = [],
+  defaultCampaignId = null,
 }: {
   token: string;
   merchantName: string;
@@ -90,7 +92,13 @@ export function SelectAmountPanel({
   shippingGuide: string | null;
   carrier: string | null;
   remoteFee: string;
+  /** 모금 중 캠페인. 비어 있으면 선택 UI 를 숨긴다. */
+  campaigns?: { id: string; title: string; code: string }[];
+  /** MO 키워드로 이미 지정된 캠페인 */
+  defaultCampaignId?: string | null;
 }) {
+  const [campaignId, setCampaignId] = React.useState(defaultCampaignId ?? '');
+  const [anonymous, setAnonymous] = React.useState(false);
   const min = BigInt(minAmount);
   const max = BigInt(maxAmount);
   // 직접 입력은 사회복지기관이 좁혀 둔 범위·단위를 따른다(서버도 같은 값으로 다시 검사한다).
@@ -530,8 +538,32 @@ export function SelectAmountPanel({
         </p>
       ) : null}
 
+      {campaigns.length > 0 ? (
+        <div className="rounded-xl border border-ink-200 p-3">
+          <p className="text-[13px] font-bold text-ink-900">후원할 곳</p>
+          <select
+            value={campaignId}
+            onChange={(e) => setCampaignId(e.target.value)}
+            className="mt-2 h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-[14px] outline-none focus:border-brand-400"
+          >
+            <option value="">{merchantName} 일반 후원</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>{c.title} (키워드 {c.code})</option>
+            ))}
+          </select>
+          {defaultCampaignId ? <p className="mt-1 text-[11.5px] text-ink-400">문자 키워드로 지정된 캠페인입니다. 바꿀 수 있습니다.</p> : null}
+        </div>
+      ) : null}
+      <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-700">
+        <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} className="h-4 w-4 rounded border-ink-300" />
+        후원페이지 최근 후원에 익명으로 표시
+      </label>
+
       <form action={formAction}>
         <input type="hidden" name="token" value={token} />
+        <input type="hidden" name="campaignId" value={campaignId} />
+        <input type="hidden" name="campaignTouched" value="1" />
+        <input type="hidden" name="anonymous" value={anonymous ? '1' : ''} />
         <input type="hidden" name="productId" value={mode === 'preset' ? productId : ''} />
         <input
           type="hidden"

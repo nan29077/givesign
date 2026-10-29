@@ -4,6 +4,8 @@ import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm } from '@/components/studio/action-form';
 import { ImageUploadField } from '@/components/studio/image-upload-field';
 import { updateMerchantProfileAction } from '@/app/actions/studio';
+import { saveOrganizationInfoAction } from '@/app/actions/fundraising';
+import { OrganizationInfoForm } from '@/components/studio/organization-info-form';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { formatKst } from '@/lib/datetime';
@@ -27,8 +29,8 @@ export default async function StudioSettingsProfilePage() {
   return (
     <>
       <PageHeader
-        title="프로필 설정"
-        description="사회복지기관 프로필과 계정 정보를 관리합니다. 결제 페이지 꾸미기는 후원 설정 > 결제 페이지 탭에 있습니다."
+        title="기관 정보"
+        description="기관 프로필과 기부금영수증에 인쇄되는 기관 정보를 관리합니다. 후원페이지 꾸미기는 모금 > 후원페이지에 있습니다."
       />
 
       <div className="space-y-5">
@@ -85,6 +87,16 @@ export default async function StudioSettingsProfilePage() {
                 hint="파일을 올리거나 이미지 URL 을 입력하세요. 비워두면 자동 배정된 캐릭터가 표시됩니다."
               />
             </ActionForm>
+          </Card>
+        </section>
+
+        <section>
+          <SectionTitle
+            title="기관 정보 (기부금영수증 발급 주체)"
+            description="고유번호·대표자·소재지는 기부금영수증 서식에 그대로 인쇄됩니다. 공익법인 지정 여부가 확인돼야 영수증을 발급할 수 있습니다."
+          />
+          <Card>
+            <OrganizationInfoForm action={saveOrganizationInfoAction} merchant={merchant} />
           </Card>
         </section>
 

@@ -8,6 +8,7 @@ import type { MoInbound } from '@/server/adapters/mo';
 import { getMtAdapter, decideMessageType } from '@/server/adapters/mt';
 import { getPaymentAdapter, MockPaymentTimeout } from '@/server/adapters/payment';
 import { filterContent, normalizeKeyword, splitKeyword, type BannedWordRule } from './content-filter';
+import { matchCampaignKeyword } from './fundraising';
 import { emitMerchantEvent } from './webhooks';
 import { checkLimits, commitCounters, rollbackCounters, registerFailure, clearFailures, resolvePolicy } from './limits';
 import { withAdvisoryLock } from '@/server/db';
@@ -667,8 +668,13 @@ async function processMoRow(
   // (4) 콘텐츠 필터
   // 문자 본문은 외부에 노출되지 않고 사회복지기관·최고관리자만 문자 관리에서 본다.
   // 그래서 금칙어는 결제를 막지 않고 기록만 마스킹한다(filtered.clean 이 마스킹된 값이다).
+  // (4-1) 캠페인 키워드. 문자 맨 앞에 모금 중인 캠페인의 키워드가 있으면 지정후원으로 잡고
+  // 키워드는 메시지에서 떼어 낸다. 키워드가 없거나 모금이 끝났으면 기관 일반 후원이다.
+  const campaignMatch = await matchCampaignKeyword(merchant.id, routed.body);
+  const messageBody = campaignMatch.campaign ? campaignMatch.rest : routed.body;
+
   const bannedWords = await loadBannedWords(merchant.id);
-  const filtered = filterContent(routed.body, {
+  const filtered = filterContent(messageBody, {
     bannedWords,
     maxLength: MAX_MESSAGE_LEN,
   });
@@ -711,8 +717,9 @@ async function processMoRow(
         message: filtered.clean,
         messageRawEnc: encrypt(routed.body),
         status: 'PENDING_AMOUNT',
-        statusReason: '후원 금액 선택 대기',
+        statusReason: campaignMatch.campaign ? `후원 금액 선택 대기 (캠페인 ${campaignMatch.campaign.code})` : '후원 금액 선택 대기',
         paymentMode: 'CONFIRM_LINK',
+        campaignId: campaignMatch.campaign?.id ?? null,
       },
     });
   } catch (error) {

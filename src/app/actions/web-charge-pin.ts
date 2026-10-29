@@ -111,6 +111,8 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
   const requestId = String(formData.get('requestId') ?? '');
   const message = String(formData.get('message') ?? '').trim();
   const amountRaw = String(formData.get('amount') ?? '').replace(/[^\d]/g, '');
+  const campaignId = String(formData.get('campaignId') ?? '').trim() || null;
+  const anonymous = String(formData.get('anonymous') ?? '') === '1';
 
   const phone = normalizePhone(phoneRaw);
   if (!/^01[0-9]{8,9}$/.test(phone)) {
@@ -171,6 +173,8 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
     amount: BigInt(amountRaw),
     message,
     requestId,
+    campaignId,
+    anonymous,
   });
 
   if (!result.ok || !result.chargeId) {

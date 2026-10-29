@@ -305,6 +305,14 @@ export const isProd = env.appEnv === 'prod';
 /** 개발 전용 기능(테스트 로그인, MO 시뮬레이터, 개발 아웃박스)을 열어도 되는 환경인지. */
 export const isLocal = env.appEnv === 'local';
 
+/**
+ * 실물 상품·배송·문서 상품 기능 노출 여부.
+ * 메시지페이에서 넘어온 기능으로 코드는 유지하되, 사회복지기관 콘솔·공개 화면에서는 기본으로 숨긴다.
+ */
+export function featureGoodsEnabled(): boolean {
+  return process.env.FEATURE_GOODS === 'true';
+}
+
 /** 운영 배포 전 반드시 통과해야 하는 환경 점검 */
 export function assertProductionSafety(): string[] {
   const problems: string[] = [];

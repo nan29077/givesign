@@ -3,14 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cx } from '@/components/ui';
-import { ReceiptText, UserRound } from 'lucide-react';
+import { HeartHandshake, Repeat, ReceiptText, UserRound } from 'lucide-react';
 
 /**
  * 마이페이지 탭.
- * 후원 내역과 내 정보만 노출하고, 한도·차단·동의 같은 설정은 "내 정보" 안에서 이동한다.
+ * 후원 내역 · 정기후원 · 영수증 · 내 정보. 한도·차단·동의 같은 설정은 "내 정보" 안에서 이동한다.
  */
 const TABS = [
-  { href: '/my', label: '후원 내역', icon: ReceiptText, match: ['/my'] },
+  { href: '/my', label: '후원 내역', icon: HeartHandshake, match: ['/my', '/my/payments'] },
+  { href: '/my/recurring', label: '정기후원', icon: Repeat, match: ['/my/recurring', '/my/recurring/new'] },
+  { href: '/my/receipts', label: '영수증', icon: ReceiptText, match: ['/my/receipts'] },
   { href: '/my/account', label: '내 정보', icon: UserRound, match: ['/my/account', '/my/limits', '/my/blocks', '/my/consents'] },
 ];
 

@@ -8,6 +8,7 @@ import { MerchantCodeForm } from '@/components/merchant-code-form';
 import { CopyButton } from '@/components/public/copy-button';
 import { WebChargePanel } from '@/components/public/web-charge-panel';
 import { WebChargePinPanel } from '@/components/public/web-charge-pin-panel';
+import { openCampaigns } from '@/server/services/fundraising';
 import { defaultBannerFor } from '@/lib/banners';
 import { maskDisplayName } from '@/components/public/mask';
 import { Logo } from '@/components/brand/logo';
@@ -35,7 +36,7 @@ export const dynamic = 'force-dynamic';
  *  - 모바일에서는 하단 고정 CTA(문자 보내기)가 탭바를 대신한다.
  */
 
-type Params = { params: Promise<{ code: string }> };
+type Params = { params: Promise<{ code: string }>; searchParams?: Promise<{ campaign?: string }> };
 
 /**
  * MO 결제번호 표시용 서식. DB 에는 하이픈 없이 저장하므로 화면에서만 끊어 보여 준다.
@@ -113,8 +114,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
-export default async function MerchantChargePage({ params }: Params) {
+export default async function MerchantChargePage({ params, searchParams }: Params) {
   const { code } = await params;
+  const sp = (await searchParams) ?? {};
   const merchant = await findMerchant(code);
 
   if (!merchant) return <NotFoundView />;
@@ -142,6 +144,9 @@ export default async function MerchantChargePage({ params }: Params) {
   const viewerPayer = await currentViewerPayer();
 
   const route = merchant.moRoutes[0] ?? null;
+  // 모금 중 캠페인. 후원페이지에서 ?campaign= 으로 들어오면 기본 선택한다.
+  const campaigns = (await openCampaigns(merchant.id)).map((c) => ({ id: c.id, title: c.title }));
+  const defaultCampaignId = campaigns.some((c) => c.id === sp.campaign) ? sp.campaign! : '';
   // 후원자가 고를 수 있는 후원 항목. 문자·PC 모두 같은 목록을 쓴다.
   const products = merchant.chargeProducts.map((p) => ({ id: p.id, name: p.name, amount: p.amount.toString() }));
   const bannerUrl = merchant.bannerUrl ?? defaultBannerFor(merchant.id);
@@ -220,6 +225,8 @@ export default async function MerchantChargePage({ params }: Params) {
                   minAmount={effMin.toString()}
                   maxAmount={effMax.toString()}
                   paymentMock={paymentMock}
+                  campaigns={campaigns}
+                  defaultCampaignId={defaultCampaignId}
                 />
               ) : (
                 <WebChargePanel

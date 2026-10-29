@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { openCampaigns } from './fundraising';
 import { resolveSecureLink, consumeSecureLink } from './secure-link';
 import { checkLimits, resolvePolicy } from './limits';
 import { startPinAuthorization, setStatus } from './charge-flow';
@@ -89,6 +90,10 @@ export interface SelectAmountContext {
   customStep: number | null;
   expiresAt: Date;
   shipping: ShippingPolicyView;
+  /** 고를 수 있는 모금 중 캠페인. 비어 있으면 캠페인 선택 UI 를 숨긴다. */
+  campaigns: Array<{ id: string; title: string; code: string }>;
+  /** MO 문자 키워드로 이미 지정된 캠페인 */
+  campaignId: string | null;
 }
 
 export async function loadSelectAmountContext(
@@ -119,7 +124,7 @@ export async function loadSelectAmountContext(
     return { ok: false, reason: '이미 처리된 결제입니다.' };
   }
 
-  const [rows, policy, shipping] = await Promise.all([
+  const [rows, policy, shipping, campaigns] = await Promise.all([
     prisma.chargeProduct.findMany({
       where: { merchantId: charge.merchantId, active: true, archivedAt: null },
       orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { amount: 'asc' }],
@@ -128,6 +133,7 @@ export async function loadSelectAmountContext(
     }),
     resolvePolicy(charge.merchantId, charge.payerId),
     loadShippingPolicy(charge.merchantId),
+    openCampaigns(charge.merchantId),
   ]);
 
   // 유효 범위 = 사회복지기관 허용 범위 ∩ 한도 정책 범위.
@@ -206,6 +212,8 @@ export async function loadSelectAmountContext(
       customStep,
       expiresAt: link.expiresAt,
       shipping,
+      campaigns: campaigns.map((c) => ({ id: c.id, title: c.title, code: c.code })),
+      campaignId: charge.campaignId,
     },
   };
 }
@@ -253,12 +261,24 @@ export async function confirmChargeAmount(input: {
   optionValues?: Record<string, string> | null;
   /** 실물 상품 배송지 */
   address?: ShippingAddressInput | null;
+  /** 지정 캠페인. undefined 면 MO 키워드로 잡힌 값을 유지, null 이면 일반 후원으로 되돌린다. */
+  campaignId?: string | null;
+  /** 공개 화면에 이름·메시지를 숨긴다 */
+  anonymous?: boolean;
   ip?: string;
   userAgent?: string;
 }): Promise<ConfirmAmountResult> {
   const loaded = await loadSelectAmountContext(input.token);
   if (!loaded.ok) return { ok: false, message: loaded.reason };
   const ctx = loaded.ctx;
+
+  // 캠페인은 모금 중인 것만 고를 수 있다. 화면이 보낸 값을 그대로 믿지 않는다.
+  let campaignId: string | null | undefined = undefined;
+  if (input.campaignId !== undefined) {
+    if (input.campaignId === null || input.campaignId === '') campaignId = null;
+    else if (ctx.campaigns.some((c) => c.id === input.campaignId)) campaignId = input.campaignId;
+    else return { ok: false, message: '모금이 끝났거나 고를 수 없는 캠페인입니다.' };
+  }
 
   // ── 상품·수량·옵션·배송지 확정 ──────────────────────────────────
   let amount: bigint | null = null;
@@ -414,6 +434,8 @@ export async function confirmChargeAmount(input: {
       optionText,
       shippingFee,
       pointStatus: selected && selected.kind !== 'DIGITAL' ? 'SKIPPED' : 'PENDING',
+      ...(campaignId !== undefined ? { campaignId } : {}),
+      ...(input.anonymous !== undefined ? { anonymous: input.anonymous } : {}),
     },
   });
   if (claimed.count === 0) return { ok: false, message: '이미 처리된 결제입니다.' };

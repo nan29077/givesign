@@ -83,6 +83,11 @@ await client.end();
 
 // 기존 미리보기 DB도 새 마이그레이션을 빠짐없이 적용한다.
 // migrate deploy는 이미 적용된 항목을 건너뛰므로 기존 데이터는 유지된다.
+// 스키마가 바뀐 뒤 클라이언트(src/generated)가 오래된 채 빌드되면 타입·런타임이 함께 깨진다.
+// 생성은 몇 초면 끝나므로 미리보기 때마다 다시 만든다.
+console.log('[준비] Prisma 클라이언트를 생성합니다.');
+runNode(prismaCli, ['generate']);
+
 console.log('[준비] 데이터베이스 마이그레이션을 확인합니다.');
 runNode(prismaCli, ['migrate', 'deploy']);
 

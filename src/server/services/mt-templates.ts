@@ -38,6 +38,14 @@ export const MT_TEMPLATE = {
    * 본문은 사회복지기관이 등록해 검수받은 템플릿에서 나온다. 관리자 공통 문구로 덮어쓰지 않는다.
    */
   MERCHANT_NOTICE: 'MERCHANT_NOTICE',
+  /** 정기후원 약정 완료 안내 */
+  RECURRING_STARTED: 'RECURRING_STARTED',
+  /** 정기후원 출금 실패 (재시도 예정) */
+  RECURRING_FAILED: 'RECURRING_FAILED',
+  /** 정기후원 연속 실패로 정지 */
+  RECURRING_SUSPENDED: 'RECURRING_SUSPENDED',
+  /** 기부금영수증 발급 안내 (열람 링크) */
+  RECEIPT_ISSUED: 'RECEIPT_ISSUED',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -338,6 +346,52 @@ export function tplChargeFailed(merchantName: string, reason?: string): Template
   };
 }
 
+// ---------------------------------------------------------------------------
+// 정기후원 · 기부금영수증
+// ---------------------------------------------------------------------------
+
+export function tplRecurringStarted(input: { merchantName: string; amount: bigint; dayOfMonth: number; nextDate: string }): TemplateOutput {
+  const text =
+    `[기브싸인] ${input.merchantName} 정기후원이 등록되었습니다. 매월 ${input.dayOfMonth}일 ${formatNumber(input.amount)}원이 등록된 결제수단에서 출금됩니다. ` +
+    `첫 출금 ${input.nextDate}. 변경·해지는 마이페이지에서 언제든 가능합니다.`;
+  return {
+    code: MT_TEMPLATE.RECURRING_STARTED,
+    text,
+    masked: text,
+    vars: { 사회복지기관: input.merchantName, 금액: `${formatNumber(input.amount)}원`, 출금일: `${input.dayOfMonth}일`, 다음출금: input.nextDate },
+  };
+}
+
+export function tplRecurringFailed(input: { merchantName: string; amount: bigint; reason?: string; retryDate: string }): TemplateOutput {
+  const text =
+    `[기브싸인] ${input.merchantName} 정기후원 ${formatNumber(input.amount)}원 출금이 완료되지 않았습니다. ` +
+    `${input.reason ? `사유: ${input.reason} ` : ''}${input.retryDate}에 다시 시도합니다. 계좌 잔액을 확인해 주세요.`;
+  return {
+    code: MT_TEMPLATE.RECURRING_FAILED,
+    text,
+    masked: text,
+    vars: { 사회복지기관: input.merchantName, 금액: `${formatNumber(input.amount)}원`, 사유: input.reason ?? '', 다음출금: input.retryDate },
+  };
+}
+
+export function tplRecurringSuspended(input: { merchantName: string; amount: bigint }): TemplateOutput {
+  const text =
+    `[기브싸인] ${input.merchantName} 정기후원(${formatNumber(input.amount)}원)이 출금 실패가 반복되어 잠시 멈췄습니다. ` +
+    `마이페이지에서 결제수단을 확인한 뒤 다시 시작할 수 있습니다. 그동안 출금은 일어나지 않습니다.`;
+  return {
+    code: MT_TEMPLATE.RECURRING_SUSPENDED,
+    text,
+    masked: text,
+    vars: { 사회복지기관: input.merchantName, 금액: `${formatNumber(input.amount)}원` },
+  };
+}
+
+export function tplReceiptIssued(input: { merchantName: string; taxYear: number; amount: bigint; link: string }): TemplateOutput {
+  const body = `[기브싸인] ${input.merchantName} ${input.taxYear}년 기부금영수증(${formatNumber(input.amount)}원)이 발급되었습니다. 열람·출력:`;
+  const text = withLink(body, input.link);
+  return { code: MT_TEMPLATE.RECEIPT_ISSUED, text, masked: maskLink(text) };
+}
+
 export function tplAccountInactive(merchantName: string): TemplateOutput {
   // 해지한 후원자에게 문자만으로 등록 링크를 자동 재발급하지는 않는다(의도된 정책).
   // 대신 실제로 다시 등록할 수 있는 경로를 알려 준다. 예전 문구("이용 상태를 확인하거나
@@ -482,6 +536,34 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     defaultBody:
       '{사회복지기관} 사회복지기관에 {금액} 결제를 진행합니다. 아직 결제되지 않았습니다. 결제 PIN 입력 링크: [보안링크]',
     variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECURRING_STARTED]: {
+    label: '정기후원 등록 안내',
+    description: '정기후원 약정이 등록되면 출금 금액·출금일·첫 출금일을 안내합니다.',
+    editable: true,
+    defaultBody: '{사회복지기관} 정기후원이 등록되었습니다. 매월 {출금일} {금액}이 출금됩니다. 첫 출금 {다음출금}.',
+    variables: [V.merchant, V.amount, { token: '{출금일}', label: '매월 출금일' }, { token: '{다음출금}', label: '다음 출금 예정일' }],
+  },
+  [MT_TEMPLATE.RECURRING_FAILED]: {
+    label: '정기후원 출금 실패 안내',
+    description: '정기후원 출금이 실패하면 사유와 다음 재시도일을 안내합니다.',
+    editable: true,
+    defaultBody: '{사회복지기관} 정기후원 {금액} 출금이 완료되지 않았습니다. 사유: {사유} {다음출금}에 다시 시도합니다.',
+    variables: [V.merchant, V.amount, V.reason, { token: '{다음출금}', label: '다음 재시도일' }],
+  },
+  [MT_TEMPLATE.RECURRING_SUSPENDED]: {
+    label: '정기후원 정지 안내',
+    description: '출금이 연속 실패해 정기후원이 멈췄을 때 보냅니다.',
+    editable: true,
+    defaultBody: '{사회복지기관} 정기후원({금액})이 출금 실패가 반복되어 잠시 멈췄습니다. 마이페이지에서 결제수단을 확인해 주세요.',
+    variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECEIPT_ISSUED]: {
+    label: '기부금영수증 발급 안내',
+    description: '기부금영수증이 발급되면 열람 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 기부금영수증이 발급되었습니다. 열람·출력: [보안링크]',
+    variables: [V.merchant],
   },
   [MT_TEMPLATE.MERCHANT_NOTICE]: {
     label: '사회복지기관 발송 문자',

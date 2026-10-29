@@ -69,10 +69,15 @@ export async function confirmChargeAmountAction(
     : null;
 
   const h = await headers();
+  // 캠페인 선택 UI 가 있었던 화면만 값을 보낸다(없으면 MO 키워드로 잡힌 값을 유지).
+  const campaignTouched = s('campaignTouched') === '1';
+  const campaignId = s('campaignId');
   const result = await confirmChargeAmount({
     token,
     productId: productId || null,
     customAmount: productId ? null : BigInt(customRaw),
+    campaignId: campaignTouched ? campaignId || null : undefined,
+    anonymous: s('anonymous') === '1',
     quantity: Number.isFinite(quantityRaw) ? quantityRaw : 1,
     optionValues: parseOptionValues(s('optionValues')),
     address,

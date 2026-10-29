@@ -62,3 +62,6 @@ output/
 .givesign-server.lock
 .givesign-next/
 output/qa/
+
+# 클라우드 작업 동기화용 임시 묶음
+_sync/

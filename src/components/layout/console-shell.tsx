@@ -10,6 +10,10 @@ import {
   ScrollText, Send, ServerCog, ShieldAlert, ShieldBan,
   SlidersHorizontal, Undo2, UserCog, CircleUserRound, UserRoundCog,
   UsersRound, WalletCards, X,
+  Megaphone,
+  Repeat,
+  ReceiptText,
+  Building2,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
@@ -47,7 +51,8 @@ export type ConsoleIconName =
   | 'moderation' | 'numbers' | 'payments' | 'policies' | 'profile'
   | 'refunds' | 'reports' | 'risk' | 'settlement' | 'simulator'
   | 'system' | 'templates' | 'terms' | 'users' | 'settings' | 'send'
-  | 'products' | 'orders' | 'apidocs' | 'documents';
+  | 'products' | 'orders' | 'apidocs' | 'documents'
+  | 'campaigns' | 'recurring' | 'receipts' | 'donors' | 'building';
 
 const CONSOLE_ICONS = {
   activity: Activity,
@@ -84,6 +89,11 @@ const CONSOLE_ICONS = {
   orders: Truck,
   apidocs: Code2,
   documents: FileSignature,
+  campaigns: Megaphone,
+  recurring: Repeat,
+  receipts: ReceiptText,
+  donors: HeartHandshake,
+  building: Building2,
 } satisfies Record<ConsoleIconName, typeof Home>;
 
 export function ConsoleShell({

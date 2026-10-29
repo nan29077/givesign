@@ -27,9 +27,16 @@ export async function currentTermsDoc(type: ConsentType, now: Date = new Date())
  * 유형별 현재 시행본 목록.
  * 같은 유형에 여러 버전이 살아 있어도 유형당 1건만 남긴다.
  */
+/**
+ * 가입(결제수단 등록) 화면이 아니라 각자의 흐름에서 따로 받는 동의.
+ * 기부금영수증 정보 수집은 영수증 신청 때, 정기후원 자동 출금은 약정 때 받는다.
+ * 가입 화면에 섞어 두면 아직 신청하지도 않은 일에 대한 동의를 받게 된다.
+ */
+export const CONTEXTUAL_CONSENT_TYPES: ConsentType[] = ['RECEIPT_ISSUANCE', 'RECURRING_DEBIT'];
+
 export async function currentTermsList(now: Date = new Date()) {
   const rows = await prisma.termsVersion.findMany({
-    where: { active: true, effectiveFrom: { lte: now } },
+    where: { active: true, effectiveFrom: { lte: now }, type: { notIn: CONTEXTUAL_CONSENT_TYPES } },
     orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
   });
   const latest = new Map<ConsentType, (typeof rows)[number]>();

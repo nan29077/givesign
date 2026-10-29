@@ -313,6 +313,10 @@ enum ConsentType {
   WITHDRAWAL_AGREE
   AGE_CONFIRM
   MARKETING
+  /// 기부금영수증 발급을 위한 성명·주민등록번호 수집·이용 동의
+  RECEIPT_ISSUANCE
+  /// 정기후원 자동 출금 동의 (등록된 결제수단으로 매월 출금)
+  RECURRING_DEBIT
 
   @@map("consent_type")
 }
@@ -504,6 +508,9 @@ model PayerProfile {
   counters      ChargeCounter[]
   risks         RiskDetection[]
   blockedBy     BlockedPayer[]
+  receiptProfile PayerReceiptProfile?
+  recurringDonations RecurringDonation[]
+  receipts      DonationReceipt[]
 
   @@index([lockedUntil])
   @@index([onboardingStatus])
@@ -604,6 +611,27 @@ model MerchantProfile {
   /// 치환자: {사회복지기관} {상품목록} {유효시간}  (링크는 본문 끝에 자동으로 붙는다)
   moGuideMtMessage  String?        @map("mo_guide_mt_message")
   businessNo        String?        @map("business_no")
+  // ── 사회복지기관 정보 (기부금영수증 발급 주체) ─────────────────────
+  /// 기관 유형 (사회복지법인·시설·비영리민간단체 등)
+  orgType             OrganizationType? @map("org_type")
+  /// 대표자 성명. 기부금영수증에 인쇄된다.
+  representativeName  String?           @map("representative_name")
+  /// 기관 소재지. 기부금영수증에 인쇄된다.
+  address             String?
+  /// 후원 담당자 (후원자 문의 응대·영수증 문의)
+  contactName         String?           @map("contact_name")
+  contactPhone        String?           @map("contact_phone")
+  contactEmail        String?           @map("contact_email")
+  /// 공익법인(구 지정기부금단체) 지정 여부. 미지정이면 영수증 발급 메뉴를 잠근다.
+  designatedDonee     Boolean           @default(false) @map("designated_donee")
+  /// 공익법인 지정 만료일 (재지정 안내용)
+  designatedDoneeUntil DateTime?        @map("designated_donee_until") @db.Date
+  /// 기부금영수증 기부금 코드 기본값. 10 특례(법정) · 40 일반(지정) · 41 종교단체
+  donationCode        String            @default("40") @map("donation_code")
+  /// 기부금품법상 모집 등록번호 (연 1천만원 이상 모집 시 등록 의무). 공개 후원페이지에 표기한다.
+  fundraisingRegNo    String?           @map("fundraising_reg_no")
+  /// 모집 등록 관청 (행정안전부·시도 등)
+  fundraisingRegAuthority String?       @map("fundraising_reg_authority")
   approvedAt        DateTime?      @map("approved_at") @db.Timestamptz(3)
   suspendedAt       DateTime?      @map("suspended_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -636,6 +664,11 @@ model MerchantProfile {
   webhookDeliveries  WebhookDelivery[]
   documentTemplates  DocumentTemplate[]
   documentSubmissions DocumentSubmission[]
+  donationPage       MerchantDonationPage?
+  campaigns          Campaign[]
+  recurringDonations RecurringDonation[]
+  receipts           DonationReceipt[]
+  receiptExports     ReceiptExport[]
 
   @@index([status])
   @@map("merchant_profile")
@@ -1147,6 +1180,12 @@ model Charge {
   paymentMode   PaymentMode  @default(CONFIRM_LINK) @map("payment_mode")
   isTest        Boolean      @default(false) @map("is_test")
   anonymous     Boolean      @default(false)
+  /// 지정 캠페인. 없으면 기관 일반 후원. 모금액 집계의 원천이다.
+  campaignId    String?      @map("campaign_id")
+  /// 정기후원 실행으로 만들어진 건이면 그 정기후원 ID
+  recurringId   String?      @map("recurring_id")
+  /// 발급된(유효한) 기부금영수증. VOID 되면 null 로 되돌려 재발급 대상이 된다.
+  receiptId     String?      @map("receipt_id")
 
   /// 결제수수료 차감액 (부가세 포함)
   pgFee       BigInt @default(0) @map("pg_fee")
@@ -1193,7 +1232,13 @@ model Charge {
   statusLogs    ChargeStatusLog[]
   /// 문서 상품 결제라면 작성·제출 기록 1건이 붙는다.
   documentSubmission DocumentSubmission?
+  campaign      Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  recurring     RecurringDonation?   @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  receipt       DonationReceipt?     @relation(fields: [receiptId], references: [id], onDelete: SetNull)
 
+  @@index([campaignId, status])
+  @@index([recurringId])
+  @@index([receiptId])
   @@index([merchantId, receivedAt])
   @@index([payerId, receivedAt])
   @@index([status])
@@ -2110,4 +2155,277 @@ model WebhookDelivery {
   @@index([status, nextAttemptAt])
   @@index([merchantId, createdAt])
   @@map("webhook_delivery")
+}
+
+// ===========================================================================
+// 기브싸인 — 사회복지기관 후원 도메인
+// ===========================================================================
+
+/// 사회복지기관 유형. 기부금영수증 발급 가능 여부와 안내 문구가 달라진다.
+enum OrganizationType {
+  /// 사회복지법인
+  WELFARE_CORPORATION
+  /// 사회복지시설 (복지관·보호시설 등, 법인 산하 또는 개인 운영)
+  WELFARE_FACILITY
+  /// 비영리민간단체 (등록 단체)
+  NONPROFIT_ORG
+  /// 공익법인 (재단·사단)
+  PUBLIC_INTEREST_CORP
+  /// 종교단체
+  RELIGIOUS
+  OTHER
+
+  @@map("organization_type")
+}
+
+enum CampaignStatus {
+  /// 작성 중. 공개 페이지에 보이지 않고 문자 키워드도 받지 않는다.
+  DRAFT
+  /// 모금 중. 기간 안이면 공개·키워드 수신.
+  ACTIVE
+  /// 모금 종료. 결과는 공개하되 새 후원은 일반 후원으로 돌린다.
+  CLOSED
+  /// 보관. 목록에서 숨긴다.
+  ARCHIVED
+
+  @@map("campaign_status")
+}
+
+enum RecurringStatus {
+  ACTIVE
+  /// 후원자가 잠시 멈춤
+  PAUSED
+  /// 연속 실패로 시스템이 정지 (후원자가 결제수단을 갱신하면 재개)
+  SUSPENDED
+  CANCELED
+
+  @@map("recurring_status")
+}
+
+enum RecurringRunStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+
+  @@map("recurring_run_status")
+}
+
+enum ReceiptStatus {
+  ISSUED
+  VOID
+
+  @@map("receipt_status")
+}
+
+/// 공개 후원페이지(`/donate/[code]`) 구성. 기관당 1건.
+model MerchantDonationPage {
+  merchantId       String   @id @map("merchant_id")
+  title            String
+  subtitle         String?
+  intro            String?
+  heroUrl          String?  @map("hero_url")
+  logoUrl          String?  @map("logo_url")
+  /// 기관 대표 색상 (#rrggbb)
+  color            String   @default("#28634e")
+  /// 후원 완료 화면·감사 영역 문구
+  thanks           String?
+  published        Boolean  @default(false)
+  showCampaigns    Boolean  @default(true) @map("show_campaigns")
+  /// 모금 현황(이달 후원액·후원자 수) 공개 여부
+  showProgress     Boolean  @default(true) @map("show_progress")
+  /// 최근 후원자(마스킹 이름·메시지) 공개 여부
+  showRecentDonors Boolean  @default(true) @map("show_recent_donors")
+  /// 기관 투명성 안내 (결산 공시 링크 등)
+  transparencyUrl  String?  @map("transparency_url")
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_donation_page")
+}
+
+/// 모금 단위. 목표액·기간·용도를 갖고, 문자 키워드(code)로 지정후원을 받는다.
+/// 모금액은 charge.campaign_id 로 집계한다 (절대 규칙 10).
+model Campaign {
+  id          String         @id
+  merchantId  String         @map("merchant_id")
+  /// 문자 키워드. 기관 안에서 유일. 영문 대문자·숫자 2~10자 (예: 김장, KIMJANG, 2026)
+  code        String
+  title       String
+  summary     String
+  story       String?
+  /// 지원 대상
+  beneficiary String?
+  /// 후원금 사용 계획
+  usagePlan   String?        @map("usage_plan")
+  imageUrl    String?        @map("image_url")
+  goalAmount  BigInt         @map("goal_amount")
+  startsOn    DateTime       @map("starts_on") @db.Date
+  endsOn      DateTime       @map("ends_on") @db.Date
+  status      CampaignStatus @default(DRAFT)
+  /// 후원페이지 최상단 강조
+  featured    Boolean        @default(false)
+  sortOrder   Int            @default(0) @map("sort_order")
+  /// 종료 후 결과 보고 (사용 내역·성과)
+  resultReport String?       @map("result_report")
+  closedAt    DateTime?      @map("closed_at") @db.Timestamptz(3)
+  archivedAt  DateTime?      @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant  MerchantProfile     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  charges   Charge[]
+  recurring RecurringDonation[]
+
+  @@unique([merchantId, code])
+  @@index([merchantId, status, sortOrder])
+  @@map("campaign")
+}
+
+/// 정기후원 약정. 매월 dayOfMonth 에 등록된 결제수단으로 amount 를 출금한다.
+/// 실행은 /api/cron/recurring 이 하고, 월 1회 멱등키 `recurring:{id}:{yyyy-mm}` 로 보호한다.
+model RecurringDonation {
+  id            String          @id
+  merchantId    String          @map("merchant_id")
+  payerId       String          @map("payer_id")
+  campaignId    String?         @map("campaign_id")
+  amount        BigInt
+  /// 출금일 (1~28). 29~31일은 월마다 없을 수 있어 받지 않는다.
+  dayOfMonth    Int             @map("day_of_month")
+  /// 후원 건에 남길 기본 메시지
+  message       String          @default("정기후원")
+  anonymous     Boolean         @default(false)
+  status        RecurringStatus @default(ACTIVE)
+  /// 다음 출금 예정일 (KST 날짜)
+  nextChargeOn  DateTime        @map("next_charge_on") @db.Date
+  lastChargedAt DateTime?       @map("last_charged_at") @db.Timestamptz(3)
+  /// 연속 실패 횟수. 성공하면 0 으로.
+  failCount     Int             @default(0) @map("fail_count")
+  lastFailure   String?         @map("last_failure")
+  /// 누적 성공 횟수·금액 (화면 표시용 캐시. 원천은 charge)
+  successCount  Int             @default(0) @map("success_count")
+  totalAmount   BigInt          @default(0) @map("total_amount")
+  /// 정기후원 동의 기록
+  consentId     String?         @map("consent_id")
+  pausedAt      DateTime?       @map("paused_at") @db.Timestamptz(3)
+  suspendedAt   DateTime?       @map("suspended_at") @db.Timestamptz(3)
+  canceledAt    DateTime?       @map("canceled_at") @db.Timestamptz(3)
+  cancelReason  String?         @map("cancel_reason")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  campaign Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  runs     RecurringRun[]
+  charges  Charge[]
+
+  @@index([status, nextChargeOn])
+  @@index([merchantId, status])
+  @@index([payerId, status])
+  @@map("recurring_donation")
+}
+
+/// 정기후원 월별 실행 기록. (정기후원, 월, 시도) 당 1행.
+model RecurringRun {
+  id          String             @id
+  recurringId String             @map("recurring_id")
+  /// KST 기준 yyyy-MM
+  monthKey    String             @map("month_key")
+  attempt     Int                @default(1)
+  status      RecurringRunStatus
+  chargeId    String?            @map("charge_id")
+  reason      String?
+  ranAt       DateTime           @default(now()) @map("ran_at") @db.Timestamptz(3)
+
+  recurring RecurringDonation @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringId, monthKey, attempt])
+  @@index([ranAt])
+  @@map("recurring_run")
+}
+
+/// 후원자의 기부금영수증 정보. 성명·주민등록번호는 암호화 + 해시 + 마스킹 3분리 저장 (절대 규칙 6).
+model PayerReceiptProfile {
+  payerId          String    @id @map("payer_id")
+  legalName        String    @map("legal_name")
+  residentNoEnc    String    @map("resident_no_enc")
+  residentNoHash   String    @map("resident_no_hash")
+  /// 901010-1******
+  residentNoMasked String    @map("resident_no_masked")
+  address          String?
+  /// 연말정산 간소화(국세청 제출) 동의. 끄면 종이 영수증만 발급한다.
+  hometaxOptIn     Boolean   @default(true) @map("hometax_opt_in")
+  consentId        String?   @map("consent_id")
+  consentAt        DateTime  @default(now()) @map("consent_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@index([residentNoHash])
+  @@map("payer_receipt_profile")
+}
+
+/// 기부금영수증 발급 대장. 발급 번호는 기관·연도별 일련번호이며 재사용하지 않는다 (절대 규칙 9).
+model DonationReceipt {
+  id          String        @id
+  merchantId  String        @map("merchant_id")
+  payerId     String        @map("payer_id")
+  /// 귀속 연도
+  taxYear     Int           @map("tax_year")
+  /// 기관·연도 안 일련번호
+  seq         Int
+  /// 표시용 발급번호: {기관코드}-{연도}-{일련번호 6자리}
+  receiptNo   String        @unique @map("receipt_no")
+  totalAmount BigInt        @map("total_amount")
+  chargeCount Int           @map("charge_count")
+  /// 기부금 코드 (10 특례 · 40 일반 · 41 종교)
+  donationCode String       @map("donation_code")
+  status      ReceiptStatus @default(ISSUED)
+  /// 발급 당시 기부자 정보 스냅샷 (성명·마스킹 주민번호·주소)
+  donorSnapshot Json        @map("donor_snapshot")
+  /// 발급 당시 기관 정보 스냅샷 (명칭·고유번호·대표자·소재지·기관유형)
+  issuerSnapshot Json       @map("issuer_snapshot")
+  /// 포함된 후원 건 요약 [{chargeId, transactionNo, paidAt, amount}]
+  items       Json
+  /// 발급 주체 user id (기관 담당자·관리자) 또는 'SYSTEM'
+  issuedBy    String        @map("issued_by")
+  issuedAt    DateTime      @default(now()) @map("issued_at") @db.Timestamptz(3)
+  /// 종이 영수증 열람용 토큰 해시 (후원자 마이페이지·문자 링크)
+  viewTokenHash String?     @map("view_token_hash")
+  voidedAt    DateTime?     @map("voided_at") @db.Timestamptz(3)
+  voidReason  String?       @map("void_reason")
+  /// 재발급으로 대체된 영수증이면 새 영수증 ID
+  supersededById String?    @map("superseded_by_id")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Restrict)
+  charges  Charge[]
+
+  @@unique([merchantId, taxYear, seq])
+  @@index([payerId, taxYear])
+  @@index([merchantId, taxYear, status])
+  @@map("donation_receipt")
+}
+
+/// 국세청(홈택스) 제출용 명세 파일 생성 이력. 전송 자체는 기관이 홈택스에서 직접 한다 (절대 규칙 2).
+model ReceiptExport {
+  id          String   @id
+  merchantId  String   @map("merchant_id")
+  taxYear     Int      @map("tax_year")
+  format      String   @default("HOMETAX_CSV")
+  fileName    String   @map("file_name")
+  rowCount    Int      @map("row_count")
+  totalAmount BigInt   @map("total_amount")
+  /// 파일 내용 SHA-256 (제출본 대조용)
+  checksum    String
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, taxYear, createdAt])
+  @@map("receipt_export")
 }

@@ -3,6 +3,7 @@ import { newId, newTransactionNo } from '@/lib/id';
 import { encrypt } from '@/lib/crypto';
 import { payerDisplayName } from '@/lib/payer-name';
 import { filterContent } from './content-filter';
+import { openCampaigns } from './fundraising';
 import { checkLimits } from './limits';
 import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, resolvePaymentMode, startPinAuthorization } from './charge-flow';
@@ -41,6 +42,9 @@ export interface WebChargeInput {
   message: string;
   /** 중복 제출 방지용 클라이언트 멱등키 */
   requestId: string;
+  /** 지정 캠페인(모금 중인 것만 유효) */
+  campaignId?: string | null;
+  anonymous?: boolean;
 }
 
 export interface WebChargeResult {
@@ -71,6 +75,16 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
   });
   if (!token) {
     return { ok: false, message: '등록된 결제수단(내통장결제)이 없습니다. 가입을 먼저 완료해 주세요.' };
+  }
+
+  // 캠페인은 모금 중인 것만. 화면 값이 틀리면 조용히 일반 후원으로 돌리지 않고 거절한다.
+  let campaignId: string | null = null;
+  if (input.campaignId) {
+    const open = await openCampaigns(merchant.id);
+    if (!open.some((c) => c.id === input.campaignId)) {
+      return { ok: false, message: '모금이 끝났거나 고를 수 없는 캠페인입니다.' };
+    }
+    campaignId = input.campaignId;
   }
 
   // 콘텐츠 필터 (금칙어 차단/마스킹)
@@ -127,8 +141,10 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         message: filtered.clean,
         messageRawEnc: encrypt(input.message),
         status: 'RECEIVED',
-        statusReason: '결제 페이지 웹 결제',
+        statusReason: '후원 페이지 웹 후원',
         paymentMode: resolvePaymentMode(merchant.paymentMode),
+        campaignId,
+        anonymous: Boolean(input.anonymous),
       },
     });
   } catch (error) {

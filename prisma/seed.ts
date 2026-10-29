@@ -131,19 +131,63 @@ async function main() {
       update: { userId: user.id, status: 'APPROVED', avatarUrl: '/assets/givesign/mascot.png' },
     });
 
+    // 기관 정보(기부금영수증 발급 주체). 비어 있을 때만 채워 운영자가 바꾼 값을 덮지 않는다.
+    if (!merchant.representativeName) {
+      await prisma.merchantProfile.update({
+        where: { id: merchant.id },
+        data: {
+          orgType: c.code === 'GIV-8K2M' ? 'WELFARE_FACILITY' : 'WELFARE_CORPORATION',
+          businessNo: c.code === 'GIV-8K2M' ? '123-82-00001' : '456-82-00002',
+          representativeName: c.code === 'GIV-8K2M' ? '김햇살' : '박함께',
+          address: c.code === 'GIV-8K2M' ? '서울특별시 성북구 나눔로 12' : '경기도 수원시 팔달구 동행길 7',
+          contactName: '후원팀',
+          contactPhone: '02-000-0000',
+          contactEmail: c.email,
+          designatedDonee: true,
+          designatedDoneeUntil: new Date('2029-12-31T00:00:00Z'),
+          donationCode: '40',
+          fundraisingRegNo: c.code === 'GIV-8K2M' ? '2026-서울-00123' : null,
+          fundraisingRegAuthority: c.code === 'GIV-8K2M' ? '서울특별시' : null,
+        },
+      });
+    }
+
+    // 공개 후원페이지. 없을 때만 만든다.
+    await prisma.merchantDonationPage.upsert({
+      where: { merchantId: merchant.id },
+      create: {
+        merchantId: merchant.id,
+        title: c.code === 'GIV-8K2M' ? '작은 나눔이 이웃의 든든한 한 끼가 됩니다' : '함께 걷는 길 위에 희망을 놓습니다',
+        subtitle: '문자 한 통에서 시작하는 따뜻한 변화',
+        intro: '지역의 이웃과 함께 더 나은 일상을 만들어 갑니다. 보내주신 후원은 식사 지원, 돌봄, 긴급 생계 지원에 소중히 사용되며, 분기마다 사용 내역을 공개합니다.',
+        heroUrl: '/assets/givesign/hero.png',
+        color: c.code === 'GIV-8K2M' ? '#28634e' : '#1f4e79',
+        thanks: '함께해 주셔서 감사합니다. 보내주신 마음을 이웃에게 전하겠습니다.',
+        published: true,
+      },
+      update: {},
+    });
+
     // 상품. 비실물(포인트·상품권·이용권)과 실물을 함께 깔아 둔다.
     // 금액과 지급 포인트는 1:1 이 기본이다.
     const productCount = await prisma.chargeProduct.count({ where: { merchantId: merchant.id } });
     if (productCount === 0) {
-      const presets = [3000, 5000, 10000, 30000];
-      for (const [i, amount] of presets.entries()) {
+      // 후원 항목: 금액대별 쓰임을 알려 주는 지정후원 용도. 금액은 그대로 후원금이다.
+      const presets: Array<[number, string, string]> = [
+        [5000, '따뜻한 한 끼', '어르신 도시락 1인분'],
+        [10000, '아이들 간식 꾸러미', '지역아동센터 간식 1주'],
+        [30000, '긴급 생계 지원', '위기가정 생필품 1세트'],
+        [50000, '겨울 난방비', '취약가구 난방비 지원'],
+      ];
+      for (const [i, [amount, name, give]] of presets.entries()) {
         await prisma.chargeProduct.create({
           data: {
             id: newId(),
             merchantId: merchant.id,
             kind: 'DIGITAL',
             digitalType: 'POINT',
-            name: `${amount.toLocaleString('ko-KR')}원 후원`,
+            name,
+            description: give,
             amount,
             giveAmount: amount,
             giveUnit: '후원',
@@ -313,14 +357,79 @@ async function main() {
     }
   }
 
+  // ---------------------------------------------------------------- 캠페인 · 정기후원 · 영수증 정보 (샘플)
+  {
+    const org = await prisma.merchantProfile.findUnique({ where: { code: 'GIV-8K2M' } });
+    if (org) {
+      const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+      const plus = (d: number) => new Date(Date.now() + 9 * 3600000 + d * 86_400_000).toISOString().slice(0, 10);
+      const dateCol = (k: string) => new Date(`${k}T00:00:00Z`);
+      const campaigns = [
+        { code: '김장', title: '겨울 김장 나눔', summary: '홀몸 어르신 300가구에 김장김치를 전합니다', goal: 3_000_000, starts: plus(-20), ends: plus(40), status: 'ACTIVE' as const, featured: true,
+          story: '매년 겨울, 혼자 사는 어르신들께 김장김치를 담가 전해 드립니다. 올해는 300가구를 목표로 합니다. 배추 1포기 값이 모여 한 가구의 겨울 밥상이 됩니다.',
+          beneficiary: '성북구 거주 홀몸 어르신 300가구', usagePlan: '배추·양념 재료비 220만원, 포장·배송 50만원, 봉사자 식사 30만원' },
+        { code: '학용품', title: '새 학기 학용품 꾸러미', summary: '지역아동센터 아동 120명에게 학용품을 선물했습니다', goal: 1_200_000, starts: plus(-120), ends: plus(-60), status: 'CLOSED' as const, featured: false,
+          story: '새 학기를 앞둔 아이들에게 필요한 학용품을 꾸러미로 만들어 전달했습니다.', beneficiary: '지역아동센터 3곳 아동 120명', usagePlan: '학용품 세트 120개',
+          resultReport: '후원해 주신 1,340,000원으로 학용품 꾸러미 134개를 마련해 3개 센터 아동 120명과 대기 아동 14명에게 전달했습니다. 남은 금액은 없습니다. 감사합니다.' },
+      ];
+      for (const [i, c] of campaigns.entries()) {
+        const exists = await prisma.campaign.findUnique({ where: { merchantId_code: { merchantId: org.id, code: c.code } } });
+        if (exists) continue;
+        await prisma.campaign.create({
+          data: {
+            id: newId(), merchantId: org.id, code: c.code, title: c.title, summary: c.summary, story: c.story,
+            beneficiary: c.beneficiary, usagePlan: c.usagePlan, goalAmount: BigInt(c.goal),
+            startsOn: dateCol(c.starts), endsOn: dateCol(c.ends), status: c.status, featured: c.featured, sortOrder: i,
+            resultReport: 'resultReport' in c ? c.resultReport : null, closedAt: c.status === 'CLOSED' ? new Date() : null,
+          },
+        });
+      }
+
+      // 테스트 후원자: 영수증 정보 + 정기후원 약정 (동의 기록 포함)
+      const receiptTerms = await prisma.termsVersion.findFirst({ where: { type: 'RECEIPT_ISSUANCE', active: true } });
+      const recurringTerms = await prisma.termsVersion.findFirst({ where: { type: 'RECURRING_DEBIT', active: true } });
+      const { residentHash } = await import('../src/server/services/receipts');
+      const { maskResident } = await import('../src/lib/crypto');
+      const resident = '9001011234568'; // 체크섬이 맞는 테스트 번호
+      if (receiptTerms && !(await prisma.payerReceiptProfile.findUnique({ where: { payerId: payer.id } }))) {
+        const consent = await prisma.consentRecord.create({
+          data: { id: newId(), userId: payer.userId, phoneHash: payer.phoneHash, termsId: receiptTerms.id, type: 'RECEIPT_ISSUANCE', agreed: true },
+        });
+        await prisma.payerReceiptProfile.create({
+          data: {
+            payerId: payer.id, legalName: '홍길동', residentNoEnc: encrypt(resident), residentNoHash: residentHash(resident),
+            residentNoMasked: maskResident(resident), address: '서울특별시 성북구 테스트로 1', hometaxOptIn: true, consentId: consent.id,
+          },
+        });
+      }
+      if (recurringTerms && !(await prisma.recurringDonation.findFirst({ where: { payerId: payer.id, merchantId: org.id } }))) {
+        const consent = await prisma.consentRecord.create({
+          data: { id: newId(), userId: payer.userId, phoneHash: payer.phoneHash, termsId: recurringTerms.id, type: 'RECURRING_DEBIT', agreed: true },
+        });
+        const day = 25;
+        const [y, m] = today.split('-').map(Number);
+        const thisMonth = `${y}-${String(m).padStart(2, '0')}-${day}`;
+        const next = thisMonth > today ? thisMonth : new Date(Date.UTC(y, m, day)).toISOString().slice(0, 10);
+        await prisma.recurringDonation.create({
+          data: {
+            id: newId(), merchantId: org.id, payerId: payer.id, amount: 10000n, dayOfMonth: day, message: '매달 작은 마음을 보탭니다',
+            status: 'ACTIVE', nextChargeOn: dateCol(next), consentId: consent.id,
+          },
+        });
+      }
+      console.log('  캠페인 2건(모금 중·종료), 영수증 정보, 정기후원 약정 1건 생성');
+    }
+  }
+
   // ---------------------------------------------------------------- 콘텐츠
   const posts: Array<{ type: string; title: string; body: string; category?: string; sortOrder: number }> = [
-    { type: 'FAQ', title: '문자후원은 어떻게 이용하나요?', body: '사회복지기관이 안내한 결제 수신번호로 문자를 보내면 됩니다. 최초 1회 계좌 등록과 이용 동의가 필요하며, 최초 문자는 결제 처리되지 않습니다.', category: '이용방법', sortOrder: 1 },
-    { type: 'FAQ', title: '최초 문자도 결제되나요?', body: '아니요. 최초 문자는 결제 처리되지 않고 계좌 등록 안내만 발송됩니다. 등록 완료 후 보내는 문자부터 결제가 접수됩니다.', category: '이용방법', sortOrder: 2 },
-    { type: 'FAQ', title: '결제 한도가 있나요?', body: '기본 일일 100,000원, 1분 내 3건, 연속 5건 이후 대기시간이 적용됩니다. 한도는 마이페이지에서 더 낮게 설정할 수 있습니다.', category: '한도', sortOrder: 3 },
-    { type: 'FAQ', title: '결제를 취소할 수 있나요?', body: '결제 직후 고객센터로 요청하시면 정산 전인 건에 한해 취소·환불이 가능합니다.', category: '환불', sortOrder: 4 },
-    { type: 'FAQ', title: '후원 내역은 언제 확인할 수 있나요?', body: '결제 완료 후 후원 내역과 안내 문자에서 결과를 확인할 수 있습니다. 기관 정산은 별도의 정산 일정에 따라 진행됩니다.', category: '충전', sortOrder: 5 },
-    { type: 'NOTICE', title: 'GiveSign 베타 서비스 안내', body: '현재 GiveSign(기브싸인)는 준비 단계이며 실제 결제와 문자 발송은 비활성화되어 있습니다.', sortOrder: 1 },
+    { type: 'FAQ', title: '문자후원은 어떻게 하나요?', body: '기관이 안내한 후원 수신번호로 응원 문자를 보내면 됩니다. 답장 문자의 링크에서 후원 금액을 고르고 PIN 을 입력하면 결제됩니다. 처음 한 번은 결제수단(내통장결제) 등록과 이용 동의가 필요하며, 등록 전 문자는 결제되지 않습니다.', category: '이용방법', sortOrder: 1 },
+    { type: 'FAQ', title: '특정 캠페인을 지정해서 후원할 수 있나요?', body: '네. 문자 맨 앞에 캠페인 키워드(예: "김장 응원합니다")를 적으면 그 캠페인의 지정후원으로 집계됩니다. 금액 선택 화면에서도 캠페인을 고를 수 있습니다.', category: '이용방법', sortOrder: 2 },
+    { type: 'FAQ', title: '기부금영수증은 어떻게 받나요?', body: '마이페이지 > 영수증에서 성명과 주민등록번호를 등록(동의)하면, 후원한 기관이 연말에 영수증을 발급하고 문자로 열람 링크를 보내 드립니다. 간소화 제출에 동의하면 국세청 연말정산 간소화에도 반영됩니다.', category: '영수증', sortOrder: 3 },
+    { type: 'FAQ', title: '정기후원은 어떻게 신청하고 해지하나요?', body: '기관 후원페이지의 "매월 정기후원 신청" 에서 금액과 출금일을 정하면 등록된 결제수단에서 매월 자동 출금됩니다. 일시정지·해지는 마이페이지 > 정기후원에서 언제든 할 수 있습니다.', category: '정기후원', sortOrder: 4 },
+    { type: 'FAQ', title: '후원 한도가 있나요?', body: '기본 일일 100,000원, 1분 내 3건, 연속 5건 이후 대기시간이 적용됩니다. 한도는 마이페이지에서 더 낮게 설정할 수 있습니다.', category: '한도', sortOrder: 5 },
+    { type: 'FAQ', title: '후원을 취소할 수 있나요?', body: '결제 직후 고객센터로 요청하시면 정산 전인 건에 한해 취소·환불이 가능합니다. 환불된 후원은 기부금영수증에서 제외됩니다.', category: '환불', sortOrder: 6 },
+    { type: 'NOTICE', title: '기브싸인 베타 서비스 안내', body: '현재 기브싸인(GIVESIGN)은 준비 단계이며 실제 결제와 문자 발송은 비활성화되어 있습니다.', sortOrder: 1 },
   ];
   for (const p of posts) {
     const exists = await prisma.contentPost.findFirst({ where: { type: p.type, title: p.title } });
@@ -339,16 +448,19 @@ async function main() {
       title: {
         in: [
           '문자후원은 어떻게 이용하나요?',
+          '최초 문자도 결제되나요?',
           '최초 문자도 후원되나요?',
-          '후원 한도가 있나요?',
-          '후원을 취소할 수 있나요?',
+          '결제 한도가 있나요?',
+          '결제를 취소할 수 있나요?',
+          '후원 내역은 언제 확인할 수 있나요?',
+          '충전은 언제 반영되나요?',
           '후원금은 언제 정산되나요?',
         ],
       },
     },
   });
   await prisma.contentPost.deleteMany({
-    where: { type: 'NOTICE', title: { in: ['기브싸인 베타 서비스 안내', '도네이도 베타 서비스 안내', '토네이도 베타 서비스 안내'] } },
+    where: { type: 'NOTICE', title: { in: ['GiveSign 베타 서비스 안내', '메시지페이 베타 서비스 안내', '도네이도 베타 서비스 안내', '토네이도 베타 서비스 안내'] } },
   });
 
   // ---------------------------------------------------------------- 050 번호 전환

@@ -104,7 +104,7 @@ describe('MO 수신 → 결제 → 충전 반영 흐름', () => {
     expect(summary.totalGross).toBe(3000n);
     expect(summary.balance).toBe(2496n);
 
-    const success = readMockOutbox(10).find((m) => m.text.includes('충전되었습니다'));
+    const success = readMockOutbox(10).find((m) => m.text.includes('후원되었습니다'));
     expect(success).toBeDefined();
   });
 

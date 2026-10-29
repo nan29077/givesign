@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { ConsoleShell, type NavGroup } from '@/components/layout/console-shell';
 import { getSessionUser, requireMerchant } from '@/server/auth';
 import { getStudioPendingCounts } from '@/server/services/studio-pending';
+import { featureGoodsEnabled } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +16,8 @@ export const metadata: Metadata = {
 /**
  * 사회복지기관 메뉴.
  *
- * 판매 업무를 흐름대로 묶는다: 무엇을 파는가(후원 항목 관리) → 어떻게 처리하는가(후원 처리)
- * → 어떤 조건으로 파는가(후원 설정). 배송 정책은 상품이 아니라 후원 설정에 있다.
+ * 후원 업무를 흐름대로 묶는다: 현황(후원·후원자·정기후원) → 모금(캠페인·후원페이지·항목)
+ * → 정산·영수증 → 기관 정보. 실물 상품·배송·문서는 FEATURE_GOODS 일 때만 보인다.
  *
  * 처리 대기 건수는 매 요청마다 세어 뱃지로 붙인다.
  */
@@ -26,51 +27,48 @@ function buildGroups(pending: {
   reports: number;
   documents: number;
 }): NavGroup[] {
+  const goods = featureGoodsEnabled();
   return [
     {
       title: '현황',
       items: [
         { href: '/studio', label: '대시보드', icon: 'dashboard' },
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
+        { href: '/studio/donors', label: '후원자 관리', icon: 'donors' },
+        { href: '/studio/recurring', label: '정기후원', icon: 'recurring' },
         { href: '/studio/messages', label: '문자 관리', icon: 'messages' },
       ],
     },
     {
-      title: '후원 운영',
+      title: '모금',
       items: [
-        { href: '/studio/donation-page', label: '기관 후원페이지', icon: 'settings' },
-        { href: '/studio/campaigns', label: '후원 캠페인', icon: 'products' },
-        { href: '/studio/products', label: '후원 항목 관리', icon: 'products' },
-        {
-          href: '/studio/orders',
-          label: '후원 처리',
-          icon: 'orders',
-          badge: pending.orders + pending.points,
-        },
-        {
-          // 문서 상품(약정서·주문서)의 서식 등록과 제출 확인. 후원 처리와 성격이 달라 따로 둔다.
-          href: '/studio/documents',
-          label: '문서 관리',
-          icon: 'documents',
-          badge: pending.documents,
-        },
+        { href: '/studio/campaigns', label: '캠페인', icon: 'campaigns' },
+        { href: '/studio/donation-page', label: '후원페이지', icon: 'settings' },
+        { href: '/studio/products', label: '후원 항목', icon: 'products' },
+        // 실물 상품·배송·문서 상품은 사회복지기관 기본 업무가 아니라 숨긴다 (FEATURE_GOODS=true 로 노출).
+        ...(goods
+          ? [
+              { href: '/studio/orders', label: '주문·배송 처리', icon: 'orders' as const, badge: pending.orders + pending.points },
+              { href: '/studio/documents', label: '문서 관리', icon: 'documents' as const, badge: pending.documents },
+            ]
+          : []),
         { href: '/studio/settings', label: '후원 설정', icon: 'settings' },
         { href: '/studio/moderation', label: '금칙어·차단', icon: 'moderation' },
         { href: '/studio/reports', label: '신고', icon: 'reports', badge: pending.reports },
       ],
     },
     {
-      title: '정산',
+      title: '정산·영수증',
       items: [
         { href: '/studio/settlement', label: '정산 관리', icon: 'settlement' },
+        { href: '/studio/receipts', label: '기부금영수증', icon: 'receipts' },
       ],
     },
     {
       title: '계정',
-      items: [{ href: '/studio/profile', label: '프로필 설정', icon: 'profile' }],
+      items: [{ href: '/studio/profile', label: '기관 정보', icon: 'building' }],
     },
-    // 메뉴 맨 아래에 둔다. 매일 쓰는 업무 메뉴가 아니라 연동할 때만 찾는 자료라서,
-    // 위쪽에 두면 판매 업무 흐름(현황 → 판매 → 정산)이 끊긴다.
+    // 메뉴 맨 아래에 둔다. 매일 쓰는 업무 메뉴가 아니라 연동할 때만 찾는 자료라서.
     {
       title: '개발자',
       items: [

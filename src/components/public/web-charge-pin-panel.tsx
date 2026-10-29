@@ -37,6 +37,8 @@ export function WebChargePinPanel({
   minAmount,
   maxAmount,
   paymentMock = false,
+  campaigns = [],
+  defaultCampaignId = '',
 }: {
   merchantId: string;
   merchantName: string;
@@ -46,9 +48,14 @@ export function WebChargePinPanel({
   maxAmount: string;
   /** 결제 연동이 아직 mock 이면 화면에 반드시 알린다 (가짜 성공 금지 원칙) */
   paymentMock?: boolean;
+  /** 모금 중 캠페인. 비어 있으면 선택 UI 를 숨긴다. */
+  campaigns?: { id: string; title: string }[];
+  defaultCampaignId?: string;
 }) {
   const min = BigInt(minAmount);
   const max = BigInt(maxAmount);
+  const [campaignId, setCampaignId] = React.useState(defaultCampaignId);
+  const [anonymous, setAnonymous] = React.useState(false);
 
   const [startState, startAction, startPending] = React.useActionState(startWebPinCharge, initial);
 
@@ -273,6 +280,22 @@ export function WebChargePinPanel({
                 ) : null}
               </div>
 
+              {campaigns.length > 0 ? (
+                <div>
+                  <p className="text-[13px] font-bold text-ink-900">후원할 곳</p>
+                  <select
+                    value={campaignId}
+                    onChange={(e) => setCampaignId(e.target.value)}
+                    className="mt-2 h-12 w-full rounded-xl border border-ink-200 bg-white px-3 text-[14px] outline-none focus:border-brand-400"
+                  >
+                    <option value="">{merchantName} 일반 후원</option>
+                    {campaigns.map((c) => (
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
               <div>
                 <p className="text-[13px] font-bold text-ink-900">메모 <span className="font-semibold text-ink-400">(선택)</span></p>
                 <textarea
@@ -283,6 +306,10 @@ export function WebChargePinPanel({
                   placeholder={`${merchantName} 님에게 남길 메모 (200자 이내). 후원 내역에 함께 저장됩니다.`}
                   className="mt-2 w-full resize-none rounded-xl border border-ink-200 px-3.5 py-3 text-[14px] leading-relaxed outline-none transition-colors focus:border-brand-400"
                 />
+                <label className="mt-2 flex cursor-pointer items-center gap-2 text-[13px] text-ink-700">
+                  <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} className="h-4 w-4 rounded border-ink-300" />
+                  후원페이지에 익명으로 표시
+                </label>
               </div>
 
               <button
@@ -313,6 +340,8 @@ export function WebChargePinPanel({
                   value={amountValid && effectiveAmount !== null ? effectiveAmount.toString() : ''}
                 />
                 <input type="hidden" name="message" value={message} />
+                <input type="hidden" name="campaignId" value={campaignId} />
+                <input type="hidden" name="anonymous" value={anonymous ? '1' : ''} />
 
                 <div className="rounded-xl bg-ink-50 px-4 py-3">
                   <div className="flex items-center justify-between">

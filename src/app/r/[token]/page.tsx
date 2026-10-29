@@ -390,6 +390,8 @@ async function SelectAmountScreen({ token }: { token: string }) {
         shippingGuide={ctx.shipping.guide}
         carrier={ctx.shipping.carrier}
         remoteFee={ctx.shipping.remoteFee.toString()}
+        campaigns={ctx.campaigns}
+        defaultCampaignId={ctx.campaignId}
       />
     </Card>
   );

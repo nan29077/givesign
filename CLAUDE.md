@@ -1,12 +1,130 @@
-# 기브싸인 개발 가이드
+# 기브싸인(GIVESIGN) — 개발 가이드
 
-사회복지기관 전용 MO 문자후원 서비스. 원격 https://github.com/nan29077/givesign.
-앱 3060, 내장 DB 5463(.givesign-pglite), Docker PostgreSQL 5462, Redis 6390.
-기관 /studio, 페이지 설정 /studio/donation-page, 캠페인 /studio/campaigns.
-공개 /donate/[code], 캠페인 /donate/[code]/campaigns/[id].
-페이지와 캠페인은 SystemSetting의 기관별 키에 영구 저장한다.
-미연동 외부 결제와 문자는 mock을 명시한다. 중복 결제 방지와 append-only 정산 원장 및 암호화를 유지한다.
-내부 Merchant/Charge 모델은 호환을 위해 유지한다.
+사회복지기관 전용 **MO 문자후원 서비스**. 기관마다 전용 수신번호(MO 번호)를 주고, 후원자는 그 번호로 문자 한 통을 보내 후원한다. 이 문서는 이 저장소에서 작업할 때의 규칙이다.
+
+로컬 작업 폴더는 `E:\프로젝트\기브싸인`, 원격은 `github.com/nan29077/givesign` 다. 메시지페이(`E:\프로젝트\메시지페이`)를 복사해 만들었지만 **완전히 독립된 별개 서비스**다. 메시지페이 쪽 변경을 가져오거나 되돌려 보내지 않는다.
+
+브랜드 표기는 한글 **기브싸인**, 영문 **GIVESIGN**, 식별자 슬러그 `givesign` 으로 통일한다. 코드·자산·시드·문서에 `messagepay` / `메시지페이` / `tornado` / `donaido` / `munjapay` / `문자페이` 를 다시 만들지 않는다.
+
+식별자 체계: 시드 계정 도메인 `@givesign.kr`, 시드 비밀번호 `givesign1234!`, 기관 코드 `GIV-XXXX`, 거래번호 `TRD-`(브랜드 무관), 쿠키 `givesign_inquiry`·`givesign_session`·`givesign_social_*`, 서명 헤더 `x-givesign-signature`, 잠금 파일 `.givesign-server.lock`, 도커 프로젝트/컨테이너/DB/볼륨 `givesign*`.
+
+구브랜드가 남아 있는 예외는 적용 이력이라 그대로 둔다:
+- `prisma/migrations/20260819100000_init_tornado` 폴더명과 그 안의 SQL, 그리고 `prisma/migrations/**/*.sql` 안의 구브랜드 식별자(트리거 함수명 등). 바꾸려면 기존 SQL 을 고치지 말고 새 마이그레이션을 추가한다.
+- `prisma/seed-version.mjs` 의 시드 버전 이력 주석.
+
+## 절대 규칙
+
+1. **이모지를 사용하지 않는다.** 아이콘은 lucide-react 라인 아이콘만 사용한다 (size 16~20, strokeWidth 1.6~1.7).
+2. **실제 계약/키가 없는 외부 연동을 성공 처리하지 않는다.** 어댑터 인터페이스 + mock 구현으로만 처리하고, 화면에 mock 임을 명시한다. 홈택스(국세청) 전자제출도 마찬가지다 — 제출용 파일 생성까지만 하고 "전송 완료"를 꾸며 내지 않는다.
+3. **결제 성공과 사후 처리(감사 문자·영수증·웹훅) 성공을 같은 상태로 취급하지 않는다.** 사후 처리 실패가 결제 결과를 바꾸지 않는다.
+4. **문자 한 건이 여러 번 결제되는 상황을 최우선으로 방지한다.** (멱등성 4중 방어 — `docs/02_아키텍처.md`) 정기후원 실행도 `recurring:{id}:{yyyy-mm}` 멱등키로 월 1회만 결제한다.
+5. **정산 원장(`settlement_ledger`)은 append-only.** DB 트리거로 UPDATE/DELETE 가 차단되어 있다. 정정은 반대분개로 처리한다.
+6. **개인정보/금융정보는 해시 + 암호화 + 마스킹 3분리 저장.** 화면과 로그에는 마스킹된 값만 노출한다. 기부금영수증용 주민등록번호는 `residentNoEnc`(암호화) + `residentNoHash` + 뒷자리 마스킹만 저장하고, 복호화는 영수증 발급·국세청 명세 생성 지점에서만 한다. 원문을 로그·CSV 미리보기·화면에 내보내지 않는다.
+7. `DIRECT_TRIGGER`(MO 수신 즉시 결제)는 `ALLOW_DIRECT_TRIGGER=true` 이면서 금융사 서면승인이 등록된 경우에만 사용한다. 기본값은 `CONFIRM_LINK`.
+8. **수수료는 부가세 포함 요율로 운영하고, 공급가액과 부가세는 항상 분리해 기록한다.**
+   - 운영 기본은 `vatIncluded = true`. 원장에는 공급가액과 부가세를 나눠 남긴다.
+   - 관리자 화면의 요율 입력·표시 단위는 **퍼센트**. 저장은 소수 문자열(`percentRate` / `percentToDecimalString`).
+   - 정책 적용 여부는 `active` 가 아니라 `effectiveFrom` / `effectiveTo` 로 판단한다.
+9. **기부금영수증은 결제 성공(PAID_STATUSES) 건만 합산하고, 환불된 건은 제외한다.** 이미 발급된 영수증 금액이 바뀌는 환불은 영수증을 `VOID` 처리하고 재발급한다. 발급 번호는 재사용하지 않는다.
+10. **캠페인별 모금액은 `charge.campaign_id` 기준으로 집계한다.** 별도 누적 컬럼을 캐시로 두더라도 원천은 항상 결제 건이다.
+
+## 용어
+
+화면·문구·주석 모두 이 용어를 쓴다.
+
+| 옛 용어 (메시지페이) | 쓰는 용어 |
+|---|---|
+| 가맹점 / 크리에이터 | 기관 (사회복지기관) |
+| 이용자 / 후원자 | 후원자 |
+| 충전 / 결제 | 후원 (돈을 내는 행위) |
+| 충전 상품 | 후원 항목 (지정후원 용도) |
+| 충전 반영 / 포인트 지급 | 후원 처리 (기관이 확인·감사 처리) |
+| 결제 페이지 `/c/[code]` | 후원 페이지 `/donate/[code]` (`/c/[code]` 는 호환 유지) |
+| 가맹점 콘솔 | 기관 콘솔 (`/studio`) |
+| 가맹 신청 | 기관 등록 신청 (`/merchant-apply`) |
+| 상품 관리 | 후원 항목 관리 |
+| — | 캠페인 (`Campaign`): 목표액·기간·용도가 있는 모금 단위 |
+| — | 정기후원 (`RecurringDonation`): 매월 자동 출금 |
+| — | 기부금영수증 (`DonationReceipt`): 연말정산용 발급 대장 |
+
+DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile` · `PayerProfile` · `merchantId` · `payerId`)을 **호환을 위해 그대로 쓴다.** 코드 식별자는 바꾸지 않고 화면 문구만 위 용어로 쓴다.
+
+## 기관 콘솔 구조
+
+| 메뉴 | 경로 | 맡는 것 |
+|---|---|---|
+| 대시보드 | `/studio` | 이달 후원액·후원자 수·정기후원·캠페인 진행률 |
+| 후원 내역 | `/studio/charges` | 건별 후원 (MO·웹·정기) |
+| 후원자 관리 | `/studio/donors` | 후원자별 누적·최근·정기 여부·메모·영수증 신청 |
+| 정기후원 | `/studio/recurring` | 정기후원 현황·실패·해지 |
+| 캠페인 | `/studio/campaigns` | 모금 단위 등록·진행률·문자 키워드 |
+| 후원페이지 | `/studio/donation-page` | 공개 `/donate/[code]` 구성 |
+| 기부금영수증 | `/studio/receipts` | 연도별 발급·일괄 발급·홈택스 제출 파일 |
+| 기관 정보 | `/studio/profile` | 기관 유형·고유번호·대표자·지정기부금단체·모집등록번호 |
+| 후원 설정 / 문자 관리 / 정산 관리 | 기존 유지 | |
+
+실물 상품·배송·문서 상품(`/studio/products` 의 PHYSICAL/DOCUMENT, `/studio/orders`, `/studio/documents`)은 **코드는 유지하되 메뉴와 공개 화면에서 숨긴다.** `FEATURE_GOODS=true` 환경변수로만 다시 노출한다.
+
+규칙:
+- **배송지·문서 원문(`*Enc`)은 목록에서 자동 복호화하지 않는다.** 열람할 때마다 감사로그를 남긴다. 영수증용 주민번호도 같은 기준이다(`RECEIPT_RESIDENT_NO_VIEW`).
+- 기관은 환불을 실행할 수 없고 **요청만** 한다 → 관리자 승인.
+- 보관(soft delete)은 되돌릴 수 있게 만든다. 단방향 삭제를 만들지 않는다.
+- 기관 콘솔에서 후원자 전화번호 원문을 보여 주지 않는다. 마스킹 번호와 표시 이름만 쓴다.
+
+## 기술 스택
+
+- Next.js 16 (App Router) / React 19 / TypeScript / Tailwind CSS v4
+- Prisma 7 + PostgreSQL 16 (Amazon RDS / Aurora PostgreSQL 호환)
+- Redis (ElastiCache) — 한도 카운터, 속도 제한
+- Vitest (DB 통합 테스트)
+
+## 디렉터리
+
+```
+prisma/            스키마, 마이그레이션, 시드
+src/lib/           env, crypto, id, money, datetime, labels, logger, fundraising
+src/server/        db, auth, adapters/*, services/*
+src/app/           라우트 (공개 / donate / c / r / my / studio(기관 콘솔) / admin / api)
+src/components/    ui(공용), layout, brand, public, my, studio, admin
+tests/             핵심 흐름 통합 테스트
+docs/              분석·설계 보고서, 운영 문서
+```
+
+## 실행 방법
+
+루트 배치 파일은 번호가 붙은 3개가 기본이고, 나머지는 `도구_` 접두사를 쓴다.
+
+- **`1_미리보기실행.bat`** (또는 `npm run preview`) — 내장 DB(PGlite)로 실행. 앱 **3060**, 내장 DB 5463(`.givesign-pglite`).
+- **`2_개발서버실행.bat`** — Docker PostgreSQL(5462) + Redis(6390). 처음에는 `도구_DB시작.bat` → `도구_최초설치.bat`.
+- **`3_서버종료.bat`** — 남아 있는 서버 정리.
+- **`도구_수정즉시반영.bat`** — HMR. 코드를 고치는 동안에는 이쪽을 쓴다.
+- 공통 의존성 점검기는 `tools/ensure-deps.bat`. 이름과 위치를 바꾸지 않는다.
+- `.env` 에 `NODE_ENV` 를 넣지 않는다.
+- `src/app/error.tsx` 등 에러 바운더리에서 훅을 쓰지 않는다.
+- 서비스 포트는 **3060** 으로 고정한다. 변경 시 package.json 의 dev/start, .env 의 PORT·APP_BASE_URL, 배치 파일, `tools/*.ps1` 을 함께 수정한다.
+
+## 마이그레이션 주의
+
+- 마이그레이션은 `prisma/migrations/` 에 시간순으로 쌓여 있다. 폴더명·SQL 은 적용 이력이므로 이미 올라간 것을 고치지 않는다.
+- 스키마를 바꾼 뒤에는 반드시 **빈 DB 에서 `npm run db:reset`** 으로 처음부터 적용되는지 확인한다.
+- `prisma migrate reset` 대신 `npm run db:reset`(tools/db-reset.mjs)을 사용한다.
+
+## 자주 쓰는 명령
+
+```bash
+npm run preview      # 내장 DB(PGlite)로 미리보기
+npm run dev          # 개발 서버 (외부 PostgreSQL 필요)
+npm run build        # 프로덕션 빌드
+npm run typecheck    # tsc --noEmit
+npm test             # Vitest (DB 를 비우므로 실행 후 db:seed 필요)
+npm run db:migrate   # prisma migrate dev
+npm run db:seed      # 시드 데이터
+npm run db:reset     # 초기화 + 시드
+```
+
+## 공용 파일 수정 시 주의
+
+`src/components/ui/index.tsx`, `src/lib/**`, `src/server/**`, `src/app/globals.css`, `prisma/schema.prisma` 는 전 화면이 공유한다. 변경 시 `npm run typecheck && npm test && npm run build` 를 모두 통과시킨다.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

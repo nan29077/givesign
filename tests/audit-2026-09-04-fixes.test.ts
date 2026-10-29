@@ -13,14 +13,14 @@ import { restoreMoNumber, splitMoNumber, formatMoNumber, isUsableSubCode } from 
 describe('키워드 정규화 — 등록과 매칭이 같은 규칙을 쓴다', () => {
   /**
    * 이전: 등록은 `toUpperCase() + 공백 제거`, 매칭은 `toUpperCase() + 하이픈 제거`.
-   * "GIV-1234" 로 등록하면 DB 에는 `GIV-1234`, 수신 파싱값은 `MSG1234` 가 되어
+   * "GIV-1234" 로 등록하면 DB 에는 `GIV-1234`, 수신 파싱값은 `GIV1234` 가 되어
    * 그 사회복지기관의 문자후원가 전건 UNKNOWN_ROUTE 로 떨어졌다.
    */
   it('구분 기호·대소문자·전각을 같은 표준형으로 접는다', () => {
-    expect(normalizeKeyword('GIV-1234')).toBe('MSG1234');
-    expect(normalizeKeyword('msg 1234')).toBe('MSG1234');
-    expect(normalizeKeyword('msg_1234')).toBe('MSG1234');
-    expect(normalizeKeyword('ＭＳＧ１２３４')).toBe('MSG1234');
+    expect(normalizeKeyword('GIV-1234')).toBe('GIV1234');
+    expect(normalizeKeyword('giv 1234')).toBe('GIV1234');
+    expect(normalizeKeyword('giv_1234')).toBe('GIV1234');
+    expect(normalizeKeyword('ＧＩＶ１２３４')).toBe('GIV1234');
   });
 
   it('한글 키워드도 정규화한다', () => {
@@ -28,7 +28,7 @@ describe('키워드 정규화 — 등록과 매칭이 같은 규칙을 쓴다', 
   });
 
   it('수신 문자 파싱 결과가 등록 정규화 결과와 일치한다', () => {
-    expect(splitKeyword('GIV-1234 안녕하세요').keyword).toBe(normalizeKeyword('msg 1234'));
+    expect(splitKeyword('GIV-1234 안녕하세요').keyword).toBe(normalizeKeyword('giv 1234'));
     expect(splitKeyword('GIV-1234 안녕하세요').rest).toBe('안녕하세요');
   });
 
@@ -38,12 +38,12 @@ describe('키워드 정규화 — 등록과 매칭이 같은 규칙을 쓴다', 
   });
 
   it('기존 영문+숫자 키워드는 그대로 동작한다', () => {
-    expect(splitKeyword('MSG3QP7 캐시 충전').keyword).toBe('MSG3QP7');
-    expect(splitKeyword('MSG3QP7 캐시 충전').rest).toBe('캐시 충전');
+    expect(splitKeyword('GIV3QP7 캐시 충전').keyword).toBe('GIV3QP7');
+    expect(splitKeyword('GIV3QP7 캐시 충전').rest).toBe('캐시 충전');
   });
 
   it('키워드만 있고 본문이 없으면 키워드로 보지 않는다', () => {
-    expect(splitKeyword('MSG3QP7').keyword).toBeNull();
+    expect(splitKeyword('GIV3QP7').keyword).toBeNull();
   });
 
   it('기호만으로 이뤄진 키워드는 거부한다 (어떤 문장과도 비교 불가)', () => {

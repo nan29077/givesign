@@ -1,4 +1,6 @@
 import { prisma } from '@/server/db';
+import { logger } from '@/lib/logger';
+import { voidReceiptForRefundedCharge } from './receipts';
 import { newId } from '@/lib/id';
 import { getPaymentAdapter } from '@/server/adapters/payment';
 import { calculateFees, postRefundSettlement } from './settlement';
@@ -204,6 +206,12 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
       refund.charge.merchantId,
     );
   }
+
+  // 환불된 건이 기부금영수증에 묶여 있으면 그 영수증을 무효화한다(절대 규칙 9).
+  // 영수증 처리 실패가 환불 결과를 바꾸지 않도록 오류는 기록만 한다.
+  await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin').catch((e) =>
+    logger.error('환불 후 기부금영수증 무효화 실패', { chargeId: refund.chargeId, message: (e as Error).message }),
+  );
 
   return prisma.refund.findUnique({ where: { id: refundId } });
 }

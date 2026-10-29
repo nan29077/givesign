@@ -18,6 +18,11 @@ import { getSettlementSummary } from '@/server/services/settlement';
 import { formatNumber, formatWon } from '@/lib/money';
 import { kstMonthKey, kstStartOfDay } from '@/lib/datetime';
 import { moNumberStatusLabel } from '@/lib/labels';
+import { featureGoodsEnabled } from '@/lib/env';
+import { campaignProgress, daysLeft } from '@/lib/fundraising';
+import { ProgressBar } from '@/components/public/progress-bar';
+import { listCampaigns, merchantDonationSummary, monthlyTrend } from '@/server/services/fundraising';
+import { receiptCandidates } from '@/server/services/receipts';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,10 +105,17 @@ export default async function StudioDashboardPage() {
   ]);
 
   // 사이드바 배지와 같은 집계다(요청 단위 후원금라 이 호출은 쿼리를 새로 돌리지 않는다).
-  const [pending, activeProducts] = await Promise.all([
+  const [pending, activeProducts, donation, campaignsAll, trend, receiptCandidatesNow] = await Promise.all([
     getStudioPendingCounts(merchantId),
     prisma.chargeProduct.count({ where: { merchantId, active: true, archivedAt: null } }),
+    merchantDonationSummary(merchantId),
+    listCampaigns(merchantId),
+    monthlyTrend(merchantId, 6),
+    receiptCandidates(merchantId, new Date().getFullYear()),
   ]);
+  const openCampaigns = campaignsAll.filter((c) => c.open);
+  const receiptPending = receiptCandidatesNow.filter((c) => c.ready).length;
+  const goodsEnabled = featureGoodsEnabled();
   const ordersPending = pending.orders;
   const pointsPending = pending.points;
 
@@ -127,7 +139,7 @@ export default async function StudioDashboardPage() {
     <>
       <PageHeader
         title="대시보드"
-        description="오늘 들어온 문자후원와 연동 상태를 한눈에 확인합니다. (KST 기준)"
+        description="오늘 들어온 문자후원과 모금 현황, 연동 상태를 한눈에 확인합니다. (KST 기준)"
         action={
           <LinkButton href="/studio/charges" variant="secondary" size="sm">
             후원 내역 전체 보기
@@ -141,26 +153,70 @@ export default async function StudioDashboardPage() {
         {/* 0) 신규 사회복지기관 온보딩 체크리스트 — 모두 완료되면 스스로 사라진다 */}
         <OnboardingChecklist merchantId={merchantId} />
 
-        {/* 0-1) 오늘 처리할 일.
-            대시보드에서 후원 항목 관리·주문 판매로 가는 길이 없으면 사이드바를 뒤져야 한다. */}
+        {/* 0-1) 모금 현황 — 후원 업무의 첫 화면. 캠페인 진행률과 정기후원·영수증 준비 상태로 바로 간다. */}
         <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          <TodoTile
-            href="/studio/orders?tab=delivery"
-            label="배송 준비"
-            value={ordersPending}
-            unit="건"
-            hint={ordersPending > 0 ? '송장 등록 필요' : '밀린 주문 없음'}
-          />
-          <TodoTile
-            href="/studio/orders?tab=digital"
-            label="지급 대기"
-            value={pointsPending}
-            unit="건"
-            hint={pointsPending > 0 ? '비실물 지급 필요' : '밀린 지급 없음'}
-          />
-          <TodoTile href="/studio/products" label="노출 중인 상품" value={activeProducts} unit="개" hint="후원 항목 관리" />
-          <TodoTile href="/studio/settings?tab=shipping" label="후원 설정" value={null} unit="" hint="금액 · 배송 · 안내 문자" />
+          <TodoTile href="/studio/campaigns" label="모금 중 캠페인" value={openCampaigns.length} unit="개" hint={openCampaigns.length ? `${formatWon(openCampaigns.reduce((a, c) => a + c.stats.raised, 0n))} 모금` : '캠페인 만들기'} />
+          <TodoTile href="/studio/recurring" label="정기후원" value={donation.recurringActive} unit="명" hint={donation.recurringActive ? `월 ${formatWon(donation.recurringMonthly)}` : '약정 없음'} />
+          <TodoTile href="/studio/donors" label="함께한 후원자" value={donation.totalDonors} unit="명" hint={`누적 ${formatWon(donation.totalRaised)}`} />
+          <TodoTile href="/studio/receipts" label="영수증 발급 대기" value={receiptPending} unit="명" hint={receiptPending ? '기부금영수증 발급' : '대기 없음'} />
         </div>
+        {goodsEnabled ? (
+          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+            <TodoTile href="/studio/orders?tab=delivery" label="배송 준비" value={ordersPending} unit="건" hint={ordersPending > 0 ? '송장 등록 필요' : '밀린 주문 없음'} />
+            <TodoTile href="/studio/orders?tab=digital" label="지급 대기" value={pointsPending} unit="건" hint={pointsPending > 0 ? '비실물 지급 필요' : '밀린 지급 없음'} />
+            <TodoTile href="/studio/products" label="노출 중인 항목" value={activeProducts} unit="개" hint="후원 항목 관리" />
+            <TodoTile href="/studio/settings?tab=shipping" label="후원 설정" value={null} unit="" hint="금액 · 배송 · 안내 문자" />
+          </div>
+        ) : null}
+
+        {openCampaigns.length > 0 || trend.some((t) => t.count > 0) ? (
+          <Card padded={false} className="overflow-hidden">
+            <div className="grid lg:grid-cols-2 lg:divide-x lg:divide-ink-100">
+              <div className="p-4">
+                <p className="mb-3 text-[13px] font-bold text-ink-900">캠페인 진행률 <span className="ml-1 text-[11.5px] font-medium text-ink-400">결제 성공 기준</span></p>
+                {openCampaigns.length === 0 ? (
+                  <p className="text-[12.5px] text-ink-400">모금 중인 캠페인이 없습니다.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {openCampaigns.slice(0, 4).map((c) => {
+                      const p = campaignProgress(c.stats.raised, c.goalAmount);
+                      return (
+                        <li key={c.id}>
+                          <Link href={`/studio/campaigns/${c.id}`} className="flex items-baseline justify-between gap-2 text-[13px]">
+                            <span className="truncate font-bold text-ink-900">{c.title} <span className="font-mono text-[11px] text-ink-400">{c.code}</span></span>
+                            <span className="shrink-0 tabular-nums text-ink-500">{formatWon(c.stats.raised)} · {p.percent}% · {daysLeft(c.endsOn)}일</span>
+                          </Link>
+                          <ProgressBar percent={p.capped} className="mt-1" height="h-2" />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+              <div className="p-4">
+                <p className="mb-3 text-[13px] font-bold text-ink-900">월별 후원 추이 <span className="ml-1 text-[11.5px] font-medium text-ink-400">최근 6개월</span></p>
+                <div className="flex h-28 items-end gap-2">
+                  {trend.map((t) => {
+                    const max = trend.reduce((m, x) => (x.total > m ? x.total : m), 0n);
+                    const h = max > 0n ? Math.max(4, Number((t.total * 100n) / max)) : 4;
+                    const hr = max > 0n ? Number((t.recurring * 100n) / max) : 0;
+                    return (
+                      <div key={t.month} className="flex flex-1 flex-col items-center gap-1" title={`${t.month} ${formatWon(t.total)} (${t.count}건, 정기 ${formatWon(t.recurring)})`}>
+                        <div className="relative flex w-full items-end justify-center" style={{ height: '88px' }}>
+                          <div className="w-full max-w-[34px] rounded-t-md bg-brand-200" style={{ height: `${h}%` }}>
+                            <div className="w-full rounded-t-md bg-brand-500" style={{ height: `${h ? (hr / h) * 100 : 0}%` }} />
+                          </div>
+                        </div>
+                        <span className="text-[10.5px] tabular-nums text-ink-400">{t.month.slice(5)}월</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-[11px] text-ink-400">진한 막대는 정기후원 비중입니다.</p>
+              </div>
+            </div>
+          </Card>
+        ) : null}
 
         {nextStep ? (
           <Link
