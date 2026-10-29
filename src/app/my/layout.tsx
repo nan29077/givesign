@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { PublicShell } from '@/components/layout/public-shell';
 import { MyNav } from '@/components/my/my-nav';
 import { Card, CardTitle, LinkButton } from '@/components/ui';
@@ -16,7 +17,14 @@ export const metadata: Metadata = {
 
 export default async function MyLayout({ children }: { children: React.ReactNode }) {
   const user = await getSessionUser();
-  if (!user) redirect('/login?next=/my');
+  if (!user) {
+    // 로그인 뒤 원래 가려던 화면(정기후원 신청 ?merchant=&campaign= 등)으로 돌아오게 현재 경로를 넘긴다(점검 M-16).
+    // 레이아웃은 요청 경로를 직접 알 수 없어 미들웨어가 넣어 준 헤더를 읽는다. 없으면 /my.
+    const h = await headers();
+    const current = h.get('x-givesign-path');
+    const next = current && current.startsWith('/my') ? current : '/my';
+    redirect(`/login?next=${encodeURIComponent(next)}`);
+  }
 
   const payer = await prisma.payerProfile.findUnique({
     where: { userId: user.id },

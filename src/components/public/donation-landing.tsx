@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { BadgeCheck, CalendarClock, HeartHandshake, MessageSquareText, Phone, Repeat, ShieldCheck, Users } from 'lucide-react';
 import { prisma } from '@/server/db';
 import { getSessionUser } from '@/server/auth';
@@ -62,14 +62,9 @@ export async function DonationLanding({ code, campaignId }: { code: string; camp
     return <Landing org={org} page={page} campaigns={campaigns} campaign={d} preview summary={summary} donors={[]} />;
   }
   if (!page.published && !preview) {
-    return (
-      <main className="mx-auto max-w-xl px-6 py-24 text-center">
-        <Logo />
-        <h1 className="mt-10 text-[26px] font-black text-ink-900">후원페이지를 준비하고 있습니다</h1>
-        <p className="mt-4 text-ink-500">{org.displayName}의 후원페이지가 공개되면 참여하실 수 있습니다.</p>
-        <Link href="/" className="mt-8 inline-block font-bold text-brand-700">기브싸인 홈으로</Link>
-      </main>
-    );
+    // 후원페이지를 아직 공개하지 않은 기관이라도 승인된 기관이면 후원은 받을 수 있다.
+    // 막다른 안내 대신 간편 후원 화면(/c)으로 보낸다. 캠페인 지정은 모금 중일 때만 유지한다.
+    redirect(`/c/${org.code}${campaign?.open ? `?campaign=${campaign.id}` : ''}`);
   }
   const donors = page.showRecentDonors ? await recentDonors(org.id, 12) : [];
   return <Landing org={org} page={page} campaigns={campaigns} campaign={campaign} preview={preview} summary={summary} donors={donors} />;

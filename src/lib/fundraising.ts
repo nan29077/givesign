@@ -6,14 +6,19 @@ import type { CampaignStatus } from '@/generated/prisma/enums';
  * 서버 전용 로직(DB·암호화)은 src/server/services/fundraising.ts 에 둔다.
  */
 
-/** 업로드 경로(/uploads/..)나 HTTPS 주소만 허용한다. javascript: · //evil 같은 값은 거부. */
+/**
+ * 이미지 주소 검증. 업로드 결과(/api/media/..)·정적 자산(/assets/, /banners/)·HTTPS 주소만 허용한다.
+ * 같은 출처의 모든 경로를 허용하면 /api/studio/receipts/export 같은 내부 주소를 이미지로 넣어
+ * 그 페이지를 연 다른 담당자의 브라우저가 요청을 보내게 만들 수 있다(2026-10-29 점검 낮음 항목).
+ */
+const IMAGE_PATH_RE = /^\/(api\/media|assets|banners)\/[^\s?#\\]+$/;
 export const safeImage = z
   .string()
   .trim()
   .max(1000)
   .refine(
-    (v) => !v || (v.startsWith('/') && !v.startsWith('//') && !v.includes('\\')) || /^https:\/\//i.test(v),
-    '이미지는 업로드 경로나 HTTPS 주소를 사용해 주세요.',
+    (v) => !v || IMAGE_PATH_RE.test(v) || /^https:\/\/[^\s]+$/i.test(v),
+    '이미지는 업로드한 파일 주소나 HTTPS 주소를 사용해 주세요.',
   );
 
 const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '날짜 형식은 YYYY-MM-DD 입니다.');

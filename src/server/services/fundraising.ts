@@ -3,7 +3,7 @@ import { newId } from '@/lib/id';
 import { maskName } from '@/lib/crypto';
 import { kstStartOfMonth } from '@/lib/datetime';
 import { PAID_STATUSES } from '@/components/studio/shared';
-import { normalizeKeyword } from './content-filter';
+import { normalizeKeyword, normalizeText } from './content-filter';
 import {
   campaignOpen,
   defaultDonationPage,
@@ -170,7 +170,13 @@ export async function saveCampaign(merchantId: string, input: CampaignInput, id?
     if (!existing) throw new Error('캠페인을 찾을 수 없습니다.');
     return prisma.campaign.update({ where: { id }, data });
   }
-  return prisma.campaign.create({ data: { id: newId(), merchantId, status: 'DRAFT', ...data } });
+  try {
+    return await prisma.campaign.create({ data: { id: newId(), merchantId, status: 'DRAFT', ...data } });
+  } catch (e) {
+    // 같은 키워드를 동시에 저장하면 위의 findFirst 를 둘 다 통과하고 DB 유니크 제약에서 하나가 막힌다.
+    if ((e as { code?: string })?.code === 'P2002') throw new CampaignCodeTakenError();
+    throw e;
+  }
 }
 
 /** 상태 전이. DRAFT→ACTIVE, ACTIVE→CLOSED/DRAFT, CLOSED→ACTIVE/ARCHIVED, ARCHIVED→DRAFT(복원) */
@@ -206,7 +212,8 @@ export async function matchCampaignKeyword(
   body: string,
   now = new Date(),
 ): Promise<{ campaign: Campaign | null; rest: string }> {
-  const t = (body ?? '').trim();
+  // 폭 없는 문자·제어 문자를 먼저 걷어 낸다. 앞에 U+200B 가 붙은 키워드가 일반 후원으로 빠지지 않게.
+  const t = normalizeText(body ?? '');
   const m = t.match(/^([\p{L}\p{N}][\p{L}\p{N}._-]{1,19})(?:\s+([\s\S]*))?$/u);
   if (!m) return { campaign: null, rest: t };
   const token = normalizeKeyword(m[1]);
@@ -308,15 +315,19 @@ export async function recentDonors(merchantId: string, limit = 10): Promise<Rece
 
 /** 월별 후원 추이(최근 n개월). 대시보드 막대용. */
 export async function monthlyTrend(merchantId: string, months = 6, now = new Date()) {
-  const start = kstStartOfMonth(new Date(now.getFullYear(), now.getMonth() - (months - 1), 1));
+  // 월 경계는 KST 기준. 서버 시간대(UTC)로 자르면 매월 1일 KST 0~9시에 이번 달 칸이 빠진다.
+  const kstNow = new Date(now.getTime() + 9 * 3600000);
+  const y = kstNow.getUTCFullYear();
+  const mo = kstNow.getUTCMonth();
+  const start = kstStartOfMonth(new Date(Date.UTC(y, mo - (months - 1), 1)));
   const rows = await prisma.charge.findMany({
     where: { merchantId, status: { in: PAID_STATUSES }, isTest: false, paidAt: { gte: start } },
     select: { amount: true, paidAt: true, recurringId: true },
   });
   const buckets = new Map<string, { total: bigint; recurring: bigint; count: number }>();
   for (let i = months - 1; i >= 0; i -= 1) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    buckets.set(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, { total: 0n, recurring: 0n, count: 0 });
+    const d = new Date(Date.UTC(y, mo - i, 1));
+    buckets.set(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, { total: 0n, recurring: 0n, count: 0 });
   }
   for (const r of rows) {
     const kst = new Date(r.paidAt!.getTime() + 9 * 3600000);

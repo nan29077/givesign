@@ -238,7 +238,7 @@ export default async function RegistrationCompletePage({
         ) : null}
 
         {merchant ? (
-          <LinkButton href={`/c/${merchant.code}`} size="lg" variant="secondary">
+          <LinkButton href={`/donate/${merchant.code}`} size="lg" variant="secondary">
             <MessageSquare size={17} strokeWidth={1.7} />
             {merchant.displayName} 후원 페이지 보기
           </LinkButton>

@@ -77,6 +77,7 @@ export function SelectAmountPanel({
   campaigns = [],
   defaultCampaignId = null,
   reconsent = [],
+  closedCampaignTitle = null,
 }: {
   token: string;
   merchantName: string;
@@ -97,6 +98,8 @@ export function SelectAmountPanel({
   campaigns?: { id: string; title: string; code: string }[];
   /** MO 키워드로 이미 지정된 캠페인 */
   defaultCampaignId?: string | null;
+  /** MO 로 지정했던 캠페인이 그 사이 끝나 일반 후원으로 바뀐 경우 안내할 제목 */
+  closedCampaignTitle?: string | null;
   /** 개정되어 다시 동의가 필요한 필수 약관. 모두 체크해야 후원을 진행할 수 있다. */
   reconsent?: Array<{ type: string; title: string; version: string; content: string }>;
 }) {
@@ -564,6 +567,13 @@ export function SelectAmountPanel({
         <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} className="h-4 w-4 rounded border-ink-300" />
         후원페이지 최근 후원에 익명으로 표시
       </label>
+
+      {closedCampaignTitle ? (
+        <p className="rounded-xl bg-warning-50 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-800">
+          문자로 지정하신 <strong>{closedCampaignTitle}</strong> 캠페인은 모금이 끝났습니다.
+          {campaigns.length > 0 ? ' 아래에서 다른 캠페인을 고르거나, 그대로 진행하면 기관 일반 후원으로 처리됩니다.' : ' 그대로 진행하면 기관 일반 후원으로 처리됩니다.'}
+        </p>
+      ) : null}
 
       {reconsent.length > 0 ? (
         <div className="rounded-2xl border border-brand-200 bg-brand-50/60 p-3.5">

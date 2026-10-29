@@ -79,7 +79,7 @@ export default async function MyBlocksPage() {
                     <div className="flex flex-wrap items-center gap-1.5">
                       <p className="text-[14.5px] font-bold text-ink-900">
                         {l.merchant.status === 'APPROVED' ? (
-                          <Link href={`/c/${l.merchant.code}`} className="hover:text-brand-700">
+                          <Link href={`/donate/${l.merchant.code}`} className="hover:text-brand-700">
                             {l.merchant.displayName}
                           </Link>
                         ) : (

@@ -133,7 +133,7 @@ export default async function MyChargesPage({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Link
-                          href={`/c/${d.merchant.code}`}
+                          href={`/donate/${d.merchant.code}`}
                           className="text-[14.5px] font-bold text-ink-900 hover:text-brand-700"
                         >
                           {d.merchant.displayName}

@@ -95,8 +95,10 @@ export interface SelectAmountContext {
   shipping: ShippingPolicyView;
   /** 고를 수 있는 모금 중 캠페인. 비어 있으면 캠페인 선택 UI 를 숨긴다. */
   campaigns: Array<{ id: string; title: string; code: string }>;
-  /** MO 문자 키워드로 이미 지정된 캠페인 */
+  /** MO 문자 키워드로 지정된 캠페인. 그 사이 모금이 끝났으면 null(일반 후원으로 안내한다). */
   campaignId: string | null;
+  /** MO 때 지정한 캠페인이 금액 선택 전에 끝나 일반 후원으로 바뀐 경우 그 캠페인 제목 */
+  closedCampaignTitle: string | null;
   /** 개정되어 다시 동의받아야 하는 필수 약관. 비어 있지 않으면 화면에서 체크를 받고 확정 시 기록한다. */
   reconsent: Array<{ type: ConsentType; title: string; version: string; content: string }>;
 }
@@ -218,7 +220,11 @@ export async function loadSelectAmountContext(
       expiresAt: link.expiresAt,
       shipping,
       campaigns: campaigns.map((c) => ({ id: c.id, title: c.title, code: c.code })),
-      campaignId: charge.campaignId,
+      campaignId: charge.campaignId && campaigns.some((c) => c.id === charge.campaignId) ? charge.campaignId : null,
+      closedCampaignTitle:
+        charge.campaignId && !campaigns.some((c) => c.id === charge.campaignId)
+          ? ((await prisma.campaign.findUnique({ where: { id: charge.campaignId }, select: { title: true } }))?.title ?? '지정 캠페인')
+          : null,
       reconsent: charge.payer
         ? (await staleRequiredConsents(charge.payer)).map((t) => ({ type: t.type, title: t.title, version: t.version, content: t.content }))
         : [],
@@ -291,11 +297,16 @@ export async function confirmChargeAmount(input: {
   const ctx = loaded.ctx;
 
   // 캠페인은 모금 중인 것만 고를 수 있다. 화면이 보낸 값을 그대로 믿지 않는다.
+  //  - 화면에서 고른 값이 모금 중 목록에 없으면 거절(다른 기관 캠페인 주입 등).
+  //  - 화면이 값을 보내지 않았어도(구 화면·즉시결제 경로) MO 때 잡힌 캠페인이 그 사이 끝났으면
+  //    일반 후원으로 내린다. 끝난 캠페인에 묶인 채 결제되거나, 거절돼 링크가 막히는 일이 없게(점검 M-13).
   let campaignId: string | null | undefined = undefined;
   if (input.campaignId !== undefined) {
     if (input.campaignId === null || input.campaignId === '') campaignId = null;
     else if (ctx.campaigns.some((c) => c.id === input.campaignId)) campaignId = input.campaignId;
     else return { ok: false, message: '모금이 끝났거나 고를 수 없는 캠페인입니다.' };
+  } else if (ctx.closedCampaignTitle) {
+    campaignId = null;
   }
 
   // ── 상품·수량·옵션·배송지 확정 ──────────────────────────────────

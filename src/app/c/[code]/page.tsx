@@ -145,8 +145,10 @@ export default async function MerchantChargePage({ params, searchParams }: Param
 
   const route = merchant.moRoutes[0] ?? null;
   // 모금 중 캠페인. 후원페이지에서 ?campaign= 으로 들어오면 기본 선택한다.
-  const campaigns = (await openCampaigns(merchant.id)).map((c) => ({ id: c.id, title: c.title }));
+  const openList = await openCampaigns(merchant.id);
+  const campaigns = openList.map((c) => ({ id: c.id, title: c.title }));
   const defaultCampaignId = campaigns.some((c) => c.id === sp.campaign) ? sp.campaign! : '';
+  const defaultCampaign = openList.find((c) => c.id === defaultCampaignId) ?? null;
   // 후원자가 고를 수 있는 후원 항목. 문자·PC 모두 같은 목록을 쓴다.
   const products = merchant.chargeProducts.map((p) => ({ id: p.id, name: p.name, amount: p.amount.toString() }));
   const bannerUrl = merchant.bannerUrl ?? defaultBannerFor(merchant.id);
@@ -158,9 +160,12 @@ export default async function MerchantChargePage({ params, searchParams }: Param
   } catch {
     paymentMock = true;
   }
-  // 사회복지기관마다 050 전용번호가 부여되므로 keyword 없이 번호만으로 라우팅한다.
-  // (과거 대표번호 공유 방식의 keyword 선입력 로직 제거)
-  const smsHref = route ? `sms:${route.phoneNumber}` : null;
+  // 모바일 문자 링크 본문에 키워드를 미리 넣는다(점검 M-14).
+  //  - 대표번호(SHARED_PREFIX) 기관은 기관 키워드가 없으면 라우팅되지 않는다.
+  //  - 후원페이지에서 캠페인을 지정하고 넘어왔으면(?campaign=) 캠페인 키워드도 넣어 지정후원이 유지되게 한다.
+  const smsPrefix = route?.mode === 'SHARED_PREFIX' && route.keyword ? `${route.keyword} ` : '';
+  const smsBody = `${smsPrefix}${defaultCampaign ? `${defaultCampaign.code} ` : ''}응원합니다`;
+  const smsHref = route ? `sms:${route.phoneNumber}?body=${encodeURIComponent(smsBody)}` : null;
   const moNumberLabel = route ? formatMoNumber(route.phoneNumber) : null;
 
   return (

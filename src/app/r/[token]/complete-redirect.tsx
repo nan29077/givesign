@@ -24,7 +24,7 @@ export function CompleteRedirect({
 }) {
   const router = useRouter();
   const [left, setLeft] = React.useState(seconds);
-  const href = `/c/${merchantCode}`;
+  const href = `/donate/${merchantCode}`;
 
   React.useEffect(() => {
     const tick = setInterval(() => setLeft((v) => (v > 0 ? v - 1 : 0)), 1000);

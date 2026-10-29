@@ -151,6 +151,39 @@ describe('캠페인', () => {
     expect(donors[0].name).toContain('*');
   });
 
+  it('[3-1] 문자로 지정한 캠페인이 금액 선택 전에 끝나면 링크가 막히지 않고 일반 후원으로 처리된다 (M-13)', async () => {
+    await seedRegisteredPayer(fx.payerPhone);
+    const c = await saveCampaign(fx.merchantId, campaignInput());
+    await setCampaignStatus(fx.merchantId, c.id, 'ACTIVE');
+    const { handleMoInbound } = await import('@/server/services/charge-flow');
+    const { mockMoAdapter } = await import('@/server/adapters/mo');
+    const { lastSelectAmountToken } = await import('./helpers');
+    const { loadSelectAmountContext, confirmChargeAmount } = await import('@/server/services/charge-select');
+
+    const pending = await handleMoInbound(mockMoAdapter.parse(moPayload({ to: fx.moNumber, from: fx.payerPhone, text: '김장 응원' })));
+    expect(pending.status).toBe('PENDING_AMOUNT');
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: pending.chargeId! } })).campaignId).toBe(c.id);
+
+    // 그 사이 모금 종료
+    await setCampaignStatus(fx.merchantId, c.id, 'CLOSED');
+    const token = lastSelectAmountToken()!;
+    const ctx = await loadSelectAmountContext(token);
+    expect(ctx.ok && ctx.ctx.campaignId).toBeNull();
+    expect(ctx.ok && ctx.ctx.closedCampaignTitle).toBe('김장 나눔');
+
+    // 화면이 보낸 값 없이(구 화면)도, 빈 값으로도 확정된다. 끝난 캠페인에 묶이지 않는다.
+    const product = await prisma.chargeProduct.findFirstOrThrow({ where: { merchantId: fx.merchantId, amount: 3000n } });
+    const ok = await confirmChargeAmount({ token, productId: product.id, campaignId: '' });
+    expect(ok.ok).toBe(true);
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: pending.chargeId! } })).campaignId).toBeNull();
+  });
+
+  it('[3-2] 키워드 앞에 폭 없는 문자가 붙어도 캠페인으로 잡힌다', async () => {
+    const c = await saveCampaign(fx.merchantId, campaignInput());
+    await setCampaignStatus(fx.merchantId, c.id, 'ACTIVE');
+    expect((await matchCampaignKeyword(fx.merchantId, '\u200b김장 응원합니다')).campaign?.id).toBe(c.id);
+  });
+
   it('[4] 상태 전이표 밖의 전이는 거절한다 (ARCHIVED → ACTIVE 불가, DRAFT 로만 복원)', async () => {
     const c = await saveCampaign(fx.merchantId, campaignInput());
     await setCampaignStatus(fx.merchantId, c.id, 'ARCHIVED');
