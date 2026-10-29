@@ -468,7 +468,8 @@ export default async function MerchantChargePage({ params, searchParams }: Param
                       {formatWon(d.amount)}
                     </span>
                   </div>
-                  {d.message ? (
+                  {/* 익명 후원은 이름뿐 아니라 메시지도 숨긴다. 메시지 속 실명·호실 등으로 후원자가 특정될 수 있다. */}
+                  {d.message && !d.anonymous ? (
                     <p className="mt-1.5 break-words text-[13px] leading-relaxed text-ink-700">{d.message}</p>
                   ) : null}
                   <p className="mt-1.5 text-[11.5px] text-ink-300">{formatKst(d.paidAt, false)}</p>

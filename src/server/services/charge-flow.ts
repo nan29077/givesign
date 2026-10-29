@@ -8,7 +8,7 @@ import type { MoInbound } from '@/server/adapters/mo';
 import { getMtAdapter, decideMessageType } from '@/server/adapters/mt';
 import { getPaymentAdapter, MockPaymentTimeout } from '@/server/adapters/payment';
 import { filterContent, normalizeKeyword, splitKeyword, type BannedWordRule } from './content-filter';
-import { matchCampaignKeyword } from './fundraising';
+import { donationMeta, matchCampaignKeyword } from './fundraising';
 import { emitMerchantEvent } from './webhooks';
 import { checkLimits, commitCounters, rollbackCounters, registerFailure, clearFailures, resolvePolicy } from './limits';
 import { withAdvisoryLock } from '@/server/db';
@@ -1456,6 +1456,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     points: Number(charge.amount),
     message: charge.message,
     paidAt: new Date().toISOString(),
+    ...(await donationMeta(chargeId)),
   });
 
   return { ok: true, status: 'PAYMENT_SUCCESS', message: '결제가 완료되었습니다.' };

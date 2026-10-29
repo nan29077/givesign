@@ -329,3 +329,24 @@ export async function monthlyTrend(merchantId: string, months = 6, now = new Dat
   }
   return [...buckets.entries()].map(([month, v]) => ({ month, ...v }));
 }
+
+// ---------------------------------------------------------------------------
+// 외부 전달용 후원 메타 (파트너 API · 웹훅)
+// ---------------------------------------------------------------------------
+
+export interface DonationMeta {
+  /** 후원자가 공개 화면에 이름·메시지를 숨겨 달라고 했는가. 연동사 화면에 띄울 때 반드시 지킨다. */
+  anonymous: boolean;
+  /** 지정 캠페인(없으면 기관 일반 후원) */
+  campaign: { id: string; code: string; title: string } | null;
+  /** 정기후원 자동 출금 건인가 */
+  recurring: boolean;
+}
+
+export async function donationMeta(chargeId: string): Promise<DonationMeta> {
+  const c = await prisma.charge.findUnique({
+    where: { id: chargeId },
+    select: { anonymous: true, recurringId: true, campaign: { select: { id: true, code: true, title: true } } },
+  });
+  return { anonymous: Boolean(c?.anonymous), campaign: c?.campaign ?? null, recurring: Boolean(c?.recurringId) };
+}

@@ -212,6 +212,25 @@ describe('충전 건 조회', () => {
     expect(mine.every((c) => c.merchantId === fx.merchantId)).toBe(true);
   });
 
+  it('[12-1] 응답에 익명 여부·캠페인·정기 여부가 실린다 (점검 M-15)', async () => {
+    await fund(1);
+    const charge = await prisma.charge.findFirstOrThrow({ where: { merchantId: fx.merchantId, paidAt: { not: null } } });
+    const camp = await prisma.campaign.create({
+      data: {
+        id: 'CAMP-API-TEST', merchantId: fx.merchantId, code: '김장', title: '김장 나눔', summary: 's', goalAmount: 100000n,
+        startsOn: new Date('2026-01-01T00:00:00Z'), endsOn: new Date('2030-12-31T00:00:00Z'), status: 'ACTIVE',
+      },
+    });
+    await prisma.charge.update({ where: { id: charge.id }, data: { anonymous: true, campaignId: camp.id } });
+    const res = await chargesGet(
+      req('/api/partner/v1/charges?status=all', { headers: { authorization: `Bearer ${key.apiKey}` } }),
+    );
+    const item = (await res.json()).items.find((i: { transactionNo: string }) => i.transactionNo === charge.transactionNo);
+    expect(item.anonymous).toBe(true);
+    expect(item.campaign).toEqual({ id: camp.id, code: '김장', title: '김장 나눔' });
+    expect(item.recurring).toBe(false);
+  });
+
   it('[13] limit 이 범위를 벗어나면 400', async () => {
     const res = await chargesGet(
       req('/api/partner/v1/charges?limit=9999', { headers: { authorization: `Bearer ${key.apiKey}` } }),

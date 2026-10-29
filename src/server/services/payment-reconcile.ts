@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { donationMeta } from './fundraising';
 import { emitMerchantEvent } from './webhooks';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
@@ -231,6 +232,7 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
     message: charge.message,
     paidAt: new Date().toISOString(),
     reconciled: true,
+    ...(await donationMeta(charge.id)),
   });
 
   logger.info('결과 미확인 결제를 승인으로 확정', {

@@ -133,6 +133,9 @@ export async function GET(req: Request) {
       pointStatus: true,
       paidAt: true,
       isTest: true,
+      anonymous: true,
+      recurringId: true,
+      campaign: { select: { id: true, code: true, title: true } },
       payer: { select: { phoneMasked: true, phoneHash: true } },
       product: {
         select: { id: true, kind: true, digitalType: true, name: true, sku: true, giveAmount: true, giveUnit: true, validDays: true },
@@ -184,6 +187,10 @@ export async function GET(req: Request) {
       pointStatus: r.pointStatus,
       paidAt: r.paidAt ? r.paidAt.toISOString() : null,
       test: r.isTest,
+      // 후원자가 공개 화면에 이름·메시지를 숨겨 달라고 한 건. 연동사 화면(홈페이지·방송 등)에 띄울 때 지킨다.
+      anonymous: r.anonymous,
+      campaign: r.campaign ? { id: r.campaign.id, code: r.campaign.code, title: r.campaign.title } : null,
+      recurring: Boolean(r.recurringId),
 
       // ── 상품 ──────────────────────────────────────────────────
       // 상품 없이 금액만 직접 입력한 결제는 product 가 null 이다.
