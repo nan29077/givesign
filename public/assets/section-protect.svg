@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 280" fill="none" role="img" aria-label="후원자 보호와 이용 한도를 상징하는 방패 이미지">
+  <defs><linearGradient id="b3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#F5F4FF"/><stop offset="100%" stop-color="#EFFAF5"/></linearGradient></defs>
+  <rect width="640" height="280" rx="24" fill="url(#b3)"/>
+  <path d="M320 56l72 26v56c0 46-30 74-72 86-42-12-72-40-72-86V82z" fill="#FFFFFF" stroke="#6C4CF1" stroke-width="2"/>
+  <path d="M292 140l20 20 40-42" stroke="#10B981" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <g stroke="#B7BBD6" stroke-width="1.6" stroke-linecap="round">
+    <path d="M120 108h96"/><path d="M120 136h72"/><path d="M120 164h84"/>
+    <path d="M424 108h96"/><path d="M448 136h72"/><path d="M436 164h84"/>
+  </g>
+</svg>

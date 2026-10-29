@@ -1,0 +1,27 @@
+Loaded Prisma config from prisma.config.mjs.
+
+Prisma schema loaded from prisma\schema.prisma.
+{"ts":"2026-09-02T02:06:53.203Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:53.353Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Stream isn't writeable and enableOfflineQueue options is false"}}
+{"ts":"2026-09-02T02:06:53.510Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:54.116Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:55.023Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:55.911Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:56.220Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:56.236Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:56.858Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+⨯ Error: 로그인이 필요합니다.
+    at q (E:\프로젝트\메시지페이\.next\server\chunks\ssr\_0qcvgs0._.js:1:21355)
+    at async r (E:\프로젝트\메시지페이\.next\server\chunks\ssr\_0qcvgs0._.js:1:21410)
+    at async r (E:\프로젝트\메시지페이\.next\server\chunks\ssr\src_app_studio_products_page_tsx_1ctit17._.js:1:437) {
+  digest: '396045065'
+}
+{"ts":"2026-09-02T02:06:57.752Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:57.767Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:06:58.977Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:07:00.492Z","level":"warn","message":"redis error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
+{"ts":"2026-09-02T02:07:24.249Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Connection is closed."}}
+{"ts":"2026-09-02T02:07:54.662Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Connection is closed."}}
+{"ts":"2026-09-02T02:08:25.122Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Connection is closed."}}
+{"ts":"2026-09-02T02:08:55.530Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Connection is closed."}}
+{"ts":"2026-09-02T02:09:25.946Z","level":"error","message":"Redis 명령 실패. 인메모리 폴백으로 전환합니다(개발 전용).","meta":{"message":"Connection is closed."}}

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { campaignSchema, donationPageSchema, defaultDonationPage, campaignOpen, campaignKey } from '../src/lib/fundraising';
+const c = { title: '한 끼 나눔', summary: '따뜻한 도시락', story: '', beneficiary: '', usage: '', image: '/assets/givesign/banner.png', goal: 1000000, start: '2026-10-01', end: '2026-10-29', published: true };
+assert.ok(campaignSchema.safeParse(c).success);
+for (const patch of [{ goal: -1 }, { goal: 10000.5 }, { start: '2026-02-31' }, { end: '2026-09-30' }, { image: 'javascript:alert(1)' }, { image: '//evil.test/x' }, { title: '' }]) assert.equal(campaignSchema.safeParse({ ...c, ...patch }).success, false, JSON.stringify(patch));
+assert.ok(donationPageSchema.safeParse(defaultDonationPage).success);
+assert.equal(donationPageSchema.safeParse({ ...defaultDonationPage, color: 'red;display:none' }).success, false);
+const campaign = { ...c, id: 'x', merchantId: 'org', createdAt: '' };
+assert.equal(campaignOpen(campaign, new Date('2026-10-29T14:59:59Z')), true);
+assert.equal(campaignOpen(campaign, new Date('2026-10-29T15:00:00Z')), false);
+assert.equal(campaignOpen({ ...campaign, published: false }, new Date('2026-10-20')), false);
+assert.notEqual(campaignKey('org-a', 'same'), campaignKey('org-b', 'same'));
+console.log('PASS: campaign amounts, real dates, KST end boundary, image URL validation, page color, tenant keys');

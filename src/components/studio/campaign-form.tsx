@@ -1,0 +1,9 @@
+import { saveCampaign } from '@/app/actions/fundraising';
+import { Button, Card, Field, Input, Textarea } from '@/components/ui';
+import { ImageUploadField } from './image-upload-field';
+import type { Campaign } from '@/lib/fundraising';
+export function CampaignForm({ initial: c, today }: { initial?: Campaign; today: string }) {
+  return <form action={saveCampaign} className="space-y-5"><input type="hidden" name="id" value={c?.id ?? ''} />
+    <Card className="space-y-4"><Field label="캠페인 제목" required><Input name="title" required maxLength={100} defaultValue={c?.title} /></Field><Field label="한 줄 소개" required><Input name="summary" required maxLength={300} defaultValue={c?.summary} /></Field><ImageUploadField label="캠페인 대표 이미지" name="image" defaultValue={c?.image || '/assets/givesign/banner.png'} /><Field label="목표 후원금 (원)" required><Input type="number" name="goal" min={10000} max={1000000000000} step={1} required defaultValue={c?.goal ?? 1000000} /></Field><div className="grid gap-4 sm:grid-cols-2"><Field label="시작일" required><Input type="date" name="start" required defaultValue={c?.start ?? today} /></Field><Field label="종료일" required><Input type="date" name="end" required defaultValue={c?.end ?? today} /></Field></div></Card>
+    <Card className="space-y-4"><Field label="지원 대상"><Input name="beneficiary" maxLength={300} defaultValue={c?.beneficiary} /></Field><Field label="캠페인 이야기"><Textarea name="story" rows={8} maxLength={10000} defaultValue={c?.story} /></Field><Field label="후원금 사용계획"><Textarea name="usage" rows={5} maxLength={3000} defaultValue={c?.usage} /></Field><label><input type="checkbox" name="published" defaultChecked={c?.published} /> 캠페인 공개</label><p className="text-sm text-ink-500">공개된 캠페인도 모집 기간에만 참여 안내가 표시됩니다. MO 후원은 기관 단위로 집계되며 캠페인별 모금액은 별도로 표시하지 않습니다.</p></Card><Button type="submit">캠페인 저장</Button></form>;
+}

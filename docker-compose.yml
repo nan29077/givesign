@@ -1,0 +1,43 @@
+# 기브싸인 로컬 개발용 PostgreSQL + Redis
+# Docker Desktop 이 설치되어 있으면 도구_DB시작.bat 으로 한 번에 띄울 수 있습니다.
+# 이미 PostgreSQL 을 쓰고 계시면 이 파일을 쓰지 않고 .env 의 DATABASE_URL 만 바꾸면 됩니다.
+
+# 폴더명이 한글이면 Compose 가 프로젝트 이름을 만들지 못하므로 명시한다.
+name: givesign
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: givesign-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: givesign
+      POSTGRES_PASSWORD: givesign
+      POSTGRES_DB: givesign
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      TZ: UTC
+    ports:
+      - "5462:5432"
+    volumes:
+      - givesign-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U givesign -d givesign"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: givesign-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6390:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  givesign-pgdata:

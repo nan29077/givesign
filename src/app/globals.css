@@ -1,0 +1,534 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   기브싸인 디자인 토큰
+   - 모바일 우선. PC 에서도 중앙 콘텐츠 폭을 앱과 유사하게 유지
+   - 이모지 미사용. 아이콘은 라인형 스트로크(lucide) 1.5px
+   - 결제/출금 관련 정보는 대비를 높여 명확히 표기
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* 브랜드: 신뢰를 주는 네이비와 빠른 완료를 상징하는 라임. */
+  --color-brand-50: #f2f7ed;
+  --color-brand-100: #e5efdc;
+  --color-brand-200: #d3f291;
+  --color-brand-300: #c2ed61;
+  --color-brand-400: #c9dfb6;
+  --color-brand-500: #9fc382;
+  --color-brand-600: #53845d;
+  --color-brand-700: #28634e;
+  --color-brand-800: #385609;
+  --color-brand-900: #213708;
+
+  /* 강조: 조금 더 붉은 호박색 */
+  --color-accent-400: #2c7cff;
+  --color-accent-500: #1264e8;
+  --color-accent-600: #0c4cb4;
+
+  --color-ink-900: #203c32;
+  --color-ink-700: #24364c;
+  --color-ink-500: #617187;
+  --color-ink-400: #8b9aab;
+  --color-ink-300: #b9c5d1;
+  --color-ink-200: #d9e1e9;
+  --color-ink-100: #eaf0f5;
+  --color-ink-50: #f5f8fa;
+
+  --color-success-500: #10b981;
+  --color-success-50: #e8f8f2;
+  --color-warning-500: #d97706;
+  --color-warning-50: #fdf3e2;
+  --color-danger-500: #e5484d;
+  --color-danger-50: #fdecec;
+
+  --font-sans: var(--font-pretendard), "Pretendard", -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+
+  --radius-card: 22px;
+
+  --shadow-soft: 0 1px 2px rgba(7, 20, 38, 0.04), 0 12px 34px rgba(7, 20, 38, 0.07);
+  --shadow-lift: 0 4px 14px rgba(7, 20, 38, 0.08), 0 24px 56px rgba(7, 20, 38, 0.14);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: #eef3f7;
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  text-decoration: none;
+}
+
+/* 앱 폭: PC 에서도 넓게 벌리지 않는다 */
+.app-column {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.public-canvas {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 10% 4%, rgba(183, 243, 74, 0.12), transparent 26rem),
+    linear-gradient(145deg, #edf3f7 0%, #f8fafb 52%, #eaf0f5 100%);
+}
+
+.public-canvas::before {
+  content: none;
+}
+
+.public-content {
+  min-height: calc(100dvh - 68px);
+}
+
+/* ---------------------------------------------------------------------------
+   공개 서비스: 네이비·라임 핀테크 테마
+   관리자 콘솔에는 영향을 주지 않도록 .public-canvas 안에서만 재정의한다.
+--------------------------------------------------------------------------- */
+.public-app-surface {
+  position: relative;
+  background:
+    radial-gradient(circle at 92% 4%, rgba(183, 243, 74, 0.08), transparent 18rem),
+    linear-gradient(180deg, rgba(250, 252, 253, 0.99) 0%, rgba(244, 248, 250, 0.98) 52%, rgba(250, 252, 253, 0.99) 100%);
+  border-inline: 1px solid rgba(125, 145, 165, 0.2);
+}
+
+.public-header {
+  border-color: rgba(125, 145, 165, 0.25);
+  background: rgba(250, 252, 253, 0.9);
+  box-shadow: 0 7px 24px rgba(7, 20, 38, 0.05);
+}
+
+.public-canvas .public-content {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(183, 243, 74, 0.08), transparent 16rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(239, 244, 247, 0.4));
+}
+
+.public-canvas .card {
+  border-color: rgba(178, 193, 207, 0.56);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 252, 0.97));
+  box-shadow: 0 2px 5px rgba(7, 20, 38, 0.025), 0 14px 34px rgba(7, 20, 38, 0.07);
+}
+
+.public-canvas .card:hover {
+  border-color: rgba(133, 160, 185, 0.62);
+}
+
+.public-canvas input:not([type='checkbox']):not([type='radio']),
+.public-canvas textarea,
+.public-canvas select {
+  border-color: rgba(160, 179, 196, 0.68);
+  background-color: rgba(255, 255, 255, 0.94);
+  box-shadow: inset 0 1px 1px rgba(7, 20, 38, 0.025);
+}
+
+.public-canvas input:not([type='checkbox']):not([type='radio']):focus,
+.public-canvas textarea:focus,
+.public-canvas select:focus {
+  border-color: #53845d;
+  box-shadow: 0 0 0 3px rgba(183, 243, 74, 0.2);
+}
+
+.public-side-nav {
+  border-color: rgba(160, 179, 196, 0.5);
+  background: rgba(250, 252, 253, 0.94);
+  box-shadow: 0 16px 42px rgba(7, 20, 38, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.public-bottom-nav {
+  border-color: rgba(160, 179, 196, 0.48);
+  background: rgba(250, 252, 253, 0.96);
+  box-shadow: 0 -8px 28px rgba(7, 20, 38, 0.07);
+}
+
+.public-footer {
+  border-color: rgba(160, 179, 196, 0.42);
+  background: rgba(242, 247, 249, 0.82);
+}
+
+/* ---------------------------------------------------------------------------
+   관리자·사회복지기관 콘솔: 공개 서비스와 연결되는 허니 스튜디오 테마
+   업무 화면의 가독성을 위해 장식 채도는 낮추고 카드/표의 경계를 유지한다.
+--------------------------------------------------------------------------- */
+.console-canvas {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 96% 3%, rgba(255, 215, 122, 0.2), transparent 25rem),
+    radial-gradient(circle at 4% 96%, rgba(243, 111, 91, 0.055), transparent 22rem),
+    linear-gradient(145deg, #fbf7ed 0%, #fffdf8 48%, #f8f1e3 100%);
+}
+
+.console-header {
+  border-color: rgba(215, 181, 130, 0.48);
+  background: rgba(255, 252, 244, 0.91);
+  box-shadow: 0 8px 28px rgba(96, 62, 26, 0.055);
+}
+
+.console-sidebar {
+  border-color: rgba(215, 181, 130, 0.55);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 222, 145, 0.18), transparent 12rem),
+    rgba(255, 253, 248, 0.97);
+  box-shadow: 0 16px 44px rgba(92, 61, 28, 0.105);
+}
+
+.console-navigation {
+  scrollbar-color: rgba(203, 158, 89, 0.48) transparent;
+}
+
+.console-account {
+  border-color: rgba(215, 181, 130, 0.48);
+  background: rgba(255, 252, 244, 0.96);
+}
+
+.console-profile {
+  border: 1px solid rgba(221, 190, 143, 0.4);
+  background: linear-gradient(135deg, rgba(255, 248, 230, 0.94), rgba(255, 253, 247, 0.96));
+}
+
+.console-content {
+  position: relative;
+  z-index: 1;
+}
+
+.console-page-header {
+  border-color: rgba(218, 186, 139, 0.52);
+  background:
+    radial-gradient(circle at 94% 20%, rgba(255, 218, 130, 0.2), transparent 10rem),
+    rgba(255, 253, 247, 0.86);
+  box-shadow: 0 9px 28px rgba(92, 61, 28, 0.065);
+}
+
+.console-canvas .card {
+  border-color: rgba(218, 186, 139, 0.52);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(255, 250, 239, 0.97));
+  box-shadow: 0 2px 5px rgba(92, 61, 28, 0.035), 0 13px 32px rgba(92, 61, 28, 0.07);
+}
+
+.console-canvas input:not([type='checkbox']):not([type='radio']),
+.console-canvas textarea,
+.console-canvas select {
+  border-color: rgba(204, 170, 121, 0.62);
+  background-color: rgba(255, 255, 255, 0.96);
+}
+
+.console-canvas input:not([type='checkbox']):not([type='radio']):focus,
+.console-canvas textarea:focus,
+.console-canvas select:focus {
+  border-color: #d5932f;
+  box-shadow: 0 0 0 3px rgba(242, 181, 65, 0.18);
+}
+
+.console-canvas table {
+  background: rgba(255, 254, 251, 0.98);
+}
+
+.console-canvas thead th {
+  border-color: rgba(218, 186, 139, 0.46);
+  background: rgba(255, 247, 225, 0.84);
+}
+
+.console-canvas tbody td {
+  border-color: rgba(231, 213, 184, 0.62);
+}
+
+@media (max-width: 1023px) {
+  .console-sidebar {
+    border-radius: 0 22px 22px 0;
+    box-shadow: 18px 0 46px rgba(67, 43, 20, 0.16);
+  }
+}
+
+/* 기브싸인 브랜드 장식: 공개 페이지 PC 여백과 콘솔의 작은 마크 */
+.public-mascot-scene {
+  display: none;
+}
+
+.mascot-accent {
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 8px 14px rgba(23, 22, 26, 0.13));
+  transform: rotate(3deg);
+}
+
+.mascot-accent img,
+.console-corner-mascot img {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+
+.console-corner-mascot {
+  position: fixed;
+  right: 18px;
+  bottom: 4px;
+  z-index: 0;
+  display: none;
+  height: 170px;
+  width: 170px;
+  opacity: 0.1;
+  filter: grayscale(0.15) drop-shadow(0 12px 20px rgba(23, 22, 26, 0.08));
+  animation: mascot-console-breathe 5.8s ease-in-out infinite;
+}
+
+.console-page-mascot {
+  display: none;
+}
+
+@media (min-width: 1180px) {
+  .public-mascot-scene {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: block;
+    overflow: hidden;
+    pointer-events: none;
+    background: #203c32;
+  }
+
+  .public-mascot-scene .public-margin-backdrop {
+    opacity: 0.94;
+  }
+
+  .console-corner-mascot {
+    display: block;
+  }
+}
+
+@media (min-width: 1024px) {
+  .console-page-mascot {
+    display: grid;
+  }
+}
+
+@keyframes mascot-console-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-7px) scale(1.025); }
+}
+
+.hero-mascot {
+  animation: givesign-hero-mascot 4.6s ease-in-out infinite;
+}
+
+@keyframes givesign-hero-mascot {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-mascot-scene img,
+  .hero-mascot {
+    animation: none !important;
+  }
+}
+
+.card {
+  background: #fff;
+  border: 1px solid rgba(226, 224, 230, 0.8);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
+}
+
+@media (min-width: 640px) {
+  .public-content > section:not(.hero-slider) {
+    scroll-margin-top: 88px;
+  }
+}
+
+@media (max-width: 639px) {
+  .card { border-radius: 20px; }
+  .public-content { padding-bottom: 2rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 오버레이 전용 (OBS/PRISM 브라우저 소스) */
+.overlay-root {
+  background: transparent !important;
+}
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: translateY(24px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(-4px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pop-out {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-16px) scale(0.98); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-pop-in { animation: pop-in 480ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-pop-out { animation: pop-out 360ms ease-in both; }
+.animate-spin-slow { animation: spin-slow 9s linear infinite; }
+
+/* 스크롤바 정리 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--color-ink-200); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 바텀시트 등장 */
+@keyframes sheet-up {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-sheet-up { animation: sheet-up 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 감사 스티커 바운스 */
+@keyframes thanks-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+  55% { transform: translateY(0); }
+  72% { transform: translateY(-2px); }
+}
+.animate-thanks-bounce { animation: thanks-bounce 1.4s ease-in-out infinite; }
+
+/* 기브싸인 전용 캐릭터 스티커 */
+@keyframes givesign-sticker-cheer {
+  0% { opacity: 0; transform: translateY(72px) scale(0.35) rotate(-8deg); }
+  24% { opacity: 1; transform: translateY(-12px) scale(1.08) rotate(5deg); }
+  42% { transform: translateY(0) scale(1) rotate(-4deg); }
+  62% { transform: translateY(-14px) scale(1.03) rotate(4deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+@keyframes givesign-sticker-heart {
+  0% { opacity: 0; transform: scale(0.35); }
+  22% { opacity: 1; transform: scale(1.1); }
+  38%, 62% { transform: scale(1); }
+  50%, 74% { transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes givesign-sticker-gift {
+  0% { opacity: 0; transform: translateY(160px) scaleY(0.45) scaleX(0.75); }
+  28% { opacity: 1; transform: translateY(-22px) scaleY(1.08) scaleX(1.04); }
+  48% { transform: translateY(8px) scale(0.98); }
+  68% { transform: translateY(-8px) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes givesign-sticker-dance {
+  0% { opacity: 0; transform: translateX(-90px) scale(0.55) rotate(-12deg); }
+  22% { opacity: 1; transform: translateX(10px) scale(1.05) rotate(8deg); }
+  42% { transform: translateX(-10px) scale(1) rotate(-7deg); }
+  62% { transform: translateX(9px) rotate(6deg); }
+  82% { transform: translateX(-5px) rotate(-4deg); }
+  100% { opacity: 1; transform: translateX(0) scale(1) rotate(0deg); }
+}
+@keyframes givesign-sticker-bow {
+  0% { opacity: 0; transform: translateY(42px) scale(0.55); }
+  24% { opacity: 1; transform: translateY(0) scale(1.04); }
+  48% { transform: translateY(10px) rotateX(18deg); transform-origin: 50% 82%; }
+  72% { transform: translateY(0) rotateX(0deg); transform-origin: 50% 82%; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-sticker-cheer { animation: givesign-sticker-cheer 1.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sticker-heart { animation: givesign-sticker-heart 1.65s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sticker-gift { animation: givesign-sticker-gift 1.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sticker-dance { animation: givesign-sticker-dance 1.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sticker-bow { animation: givesign-sticker-bow 1.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sticker-cheer,
+  .animate-sticker-heart,
+  .animate-sticker-gift,
+  .animate-sticker-dance,
+  .animate-sticker-bow { animation-duration: 1ms; }
+}
+
+/* 배너 슬라이드인 */
+@keyframes givesign-banner-in {
+  0%   { opacity: 0; transform: translateX(-64px) scale(0.97); }
+  70%  { opacity: 1; transform: translateX(6px) scale(1.006); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+.animate-banner-in { animation: givesign-banner-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* -------------------------------------------------------------------------
+   게임 오버레이 전용 모션
+   1920x1080 고정 캔버스에서 재생된다. 미리보기는 캔버스째로 축소되므로
+   vh 등 뷰포트 단위를 쓰지 않는다.
+   ------------------------------------------------------------------------- */
+
+@keyframes givesign-game-in {
+  from { opacity: 0; transform: translateY(28px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-game-in { animation: givesign-game-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@keyframes givesign-game-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(18px) scale(0.98); }
+}
+.animate-game-out { animation: givesign-game-out 320ms ease-in both; }
+
+@keyframes givesign-game-pop {
+  0%   { opacity: 0; transform: scale(0.6); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.animate-game-pop { animation: givesign-game-pop 620ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 순위 카드가 한 장씩 올라온다. 지연은 인라인 style 로 준다. */
+@keyframes givesign-rank-in {
+  from { opacity: 0; transform: translateX(-36px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-rank-in { animation: givesign-rank-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 대기 중인 룰렛이 천천히 돈다 (결과가 나오면 멈춘다) */
+@keyframes givesign-wheel-idle {
+  to { transform: rotate(360deg); }
+}
+.animate-wheel-idle { animation: givesign-wheel-idle 24s linear infinite; }
+
+/* 게이지 위를 훑고 지나가는 빛 */
+@keyframes givesign-gauge-shine {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(320%); }
+}
+.animate-gauge-shine { animation: givesign-gauge-shine 2.4s ease-in-out infinite; }
+
+/* 참여자 수처럼 자주 바뀌는 숫자에 붙이는 짧은 강조 */
+@keyframes givesign-count-pulse {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+.animate-count-pulse { animation: givesign-count-pulse 420ms ease-out both; }
+
+/* 마감 임박 표시 */
+@keyframes givesign-urgent {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.animate-urgent { animation: givesign-urgent 900ms ease-in-out infinite; }

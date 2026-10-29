@@ -1,0 +1,2113 @@
+// ---------------------------------------------------------------------------
+// BASIC (기브싸인) - 문자후원 플랫폼 데이터 모델
+// Target: PostgreSQL 16 (Amazon RDS / Aurora PostgreSQL 호환)
+//
+// 설계 원칙
+//  - ID 는 애플리케이션에서 생성(ULID 문자열). DB 함수 의존 제거
+//  - 모든 시각은 timestamptz(UTC) 저장, 표시 시점에 Asia/Seoul 변환
+//  - 금액은 BigInt (원 단위 정수). 부동소수점 금지
+//  - 요율은 Decimal(10,6)
+//  - 개인정보/금융정보는 해시 + 봉투암호화 + 마스킹 3분리 저장
+//  - 정산 원장(settlement_ledger)은 append-only (수정/삭제 금지, 정정은 반대분개)
+//  - 테이블/컬럼명은 snake_case (DBA 인수인계 고려)
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===========================================================================
+// ENUMS
+// ===========================================================================
+
+enum UserRole {
+  PAYER
+  MERCHANT
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+
+  @@map("user_status")
+}
+
+enum MerchantStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+
+  @@map("merchant_status")
+}
+
+enum MoNumberStatus {
+  AVAILABLE
+  RESERVED
+  ASSIGNED
+  RECLAIMED
+  DISABLED
+
+  @@map("mo_number_status")
+}
+
+/// DEDICATED     : 사회복지기관 전용 수신번호
+/// SHARED_PREFIX : 대표번호 공유 + 문자 앞 키워드로 사회복지기관 식별
+enum MoRouteMode {
+  DEDICATED
+  SHARED_PREFIX
+
+  @@map("mo_route_mode")
+}
+
+enum MessageType {
+  SMS
+  LMS
+  MMS
+
+  @@map("message_type")
+}
+
+/// 상품 종류. 실물은 배송·재고를 함께 관리한다.
+///
+/// DOCUMENT 는 약정서·주문서·계약서처럼 결제한 뒤 후원자가 **문서를 작성해 제출**하는
+/// 상품이다. 배송도 포인트 지급도 없으므로 실물·비실물 어느 쪽으로도 묶을 수 없다.
+/// (배송비 계산은 실물만 한다 — quoteShipping 은 PHYSICAL 이 아니면 0원을 돌려준다)
+enum ProductKind {
+  DIGITAL
+  PHYSICAL
+  DOCUMENT
+
+  @@map("product_kind")
+}
+
+/// 비실물 상품 세부 유형.
+enum DigitalProductType {
+  /// 포인트 충전
+  POINT
+  /// 상품권 (핀번호·바코드 등은 사회복지기관이 발급한다)
+  VOUCHER
+  /// 이용권·구독 (기간제)
+  PASS
+  /// 디지털 컨텐츠 (파일·영상·이미지 등). 지급 방식은 fulfillment 로 정한다.
+  CONTENT
+
+  @@map("digital_product_type")
+}
+
+/// 문서 상품 서식을 만드는 방식.
+enum DocumentTemplateType {
+  /// 콘솔 에디터에서 본문과 빈칸(입력 항목)을 직접 만든다. 후원자는 화면에서 작성한다.
+  EDITOR
+  /// 사회복지기관이 PDF·워드 서식을 올린다. 후원자는 내려받아 작성한다.
+  FILE
+  /// 기브싸인가 준비한 기본 서식에서 고른다. 내용은 에디터에서 다시 손볼 수 있다.
+  PRESET
+
+  @@map("document_template_type")
+}
+
+/// 문서 제출 상태.
+///
+/// 결제가 끝나면 먼저 DRAFT 로 만들고 그 링크를 문자로 보낸다.
+/// 제출 전에는 몇 번이든 다시 열 수 있고, 제출하면 더 고칠 수 없다.
+enum DocumentSubmissionStatus {
+  DRAFT
+  SUBMITTED
+  /// 사회복지기관이 내용을 확인했다.
+  REVIEWED
+
+  @@map("document_submission_status")
+}
+
+/// 실물 주문 배송 상태.
+enum ShipmentStatus {
+  PREPARING
+  SHIPPED
+  DELIVERED
+  CANCELED
+  /// 반품 접수 (후원자 요청을 사회복지기관이 받은 상태)
+  RETURN_REQUESTED
+  /// 회수중 (반품 상품이 사회복지기관으로 이동 중)
+  RETURNING
+  /// 반품 완료 (환불은 별도 절차)
+  RETURNED
+  /// 교환 접수
+  EXCHANGE_REQUESTED
+  /// 교환품 재발송
+  EXCHANGE_SHIPPED
+
+  @@map("shipment_status")
+}
+
+/// 비실물 상품을 후원자에게 넘기는 방식.
+enum FulfillmentMode {
+  /// 사회복지기관이 판매 내역 화면에서 직접 지급 처리한다.
+  MANUAL
+  /// 사회복지기관 서버가 연동 API 로 가져가 자동 지급한다.
+  API
+  /// 결제 완료 즉시 지급 코드·링크를 문자로 보낸다.
+  INSTANT
+
+  @@map("fulfillment_mode")
+}
+
+enum MoProcessResult {
+  PENDING
+  ROUTED
+  UNKNOWN_ROUTE
+  DUPLICATE
+  UNREGISTERED_DONOR
+  BLOCKED
+  ERROR
+
+  @@map("mo_process_result")
+}
+
+/// 후원 거래 상태머신
+enum ChargeStatus {
+  RECEIVED
+  /// 후원 금액 선택 대기. MO 를 받았지만 후원자가 아직 금액을 고르지 않았다.
+  PENDING_AMOUNT
+  UNREGISTERED
+  LIMIT_BLOCKED
+  CONTENT_BLOCKED
+  PENDING_CONFIRM
+  /// 결제사(헥토/카드) PIN 인증 대기. 후원자가 PIN 을 입력해야 승인 단계로 넘어간다.
+  PENDING_PIN
+  PENDING_PAYMENT
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  BROADCAST_PENDING
+  BROADCASTED
+  PARTIAL_DELIVERY_FAILED
+  REFUND_REQUESTED
+  REFUNDED
+  SETTLEMENT_PENDING
+  SETTLED
+
+  @@map("charge_status")
+}
+
+enum PaymentMode {
+  DIRECT_TRIGGER
+  CONFIRM_LINK
+
+  @@map("payment_mode")
+}
+
+enum PaymentTxStatus {
+  REQUESTED
+  APPROVED
+  FAILED
+  CANCELED
+  TIMEOUT
+  UNKNOWN
+
+  @@map("payment_tx_status")
+}
+
+enum PaymentTokenStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+
+  @@map("payment_token_status")
+}
+
+enum RegistrationStatus {
+  STARTED
+  AUTH_DONE
+  COMPLETED
+  FAILED
+  EXPIRED
+
+  @@map("registration_status")
+}
+
+/// 전화번호 기준 내통장결제 가입 상태.
+enum PayerOnboardingStatus {
+  UNREGISTERED
+  LINK_SENT
+  REGISTERED
+  SUSPENDED
+  WITHDRAWN
+
+  @@map("payer_onboarding_status")
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+
+  @@map("delivery_status")
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  DONE
+  FAILED
+
+  @@map("refund_status")
+}
+
+enum SecureLinkPurpose {
+  REGISTER_ACCOUNT
+  /// 후원 금액 선택 + PIN 인증으로 이어지는 링크
+  SELECT_AMOUNT
+  CONFIRM_PAYMENT
+  MANAGE_DONOR
+
+  @@map("secure_link_purpose")
+}
+
+enum PolicyScope {
+  GLOBAL
+  MERCHANT
+  PAYER
+
+  @@map("policy_scope")
+}
+
+enum LedgerEntryType {
+  CHARGE_GROSS
+  PG_FEE
+  PLATFORM_FEE
+  REFUND
+  REFUND_FEE_RETURN
+  ADJUSTMENT
+  PAYOUT
+  PAYOUT_WITHHOLDING
+
+  @@map("ledger_entry_type")
+}
+
+enum SettlementRequestStatus {
+  REQUESTED
+  REVIEWING
+  APPROVED
+  PAID
+  PAYOUT_FAILED
+  REJECTED
+
+  @@map("settlement_request_status")
+}
+
+enum ConsentType {
+  TERMS_SERVICE
+  PRIVACY
+  E_FINANCE
+  WITHDRAWAL_AGREE
+  AGE_CONFIRM
+  MARKETING
+
+  @@map("consent_type")
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("risk_level")
+}
+
+enum RiskType {
+  VELOCITY
+  DAILY_LIMIT
+  MONTHLY_LIMIT
+  REPEATED_FAILURE
+  NEW_DONOR
+  MANUAL_REVIEW
+  DUPLICATE_WEBHOOK
+  ABNORMAL_AMOUNT
+  /// 결제 승인 결과를 확인하지 못한 건. 결제사 원장과 수동 대사가 필요하다.
+  PAYMENT_UNKNOWN
+
+  @@map("risk_type")
+}
+
+enum ContentAction {
+  BLOCK
+  MASK
+  FLAG
+
+  @@map("content_action")
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+
+  @@map("report_status")
+}
+
+enum NotificationChannel {
+  MT_SMS
+  EMAIL
+  IN_APP
+
+  @@map("notification_channel")
+}
+
+enum AdminPermission {
+  SUPER_ADMIN
+  OPERATION
+  FINANCE
+  SUPPORT
+  READ_ONLY
+
+  @@map("admin_permission")
+}
+
+// ===========================================================================
+// 계정 / 사용자
+// ===========================================================================
+
+model User {
+  id              String     @id
+  email           String?    @unique
+  passwordHash    String?    @map("password_hash")
+  role            UserRole   @default(PAYER)
+  status          UserStatus @default(ACTIVE)
+  name            String?
+  /// 50종 개별 기본 프로필 캐릭터 번호(0~49). 계정 생성 시 DB에서 무작위 배정되어 유지된다.
+  avatarIndex     Int        @default(dbgenerated("(floor((random() * (50)::double precision)))::integer")) @map("avatar_index")
+  /// 검색용 HMAC-SHA256 해시 (키는 KMS 관리)
+  phoneHash       String?    @unique @map("phone_hash")
+  /// KMS 봉투암호화 결과 (원문 저장 금지)
+  phoneEnc        String?    @map("phone_enc")
+  /// 010-****-1234
+  phoneMasked     String?    @map("phone_masked")
+  ageVerified     Boolean    @default(false) @map("age_verified")
+  lastLoginAt     DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  twoFactorSecret String?    @map("two_factor_secret")
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(3)
+
+  payerProfile    PayerProfile?
+  merchantProfile MerchantProfile?
+  adminProfile    AdminProfile?
+  sessions        UserSession[]
+  consents        ConsentRecord[]
+  notifications   Notification[]
+  passwordResets  PasswordResetToken[]
+
+  @@index([role, status])
+  @@map("app_user")
+}
+
+model UserSession {
+  id        String    @id
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  ip        String?
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_session")
+}
+
+/// 비밀번호 재설정 1회용 토큰.
+/// 원문 토큰은 메일(현재는 콘솔/화면)로만 전달하고 DB 에는 해시만 남긴다.
+model PasswordResetToken {
+  id        String    @id
+  userId    String    @map("user_id")
+  /// tokenHash(SESSION_SECRET HMAC). 원문 저장 금지.
+  tokenHash String    @unique @map("token_hash")
+  requestIp String?   @map("request_ip")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  usedIp    String?   @map("used_ip")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_token")
+}
+
+model AdminProfile {
+  id         String          @id
+  userId     String          @unique @map("user_id")
+  permission AdminPermission @default(READ_ONLY)
+  memo       String?
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auditLogs AdminAuditLog[]
+
+  @@map("admin_profile")
+}
+
+// ===========================================================================
+// 후원자
+// ===========================================================================
+
+model PayerProfile {
+  id                     String                @id
+  userId                 String?               @unique @map("user_id")
+  /// 후원자 식별의 기준. 회원가입 없이 문자만으로도 생성됨
+  phoneHash              String                @unique @map("phone_hash")
+  phoneEnc               String                @map("phone_enc")
+  phoneMasked            String                @map("phone_masked")
+  displayName            String?               @map("display_name")
+  /// SNS 플랫폼 (YOUTUBE | INSTAGRAM | FACEBOOK | TIKTOK | OTHER). 닉네임과 세트로 관리.
+  snsPlatform            String?               @map("sns_platform")
+  ageVerified            Boolean               @default(false) @map("age_verified")
+  /// 후원자 개인 한도 (미설정 시 전역 정책 적용)
+  dailyLimit             BigInt?               @map("daily_limit")
+  monthlyLimit           BigInt?               @map("monthly_limit")
+  failCount              Int                   @default(0) @map("fail_count")
+  /// 마지막 결제 실패 시각. 일정 시간이 지나면 failCount 를 1 부터 다시 센다(연속 실패만 잠근다).
+  lastFailedAt           DateTime?             @map("last_failed_at") @db.Timestamptz(3)
+  lockedUntil            DateTime?             @map("locked_until") @db.Timestamptz(3)
+  blockedAt              DateTime?             @map("blocked_at") @db.Timestamptz(3)
+  blockedReason          String?               @map("blocked_reason")
+  firstSeenAt            DateTime              @default(now()) @map("first_seen_at") @db.Timestamptz(3)
+  registeredAt           DateTime?             @map("registered_at") @db.Timestamptz(3)
+  onboardingStatus       PayerOnboardingStatus @default(UNREGISTERED) @map("onboarding_status")
+  registrationLinkSentAt DateTime?             @map("registration_link_sent_at") @db.Timestamptz(3)
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User?                 @relation(fields: [userId], references: [id])
+  paymentTokens PaymentMethodToken[]
+  registrations PaymentRegistration[]
+  merchantLinks PayerMerchantLink[]
+  charges       Charge[]
+  counters      ChargeCounter[]
+  risks         RiskDetection[]
+  blockedBy     BlockedPayer[]
+
+  @@index([lockedUntil])
+  @@index([onboardingStatus])
+  @@map("payer_profile")
+}
+
+/// 후원자 x 사회복지기관 관계 (동의/차단/누적)
+model PayerMerchantLink {
+  id             String    @id
+  payerId        String    @map("payer_id")
+  merchantId     String    @map("merchant_id")
+  consentedAt    DateTime? @map("consented_at") @db.Timestamptz(3)
+  /// 후원자가 이 사회복지기관를 차단한 시각 (후원자 -> 사회복지기관 방향).
+  /// 반대 방향(사회복지기관 -> 후원자)은 사유·처리자까지 남기는 blocked_donor 테이블에 기록한다.
+  /// 한 컬럼에 두 방향을 같이 쓰면 사회복지기관가 차단을 해제할 때 후원자가 건 차단까지 풀린다.
+  payerBlockedAt DateTime? @map("payer_blocked_at") @db.Timestamptz(3)
+  dailyLimit     BigInt?   @map("daily_limit")
+  totalAmount    BigInt    @default(0) @map("total_amount")
+  totalCount     Int       @default(0) @map("total_count")
+  lastDonatedAt  DateTime? @map("last_donated_at") @db.Timestamptz(3)
+  /// 사회복지기관 API 가 쓰는 후원자 식별자(payerRef) 캐시.
+  ///
+  /// payerRef 는 merchantId 와 phoneHash 로 만든 HMAC 이라 되돌릴 수 없다.
+  /// 사회복지기관이 payerRef 로 문자를 보내려면 그 값으로 후원자를 찾아야 하는데,
+  /// 매번 이 사회복지기관의 후원자 전부를 훑어 계산할 수는 없어 여기에 저장해 둔다.
+  /// 값이 비어 있는 옛 행은 필요할 때 채운다(backfillPayerRefs).
+  payerRef       String?   @map("payer_ref")
+  /// 사회복지기관 사이트의 회원 ID. 사회복지기관이 API 로 연결해 둔다(선택).
+  /// 이 값이 있으면 사회복지기관은 자기 회원 ID 만으로 결제 이력을 찾을 수 있다.
+  merchantMemberId String? @map("merchant_member_id")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([payerId, merchantId])
+  @@index([merchantId])
+  @@index([merchantId, payerRef])
+  @@index([merchantId, merchantMemberId])
+  @@map("payer_merchant_link")
+}
+
+/// 사회복지기관 -> 후원자 방향 차단. (반대 방향은 donor_creator_link.donor_blocked_at)
+model BlockedPayer {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  payerId    String   @map("payer_id")
+  reason     String?
+  blockedBy  String?  @map("blocked_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, payerId])
+  @@map("blocked_payer")
+}
+
+// ===========================================================================
+// 사회복지기관
+// ===========================================================================
+
+model MerchantProfile {
+  id                String         @id
+  userId            String         @unique @map("user_id")
+  /// 현재 활성 코드 (이력은 creator_code 테이블)
+  code              String         @unique
+  displayName       String         @map("display_name")
+  channelName       String?        @map("channel_name")
+  avatarUrl         String?        @map("avatar_url")
+  /// 후원 페이지 상단 배너 이미지 URL (사회복지기관 꾸미기)
+  bannerUrl         String?        @map("banner_url")
+  description       String?
+  /// 대표 채널 주소. 신청 때 받은 값을 소개글에 이어 붙이면 소개 길이 제한을 넘겨
+  /// 이후 후원샵 설정 저장이 영구히 막히므로 반드시 별도 컬럼에 보관한다.
+  channelUrl        String?        @map("channel_url")
+  status            MerchantStatus @default(PENDING)
+  /// 문자 1건당 후원금 (원)
+  /// 직접 입력 충전 허용 여부. 끄면 등록된 후원 항목만 고를 수 있다.
+  allowCustomAmount Boolean        @default(true) @map("allow_custom_amount")
+  minAmount         BigInt         @default(1000) @map("min_amount")
+  maxAmount         BigInt         @default(50000) @map("max_amount")
+  /// 직접 입력 금액의 사회복지기관 자체 하한. null 이면 정책 하한을 그대로 쓴다.
+  /// (관리자 지정 범위·한도 정책보다 넓어질 수는 없다 — 좁히는 용도)
+  customMinAmount   BigInt?        @map("custom_min_amount")
+  /// 직접 입력 금액의 사회복지기관 자체 상한.
+  customMaxAmount   BigInt?        @map("custom_max_amount")
+  /// 직접 입력 금액의 배수 단위(원). null 이나 1 이면 제한 없음.
+  customAmountStep  Int?           @map("custom_amount_step")
+  /// 사회복지기관별 결제 모드 오버라이드 (null 이면 전역 설정)
+  paymentMode       PaymentMode?   @map("payment_mode")
+  /// 후원 감사 MT 문자 본문. null/빈 값이면 기본 템플릿을 사용한다.
+  /// 치환자: {후원자} {사회복지기관} {금액} {메시지} {누적}
+  thanksMtMessage   String?        @map("thanks_mt_message")
+  /// MO 를 받았을 때 보내는 **안내 문자** 본문. 감사 문자와 다른 문자다.
+  /// 이 문자에 결제(상품 선택) 링크가 붙는다. null/빈 값이면 기본 문구를 쓴다.
+  /// 치환자: {사회복지기관} {상품목록} {유효시간}  (링크는 본문 끝에 자동으로 붙는다)
+  moGuideMtMessage  String?        @map("mo_guide_mt_message")
+  businessNo        String?        @map("business_no")
+  approvedAt        DateTime?      @map("approved_at") @db.Timestamptz(3)
+  suspendedAt       DateTime?      @map("suspended_at") @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // 하드 삭제로 정산계좌·결제 이력까지 함께 사라지면 안 된다.
+  // 탈퇴는 status=WITHDRAWN 소프트 삭제로 처리하므로 삭제 자체를 막는다.
+  user               User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  codes              MerchantCode[]
+  moRoutes           MerchantMoNumber[]
+  charges            Charge[]
+  payerLinks         PayerMerchantLink[]
+  blockedPayers      BlockedPayer[]
+  settlementAccount  SettlementAccount?
+  ledgerEntries      SettlementLedger[]
+  settlementRequests SettlementRequest[]
+  feePolicies        FeePolicy[]
+  apiKeys            MerchantApiKey[]
+  limitPolicies      ChargeLimitPolicy[]
+  bannedWords        BannedWord[]
+  shippingPolicy     MerchantShippingPolicy?
+  shipments          ChargeShipment[]
+  moMessages         MoInboundMessage[]
+  chargeProducts     ChargeProduct[]
+  apiCallLogs        MerchantApiCallLog[]
+  sandboxCharges     SandboxCharge[]
+  sandboxMessages    SandboxMessage[]
+  mtTemplates        MerchantMtTemplate[]
+  webhooks           MerchantWebhook[]
+  webhookDeliveries  WebhookDelivery[]
+  documentTemplates  DocumentTemplate[]
+  documentSubmissions DocumentSubmission[]
+
+  @@index([status])
+  @@map("merchant_profile")
+}
+
+/// 사회복지기관이 등록해 두는 후원 항목.
+/// 결제 금액과 지급 포인트는 1:1 이므로 금액 하나만 둔다(10,000원 = 10,000P).
+/// 지난 결제가 참조하므로 삭제하지 않고 archivedAt 으로 보관 처리한다.
+/// 사회복지기관이 파는 상품.
+///
+/// 비실물(DIGITAL) 은 포인트·상품권·이용권처럼 배송이 없는 상품이고,
+/// 실물(PHYSICAL) 은 배송비·재고·옵션을 관리해야 하는 상품이다.
+/// 두 종류가 한 표에 있는 이유는 결제 링크에서 함께 고르기 때문이다.
+model ChargeProduct {
+  id          String              @id
+  merchantId  String              @map("merchant_id")
+  kind        ProductKind         @default(DIGITAL)
+  /// 비실물 세부 유형. kind=DIGITAL 일 때만 값이 있다.
+  digitalType DigitalProductType? @map("digital_type")
+  /// 화면에 보이는 이름 (예: 10,000 포인트)
+  name        String
+  /// 결제 금액(원). 실물이면 상품 1개 가격(배송비 제외).
+  amount      BigInt
+  /// 지급 수량. 포인트는 지급 포인트, 상품권은 매수, 이용권은 개월 수.
+  /// null 이면 결제 금액과 1:1 로 본다(포인트 기본 규칙).
+  giveAmount  BigInt?             @map("give_amount")
+  /// 지급 단위 표기 (포인트 · 매 · 개월 등). 화면 안내에만 쓴다.
+  giveUnit    String?             @map("give_unit")
+  /// 이용권·상품권 유효기간(일). null 이면 무기한.
+  validDays   Int?                @map("valid_days")
+  /// 상품 설명 (결제 링크에 노출)
+  description String?
+  imageUrl    String?             @map("image_url")
+  /// 대표 이미지 외 추가 이미지 URL 배열. ["https://...", ...] 최대 5장.
+  images      Json?
+  /// 면세 상품 여부. 정산 부가세 계산과 세금계산서 근거로 남긴다.
+  taxFree     Boolean             @default(false) @map("tax_free")
+  /// 전자상거래 상품정보 제공 고시.
+  /// { "category": "의류", "items": [{ "label": "제품 소재", "value": "면 100%" }] }
+  noticeInfo  Json?               @map("notice_info")
+  sortOrder   Int                 @default(0) @map("sort_order")
+  active      Boolean             @default(true)
+  archivedAt  DateTime?           @map("archived_at") @db.Timestamptz(3)
+
+  // ── 실물 상품 전용 ──────────────────────────────────────────────
+  sku          String?
+  /// 남은 재고. null 이면 재고를 세지 않는다(무제한).
+  /// 차감은 결제 승인 시점에 상품 단위 잠금 안에서 한다.
+  stock        Int?
+  /// 재고가 이 값 이하면 화면·알림에서 경고한다.
+  stockAlert   Int?    @map("stock_alert")
+  /// 이 상품 전용 배송비. null 이면 사회복지기관 기본 배송정책을 따른다.
+  shippingFee  BigInt? @map("shipping_fee")
+  /// 이 금액 이상이면 배송비 무료(조건부 무료). null 이면 사회복지기관 기본 정책을 따른다.
+  freeShipOver BigInt? @map("free_ship_over")
+  /// 항상 무료배송. 위 두 값보다 우선한다.
+  freeShipping Boolean @default(false) @map("free_shipping")
+  /// 1회 주문 최대 수량. null 이면 결제 한도까지.
+  maxPerOrder  Int?    @map("max_per_order")
+  /// 옵션 정의.
+  /// 신규 형식: [{ "name": "사이즈", "values": [{ "label": "S", "addPrice": "0", "stock": null }] }]
+  /// 구 형식(문자열 배열)도 읽을 수 있게 파서가 둘 다 받는다.
+  options      Json?
+  /// 결제 후 출고까지 걸리는 영업일. null 이면 기본 배송정책을 따른다.
+  dispatchDays Int?    @map("dispatch_days")
+  /// 이 상품 반품 배송비(편도). null 이면 기본 배송정책.
+  returnFee    BigInt? @map("return_fee")
+  /// 이 상품 교환 배송비(왕복). null 이면 기본 배송정책.
+  exchangeFee  BigInt? @map("exchange_fee")
+
+  // ── 비실물 상품 전용 ───────────────────────────────────────────
+  /// 비실물 지급 방식. INSTANT 는 결제 완료 즉시 지급 코드를 문자로 보낸다.
+  fulfillment      FulfillmentMode @default(MANUAL)
+  /// INSTANT 지급에 쓸 코드·링크 안내 문구. 지급 문자 본문에 그대로 들어간다.
+  fulfillmentNote  String?         @map("fulfillment_note")
+  /// 청약철회 제한 안내(디지털 콘텐츠 특례). 결제 화면에 그대로 노출한다.
+  withdrawalNotice String?         @map("withdrawal_notice")
+
+  // ── 문서 상품 전용 ─────────────────────────────────────────────
+  /// 결제 후 후원자가 작성할 문서 서식. kind=DOCUMENT 일 때만 값이 있다.
+  /// 서식을 지우지 못하도록(제출 기록이 참조한다) Restrict 로 묶는다.
+  documentTemplateId String? @map("document_template_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant         MerchantProfile   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  charges          Charge[]
+  documentTemplate DocumentTemplate? @relation(fields: [documentTemplateId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId, active, sortOrder])
+  @@index([merchantId, kind, active])
+  @@index([documentTemplateId])
+  /// 사회복지기관 안에서 sku 는 유일하다. 일괄 동기화(POST /products/bulk)가 sku 로 기존 상품을
+  /// 찾아 갱신하므로, 같은 sku 가 두 건이면 어느 쪽이 갱신될지 알 수 없고 동시 호출에서
+  /// 중복이 생긴다. sku 가 없는 상품(null)은 제약을 받지 않는다(Postgres 는 null 을 중복으로 보지 않는다).
+  @@unique([merchantId, sku])
+  @@map("charge_product")
+}
+
+/// 사회복지기관 기본 배송정책. 상품별 값이 없으면 이 값을 쓴다.
+model MerchantShippingPolicy {
+  id             String  @id
+  merchantId     String  @unique @map("merchant_id")
+  /// 기본 배송비
+  baseFee        BigInt  @default(3000) @map("base_fee")
+  /// 이 금액 이상 주문이면 배송비 무료(조건부 무료). null 이면 조건부 무료 없음.
+  freeOver       BigInt? @map("free_over")
+  /// 도서산간 추가 배송비
+  remoteFee      BigInt  @default(0) @map("remote_fee")
+  carrier        String?
+  /// 배송 안내 문구(발송 소요일 등). 결제 링크에 그대로 보여준다.
+  guide          String?
+  /// 결제 후 출고까지 걸리는 기본 영업일.
+  dispatchDays   Int     @default(2) @map("dispatch_days")
+  /// 기본 반품 배송비(편도).
+  returnFee      BigInt  @default(0) @map("return_fee")
+  /// 기본 교환 배송비(왕복).
+  exchangeFee    BigInt  @default(0) @map("exchange_fee")
+  /// 반품·교환품을 받을 주소. 사회복지기관 사업장 정보라 평문으로 둔다.
+  returnReceiver String? @map("return_receiver")
+  returnPhone    String? @map("return_phone")
+  returnZipCode  String? @map("return_zip_code")
+  returnAddress  String? @map("return_address")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_shipping_policy")
+}
+
+/// 실물 상품 주문의 배송 정보.
+///
+/// 수령인·연락처·주소는 개인정보라 암호화해 저장하고, 화면에는 마스킹만 노출한다.
+/// 원문은 해당 사회복지기관과 최고관리자만 복호화해 볼 수 있다(감사로그를 남긴다).
+model ChargeShipment {
+  id         String @id
+  chargeId   String @unique @map("charge_id")
+  merchantId String @map("merchant_id")
+
+  receiverEnc    String  @map("receiver_enc")
+  receiverMasked String  @map("receiver_masked")
+  phoneEnc       String  @map("phone_enc")
+  phoneMasked    String  @map("phone_masked")
+  zipCode        String  @map("zip_code")
+  addressEnc     String  @map("address_enc")
+  /// 시/군/구까지만 남긴 표기. 목록 화면에는 이 값만 쓴다.
+  addressMasked  String  @map("address_masked")
+  /// 후원자가 결제 화면에서 남긴 배송 요청. 사회복지기관은 읽기만 한다(덮어쓰면 오배송 근거가 사라진다).
+  memo           String?
+  /// 사회복지기관 내부 메모. 후원자에게 보이지 않는다.
+  merchantMemo   String? @map("merchant_memo")
+  /// 도서산간 추가배송비가 붙은 주문인지
+  remote         Boolean @default(false)
+
+  status            ShipmentStatus @default(PREPARING)
+  carrier           String?
+  trackingNo        String?        @map("tracking_no")
+  shippedAt         DateTime?      @map("shipped_at") @db.Timestamptz(3)
+  deliveredAt       DateTime?      @map("delivered_at") @db.Timestamptz(3)
+  /// 반품·교환 접수 사유
+  returnReason      String?        @map("return_reason")
+  /// 반품·교환을 접수한 시각(최초 1회)
+  returnRequestedAt DateTime?      @map("return_requested_at") @db.Timestamptz(3)
+  /// 회수 송장번호
+  returnTrackingNo  String?        @map("return_tracking_no")
+  /// 반품·교환이 끝난 시각
+  returnClosedAt    DateTime?      @map("return_closed_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  charge   Charge          @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status])
+  @@map("charge_shipment")
+}
+
+/// 사회복지기관이 등록해 두는 문서 서식 (약정서·주문서·계약서 등).
+///
+/// 만드는 방법은 셋이다: 에디터에서 직접 쓰기(EDITOR) · 파일 올리기(FILE) ·
+/// 기본 서식 고르기(PRESET). 어느 쪽이든 후원자가 채우는 입력 항목(fields)을 붙일 수 있다.
+///
+/// 지난 제출 기록이 서식을 참조하므로 삭제하지 않고 archivedAt 으로 보관 처리한다.
+model DocumentTemplate {
+  id           String               @id
+  merchantId   String               @map("merchant_id")
+  /// 서식 이름 (예: 후원약정서)
+  name         String
+  /// 콘솔 목록·결제 화면에 쓰는 한 줄 설명
+  description  String?
+  templateType DocumentTemplateType @map("template_type")
+  /// EDITOR·PRESET 서식의 본문. 후원자가 작성 화면에서 그대로 읽는다.
+  body         String?
+  /// 후원자가 채우는 입력 항목 정의.
+  /// [{ "id": "name", "label": "성명", "type": "TEXT", "required": true, "hint": null }]
+  /// 유형은 TEXT · LONGTEXT · DATE · NUMBER · PHONE · CHECKBOX (documents.ts 의 파서가 판정한다)
+  fields       Json?
+  /// FILE 서식으로 올린 파일 주소(/api/media/...)
+  fileUrl      String?              @map("file_url")
+  /// 내려받을 때 후원자에게 보여 줄 파일 이름
+  fileName     String?              @map("file_name")
+  /// PRESET 서식으로 고른 기본 서식 키 (documents.ts 의 DOCUMENT_PRESETS)
+  presetKey    String?              @map("preset_key")
+  /// 자필 서명을 받을지. 약정서·계약서는 켜 두는 것이 기본이다.
+  requireSignature Boolean          @default(true) @map("require_signature")
+  active       Boolean              @default(true)
+  archivedAt   DateTime?            @map("archived_at") @db.Timestamptz(3)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant    MerchantProfile      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  submissions DocumentSubmission[]
+  products    ChargeProduct[]
+
+  @@index([merchantId, active])
+  @@map("document_template")
+}
+
+/// 후원자가 작성해 제출하는 문서 한 건.
+///
+/// 결제가 완료되면 문서 상품마다 이 행을 먼저 DRAFT 로 만들고, 여기 토큰으로 만든
+/// 작성 링크를 감사 문자에 넣어 보낸다. 제출 전에는 몇 번이든 다시 열 수 있다
+/// (보안링크와 달리 1회용이 아니다 — 작성 중 창을 닫은 후원자가 링크를 잃으면
+///  사회복지기관이 대신 만들어 줄 방법이 없기 때문이다). 제출하면 더 고칠 수 없다.
+///
+/// 후원자가 적는 값은 성명·연락처·주소 같은 개인정보다. 배송지와 같은 기준으로
+/// 암호화해 보관하고(valuesEnc) 목록에는 마스킹만 노출한다.
+/// 원문 열람은 감사로그(DOCUMENT_SUBMISSION_VIEW)를 남긴다.
+model DocumentSubmission {
+  id         String  @id
+  templateId String  @map("template_id")
+  merchantId String  @map("merchant_id")
+  /// 연결된 결제. 결제 한 건에 문서 한 건이다.
+  chargeId   String? @unique @map("charge_id")
+
+  /// 작성 링크 토큰의 HMAC 해시. 토큰 원문은 저장하지 않는다.
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  payerNameEnc     String? @map("payer_name_enc")
+  payerNameMasked  String? @map("payer_name_masked")
+  payerPhoneEnc    String? @map("payer_phone_enc")
+  payerPhoneMasked String? @map("payer_phone_masked")
+
+  /// 항목별 입력값 JSON( { "fieldId": "값" } )을 암호화해 담는다.
+  valuesEnc    String? @map("values_enc")
+  /// 자필 서명 이미지 주소. 후원자가 화면에서 그린 서명을 PNG 로 저장한다.
+  signatureUrl String? @map("signature_url")
+
+  status      DocumentSubmissionStatus @default(DRAFT)
+  submittedAt DateTime?                @map("submitted_at") @db.Timestamptz(3)
+  reviewedAt  DateTime?                @map("reviewed_at") @db.Timestamptz(3)
+  /// 사회복지기관 내부 메모. 후원자에게 보이지 않는다.
+  merchantMemo String?                 @map("merchant_memo")
+  /// 제출 시점의 접속 정보. 전자문서 분쟁 대응 근거로 남긴다.
+  submitIp    String?                  @map("submit_ip")
+  submitAgent String?                  @map("submit_agent")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // 서식을 보관해도 제출 기록은 남아야 한다(분쟁 대응).
+  template DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  merchant MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  charge   Charge?          @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status, createdAt])
+  @@index([templateId])
+  @@index([expiresAt])
+  @@map("document_submission")
+}
+
+model MerchantCode {
+  id         String    @id
+  merchantId String    @map("merchant_id")
+  code       String    @unique
+  active     Boolean   @default(true)
+  issuedAt   DateTime  @default(now()) @map("issued_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@map("merchant_code")
+}
+
+/// MO 수신 경로. DEDICATED = 전용번호, SHARED_PREFIX = 대표번호 + 키워드
+model MerchantMoNumber {
+  id          String         @id
+  phoneNumber String         @map("phone_number")
+  /// SHARED_PREFIX 모드에서 문자 맨 앞 키워드 (대문자 정규화 저장)
+  keyword     String?
+  mode        MoRouteMode    @default(DEDICATED)
+  status      MoNumberStatus @default(AVAILABLE)
+  providerId  String?        @map("provider_id")
+  merchantId  String?        @map("merchant_id")
+  monthlyCost BigInt         @default(0) @map("monthly_cost")
+  assignedAt  DateTime?      @map("assigned_at") @db.Timestamptz(3)
+  releasedAt  DateTime?      @map("released_at") @db.Timestamptz(3)
+  memo        String?
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
+
+  @@unique([phoneNumber, keyword])
+  @@index([status])
+  @@index([merchantId])
+  @@map("merchant_mo_number")
+}
+
+// ===========================================================================
+// 문자 (MO 수신 / MT 발송)
+// 운영환경에서는 created_at 기준 월 단위 파티셔닝 적용 (별도 SQL 마이그레이션)
+// ===========================================================================
+
+model MoInboundMessage {
+  id                String          @id
+  /// MO 사업자 메시지 ID. 중복 수신 차단의 1차 방어선
+  /// 사업자마다 채번 체계가 달라 값이 겹칠 수 있다(예: MTONET 의 "1" 과 EMMA 의 "1").
+  /// 그래서 단독 unique 가 아니라 (provider_code, provider_message_id) 복합 unique 로 막는다.
+  providerMessageId String          @map("provider_message_id")
+  providerCode      String          @map("provider_code")
+  receivedNumber    String          @map("received_number")
+  phoneHash         String          @map("phone_hash")
+  phoneEnc          String          @map("phone_enc")
+  phoneMasked       String          @map("phone_masked")
+  messageType       MessageType     @default(SMS) @map("message_type")
+  /// 원문은 개인정보가 포함될 수 있어 암호화 저장
+  contentEnc        String          @map("content_enc")
+  /// 필터링 후 방송 노출용 텍스트
+  contentFiltered   String?         @map("content_filtered")
+  attachmentInfo    Json?           @map("attachment_info")
+  merchantId        String?         @map("merchant_id")
+  matchedKeyword    String?         @map("matched_keyword")
+  result            MoProcessResult @default(PENDING)
+  resultDetail      String?         @map("result_detail")
+  receivedAt        DateTime        @map("received_at") @db.Timestamptz(3)
+  processedAt       DateTime?       @map("processed_at") @db.Timestamptz(3)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
+  charge   Charge?
+
+  /// 중복 수신 차단 키. 사업자를 함께 묶어야 사업자별 채번이 서로 충돌하지 않는다.
+  @@unique([providerCode, providerMessageId])
+  @@index([merchantId, receivedAt])
+  @@index([phoneHash, receivedAt])
+  @@index([result])
+  // 관리자 수신 문자 목록은 필터 없이 최신순으로 연다.
+  // 시간축 단독 인덱스가 없으면 표가 커질수록 매번 전체를 정렬한다.
+  @@index([receivedAt])
+  @@map("mo_inbound_message")
+}
+
+model MtOutboundMessage {
+  id                String         @id
+  phoneHash         String         @map("phone_hash")
+  phoneEnc          String         @map("phone_enc")
+  phoneMasked       String         @map("phone_masked")
+  fromNumber        String         @map("from_number")
+  messageType       MessageType    @default(SMS) @map("message_type")
+  templateCode      String?        @map("template_code")
+  /// 발송 본문. 보안링크 토큰 원문은 포함하지 않고 마스킹 저장
+  bodyMasked        String         @map("body_masked")
+  status            DeliveryStatus @default(PENDING)
+  providerCode      String?        @map("provider_code")
+  providerMessageId String?        @map("provider_message_id")
+  resultCode        String?        @map("result_code")
+  resultMessage     String?        @map("result_message")
+  chargeId          String?        @map("charge_id")
+  merchantId        String?        @map("merchant_id")
+  attempts          Int            @default(0)
+  /// 사회복지기관이 API 로 보낸 문자의 멱등키. 재시도로 같은 문자가 두 번 나가는 것을 막는다.
+  /// 시스템이 보내는 문자에는 없다(null).
+  idempotencyKey    String?        @map("idempotency_key")
+  /// 사회복지기관이 API 로 직접 보낸 문자인지. 통계와 한도 계산을 시스템 발송과 분리한다.
+  merchantSent      Boolean        @default(false) @map("merchant_sent")
+  sentAt            DateTime?      @map("sent_at") @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  charge Charge? @relation(fields: [chargeId], references: [id])
+
+  @@index([phoneHash, createdAt])
+  @@index([status])
+  @@index([chargeId])
+  // 20260819100100_guards_and_indexes 에서 raw SQL 로 만든 인덱스. 드리프트 방지용 선언.
+  @@index([merchantId, createdAt])
+  // MT 발송 관리 목록도 기본 진입이 필터 없는 최신순이다.
+  @@index([createdAt])
+  // 같은 사회복지기관이 같은 멱등키를 다시 보내면 새로 발송하지 않고 첫 결과를 돌려준다.
+  @@unique([merchantId, idempotencyKey])
+  @@map("mt_outbound_message")
+}
+
+/// MT 로 전송되는 1회용 보안 링크
+model SecureLink {
+  id         String            @id
+  tokenHash  String            @unique @map("token_hash")
+  purpose    SecureLinkPurpose
+  phoneHash  String            @map("phone_hash")
+  merchantId String?           @map("merchant_id")
+  chargeId   String?           @unique @map("charge_id")
+  payload    Json?
+  expiresAt  DateTime          @map("expires_at") @db.Timestamptz(3)
+  usedAt     DateTime?         @map("used_at") @db.Timestamptz(3)
+  usedIp     String?           @map("used_ip")
+  usedAgent  String?           @map("used_agent")
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  charge Charge? @relation(fields: [chargeId], references: [id])
+
+  @@index([phoneHash])
+  @@index([expiresAt])
+  @@map("secure_link")
+}
+
+// ===========================================================================
+// 결제
+// ===========================================================================
+
+/// 결제수단 종류. 현재는 계좌(내통장결제)만 운영하고 카드 빌링키는 구조만 준비되어 있다.
+enum PaymentMethodKind {
+  ACCOUNT
+  CARD
+
+  @@map("payment_method_kind")
+}
+
+model PaymentRegistration {
+  id            String             @id
+  payerId       String             @map("payer_id")
+  merchantId    String?            @map("merchant_id")
+  provider      String             @default("HECTO")
+  /// 등록하려는 결제수단 종류
+  method        PaymentMethodKind  @default(ACCOUNT)
+  providerTid   String?            @map("provider_tid")
+  status        RegistrationStatus @default(STARTED)
+  resultCode    String?            @map("result_code")
+  resultMessage String?            @map("result_message")
+  /// 민감값 제거된 응답 스냅샷
+  rawMasked     Json?              @map("raw_masked")
+  startedAt     DateTime           @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime?          @map("completed_at") @db.Timestamptz(3)
+
+  payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@index([payerId])
+  @@index([status])
+  @@map("payment_registration")
+}
+
+model PaymentMethodToken {
+  id           String             @id
+  payerId      String             @map("payer_id")
+  provider     String             @default("HECTO")
+  /// 빌키 종류. ACCOUNT = 내통장결제 계좌 빌키, CARD = 카드 빌링키(추후 연동)
+  method       PaymentMethodKind  @default(ACCOUNT)
+  /// 빌키 암호문. 복호화는 결제 워커에서만 수행하며 로그 출력 금지
+  billKeyEnc   String             @map("bill_key_enc")
+  billKeyHint  String             @map("bill_key_hint")
+  bankCode     String?            @map("bank_code")
+  bankName     String?            @map("bank_name")
+  /// 계좌 원문 저장 금지. 끝 4자리만 보관
+  accountTail4 String?            @map("account_tail4")
+  /// 카드 빌링키용. 카드 원문 저장 금지, 발급사명과 끝 4자리만 보관
+  cardIssuer   String?            @map("card_issuer")
+  cardTail4    String?            @map("card_tail4")
+  status       PaymentTokenStatus @default(ACTIVE)
+  registeredAt DateTime           @default(now()) @map("registered_at") @db.Timestamptz(3)
+  revokedAt    DateTime?          @map("revoked_at") @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@index([payerId, status])
+  @@map("payment_method_token")
+}
+
+model Charge {
+  id            String       @id
+  /// 대외 노출용 거래번호
+  transactionNo String       @unique @map("transaction_no")
+  merchantId    String       @map("merchant_id")
+  payerId       String?      @map("payer_id")
+  moMessageId   String?      @unique @map("mo_message_id")
+  amount        BigInt
+  displayName   String       @map("display_name")
+  /// 필터링 완료된 노출용 메시지
+  message       String
+  /// 원문 암호화 보관 (분쟁 대응)
+  messageRawEnc String?      @map("message_raw_enc")
+  status        ChargeStatus @default(RECEIVED)
+  statusReason  String?      @map("status_reason")
+  /// 접수 채널: MO(문자) | WEB(후원샵 PC 웹 후원)
+  channel       String       @default("MO")
+  /// 고른 상품. 직접 입력 결제는 null 이다.
+  productId     String?      @map("product_id")
+  /// 실물 상품 주문 수량. 비실물은 항상 1.
+  quantity      Int          @default(1)
+  /// 선택한 옵션 표기 (예: "사이즈: L / 색상: 블랙")
+  optionText    String?      @map("option_text")
+  /// 결제 금액(amount)에 포함된 배송비. 비실물은 0.
+  shippingFee   BigInt       @default(0) @map("shipping_fee")
+  paymentMode   PaymentMode  @default(CONFIRM_LINK) @map("payment_mode")
+  isTest        Boolean      @default(false) @map("is_test")
+  anonymous     Boolean      @default(false)
+
+  /// 결제수수료 차감액 (부가세 포함)
+  pgFee       BigInt @default(0) @map("pg_fee")
+  /// 플랫폼수수료 차감액 (부가세 포함)
+  platformFee BigInt @default(0) @map("platform_fee")
+  /// 위 두 수수료에 포함된 부가세 합계 (표시용. 이미 pgFee/platformFee 에 포함되어 있다)
+  feeVat      BigInt @default(0) @map("fee_vat")
+  netAmount   BigInt @default(0) @map("net_amount")
+
+  mtStatus    DeliveryStatus @default(PENDING) @map("mt_status")
+  /// 사회복지기관의 포인트 지급 처리 상태. 결제와 별개로 움직인다.
+  /// PENDING(지급 대기) · SENT(지급 완료) · SKIPPED(지급 대상 아님) · FAILED(보류)
+  pointStatus DeliveryStatus @default(PENDING) @map("point_status")
+  /// 사회복지기관이 남긴 메모(보류 사유 등)
+  pointNote   String?        @map("point_note")
+  /// 지급 처리한 사회복지기관 사용자 ID
+  pointBy     String?        @map("point_by")
+
+  receivedAt          DateTime  @default(now()) @map("received_at") @db.Timestamptz(3)
+  paidAt              DateTime? @map("paid_at") @db.Timestamptz(3)
+  /// 사회복지기관이 포인트를 지급했다고 표시한 시각
+  pointGivenAt        DateTime? @map("point_given_at") @db.Timestamptz(3)
+  refundedAt          DateTime? @map("refunded_at") @db.Timestamptz(3)
+  settledAt           DateTime? @map("settled_at") @db.Timestamptz(3)
+  /// 이 결제 건이 묶인 정산 회차. 회차 생성 시점에 찍고 지급 실패로 남아도 유지한다.
+  /// 풀어 주면 배치가 같은 건을 새 회차로 다시 잡아 이중 지급이 된다. 회차를 버릴 때만 null 로 되돌린다.
+  settlementRequestId String?   @map("settlement_request_id")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant      MerchantProfile      @relation(fields: [merchantId], references: [id])
+  payer         PayerProfile?        @relation(fields: [payerId], references: [id])
+  // 상품을 보관(soft delete)해도 과거 주문 기록은 남아야 한다(집계·분쟁 대응).
+  // 그래서 상품 행 자체를 지우지 못하도록 Restrict 로 묶는다.
+  product       ChargeProduct?       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  shipment      ChargeShipment?
+  moMessage     MoInboundMessage?    @relation(fields: [moMessageId], references: [id])
+  transactions  PaymentTransaction[]
+  refunds       Refund[]
+  mtMessages    MtOutboundMessage[]
+  ledgerEntries SettlementLedger[]
+  secureLink    SecureLink?
+  pinSession    PaymentPinSession?
+  statusLogs    ChargeStatusLog[]
+  /// 문서 상품 결제라면 작성·제출 기록 1건이 붙는다.
+  documentSubmission DocumentSubmission?
+
+  @@index([merchantId, receivedAt])
+  @@index([payerId, receivedAt])
+  @@index([status])
+  @@index([receivedAt])
+  // 아래 2개는 20260819100100_guards_and_indexes 에서 raw SQL 로 만든 인덱스다.
+  // 스키마에 선언해 두지 않으면 다음 migrate 때 DROP 하는 마이그레이션이 자동 생성된다.
+  @@index([merchantId, status])
+  @@index([paidAt])
+  /// 파트너 조회 API 커서 페이징(merchantId + paidAt 정렬)과 자동 정산 대상 조회를 받쳐 준다.
+  @@index([merchantId, paidAt])
+  @@index([settlementRequestId])
+  // 상품별 판매 집계(상품 설정·관리자 모니터링)에서 쓴다.
+  @@index([productId])
+  @@map("charge")
+}
+
+model ChargeStatusLog {
+  id         String        @id
+  chargeId   String        @map("charge_id")
+  fromStatus ChargeStatus? @map("from_status")
+  toStatus   ChargeStatus  @map("to_status")
+  reason     String?
+  actor      String?
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([chargeId])
+  @@map("charge_status_log")
+}
+
+model PaymentTransaction {
+  id            String          @id
+  chargeId      String          @map("charge_id")
+  /// 사회복지기관 주문번호. PG 멱등키로 재사용
+  orderNo       String          @unique @map("order_no")
+  provider      String          @default("HECTO")
+  providerTid   String?         @map("provider_tid")
+  amount        BigInt
+  status        PaymentTxStatus @default(REQUESTED)
+  resultCode    String?         @map("result_code")
+  resultMessage String?         @map("result_message")
+  rawMasked     Json?           @map("raw_masked")
+  requestedAt   DateTime        @default(now()) @map("requested_at") @db.Timestamptz(3)
+  approvedAt    DateTime?       @map("approved_at") @db.Timestamptz(3)
+  canceledAt    DateTime?       @map("canceled_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  charge   Charge           @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  attempts PaymentAttempt[]
+
+  @@index([chargeId])
+  @@index([status])
+  @@index([providerTid])
+  // 결제 관리 목록 기본 정렬.
+  @@index([requestedAt])
+  @@map("payment_transaction")
+}
+
+model PaymentAttempt {
+  id             String   @id
+  transactionId  String   @map("transaction_id")
+  attemptNo      Int      @map("attempt_no")
+  operation      String
+  requestMasked  Json?    @map("request_masked")
+  responseMasked Json?    @map("response_masked")
+  latencyMs      Int?     @map("latency_ms")
+  errorCode      String?  @map("error_code")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  transaction PaymentTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@map("payment_attempt")
+}
+
+/// 결제사 PIN 인증 세션 상태
+enum PinSessionStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+  FAILED
+
+  @@map("pin_session_status")
+}
+
+/// 결제사(헥토 내통장결제 / 카드 빌링키)의 PIN 인증 세션.
+///
+/// MO 수신 후 빌키가 있는 후원자에게는 기브싸인 자체 확인 링크 대신
+/// 결제사가 발급한 PIN 입력 링크를 MT 로 보낸다. 후원자가 PIN 을 넣으면
+/// 결제사가 콜백을 보내고, 그때 승인(executePayment)이 실행된다.
+///
+/// 후원 1건당 세션 1건(chargeId UNIQUE)이며, 이 유니크 제약이
+/// 콜백 중복 수신에 대한 마지막 방어선이 된다.
+model PaymentPinSession {
+  id             String            @id
+  chargeId       String            @unique @map("charge_id")
+  provider       String
+  /// 인증 대상 결제수단 종류 (계좌 빌키 / 카드 빌링키)
+  method         PaymentMethodKind @default(ACCOUNT)
+  /// 결제사가 발급한 인증 세션 식별자
+  sessionId      String            @unique @map("session_id")
+  /// PIN 입력 URL. 토큰이 포함되므로 마스킹해 저장한다(원문 저장 금지)
+  pinUrlMasked   String            @map("pin_url_masked")
+  amount         BigInt
+  status         PinSessionStatus  @default(PENDING)
+  /// 실제 결제사 연동이 아니라 mock 발급인지 여부. 화면/로그에 [MOCK] 로 표시한다.
+  mock           Boolean           @default(false)
+  callbackCount  Int               @default(0) @map("callback_count")
+  resultNote     String?           @map("result_note")
+  expiresAt      DateTime          @map("expires_at") @db.Timestamptz(3)
+  completedAt    DateTime?         @map("completed_at") @db.Timestamptz(3)
+  lastCallbackAt DateTime?         @map("last_callback_at") @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+  @@map("payment_pin_session")
+}
+
+model Refund {
+  id            String       @id
+  chargeId      String       @map("charge_id")
+  amount        BigInt
+  reason        String?
+  status        RefundStatus @default(REQUESTED)
+  requestedBy   String?      @map("requested_by")
+  approvedBy    String?      @map("approved_by")
+  providerTid   String?      @map("provider_tid")
+  resultCode    String?      @map("result_code")
+  resultMessage String?      @map("result_message")
+  requestedAt   DateTime     @default(now()) @map("requested_at") @db.Timestamptz(3)
+  processedAt   DateTime?    @map("processed_at") @db.Timestamptz(3)
+
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([chargeId])
+  @@index([status])
+  @@map("refund")
+}
+
+/// 결제/거래 생성 멱등성 보장
+model IdempotencyKey {
+  id         String   @id
+  scope      String
+  key        String
+  resourceId String?  @map("resource_id")
+  status     String   @default("IN_PROGRESS")
+  resultHash String?  @map("result_hash")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_key")
+}
+
+// ===========================================================================
+// 한도 / 리스크 / 콘텐츠
+// ===========================================================================
+
+model ChargeLimitPolicy {
+  id                    String      @id
+  scope                 PolicyScope @default(GLOBAL)
+  merchantId            String?     @map("merchant_id")
+  payerId               String?     @map("payer_id")
+  defaultAmount         BigInt      @default(3000) @map("default_amount")
+  minAmount             BigInt      @default(1000) @map("min_amount")
+  maxAmount             BigInt      @default(50000) @map("max_amount")
+  payerDailyLimit       BigInt      @default(100000) @map("payer_daily_limit")
+  payerMonthlyLimit     BigInt      @default(1000000) @map("payer_monthly_limit")
+  perMerchantDailyLimit BigInt      @default(50000) @map("per_merchant_daily_limit")
+  /// 1인(후원자) 1일 최대 후원 건수. 금액 한도와 별개로 건수 자체를 제한한다.
+  payerDailyMaxCount    Int         @default(30) @map("payer_daily_max_count")
+  velocityWindowSec     Int         @default(60) @map("velocity_window_sec")
+  velocityMaxCount      Int         @default(3) @map("velocity_max_count")
+  cooldownAfterCount    Int         @default(5) @map("cooldown_after_count")
+  cooldownSec           Int         @default(300) @map("cooldown_sec")
+  failureLockThreshold  Int         @default(3) @map("failure_lock_threshold")
+  newPayerFirstDayLimit BigInt      @default(30000) @map("new_payer_first_day_limit")
+  manualReviewAmount    BigInt      @default(200000) @map("manual_review_amount")
+  active                Boolean     @default(true)
+  effectiveFrom         DateTime    @default(now()) @map("effective_from") @db.Timestamptz(3)
+  effectiveTo           DateTime?   @map("effective_to") @db.Timestamptz(3)
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
+
+  @@index([scope, active])
+  @@map("charge_limit_policy")
+}
+
+/// 기간별 후원 집계 (Redis 캐시의 영속 원본)
+model ChargeCounter {
+  id         String   @id
+  payerId    String   @map("payer_id")
+  /// 전체 합계 행은 'ALL' 센티널 사용.
+  /// (PostgreSQL 은 NULL 을 서로 다른 값으로 취급하므로 UNIQUE 제약이 무력화된다)
+  merchantId String   @default("ALL") @map("merchant_id")
+  periodType String   @map("period_type")
+  periodKey  String   @map("period_key")
+  count      Int      @default(0)
+  amount     BigInt   @default(0)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@unique([payerId, merchantId, periodType, periodKey])
+  @@index([periodKey])
+  @@map("charge_counter")
+}
+
+model RiskDetection {
+  id         String    @id
+  payerId    String?   @map("payer_id")
+  merchantId String?   @map("merchant_id")
+  chargeId   String?   @map("charge_id")
+  type       RiskType
+  level      RiskLevel @default(LOW)
+  detail     Json?
+  resolved   Boolean   @default(false)
+  resolvedBy String?   @map("resolved_by")
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payer PayerProfile? @relation(fields: [payerId], references: [id])
+
+  @@index([level, resolved])
+  @@index([createdAt])
+  @@map("risk_detection")
+}
+
+model BannedWord {
+  id         String        @id
+  word       String
+  action     ContentAction @default(MASK)
+  scope      PolicyScope   @default(GLOBAL)
+  merchantId String?       @map("merchant_id")
+  active     Boolean       @default(true)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
+
+  // 유니크는 부분 인덱스(banned_word_global_uniq / banned_word_creator_uniq)로 DB 레벨에서 강제한다
+  @@index([word])
+  @@index([scope, active])
+  @@map("banned_word")
+}
+
+// ===========================================================================
+// 정산
+// ===========================================================================
+
+model FeePolicy {
+  id              String      @id
+  scope           PolicyScope @default(GLOBAL)
+  merchantId      String?     @map("merchant_id")
+  pgFeeRate       Decimal     @default(0.018) @map("pg_fee_rate") @db.Decimal(10, 6)
+  pgFixedFee      BigInt      @default(0) @map("pg_fixed_fee")
+  platformFeeRate Decimal     @default(0.15) @map("platform_fee_rate") @db.Decimal(10, 6)
+  smsCost         BigInt      @default(0) @map("sms_cost")
+  /// 결제일로부터 며칠(영업일) 뒤에 지급할지. 주말·공휴일은 건너뛴다.
+  /// 전역 정책으로 일괄 지정하고, 사회복지기관 정책으로 개별 조정한다.
+  settlementDays  Int         @default(5) @map("settlement_days")
+  vatIncluded     Boolean     @default(true) @map("vat_included")
+  active          Boolean     @default(true)
+  effectiveFrom   DateTime    @default(now()) @map("effective_from") @db.Timestamptz(3)
+  effectiveTo     DateTime?   @map("effective_to") @db.Timestamptz(3)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
+
+  @@index([scope, active])
+  @@map("fee_policy")
+}
+
+model SettlementAccount {
+  id             String    @id
+  merchantId     String    @unique @map("merchant_id")
+  bankCode       String    @map("bank_code")
+  bankName       String    @map("bank_name")
+  accountEnc     String    @map("account_enc")
+  accountTail4   String    @map("account_tail4")
+  holderNameEnc  String    @map("holder_name_enc")
+  holderMasked   String    @map("holder_masked")
+  /// 원천징수 신고용 주민등록번호(암호화). 사업자등록번호가 없는 개인 사회복지기관만 등록한다.
+  /// 자동 지급은 사회복지기관이 요청하는 단계가 없으므로, 회차 생성 시점에 여기서 읽어 회차에 복사한다.
+  residentEnc    String?   @map("resident_enc")
+  /// 마스킹 표기(예: 901010-1******). 원문은 화면에 노출하지 않는다.
+  residentMasked String?   @map("resident_masked")
+  verified       Boolean   @default(false)
+  verifiedAt     DateTime? @map("verified_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("settlement_account")
+}
+
+/// APPEND ONLY. 어떤 경로로도 UPDATE/DELETE 하지 않는다. 정정은 반대분개로 처리.
+model SettlementLedger {
+  id            String          @id
+  merchantId    String          @map("merchant_id")
+  entryType     LedgerEntryType @map("entry_type")
+  /// 부호 있는 금액. 사회복지기관 수취 증가는 +, 차감은 -
+  amount        BigInt
+  chargeId      String?         @map("charge_id")
+  refundId      String?         @map("refund_id")
+  requestId     String?         @map("request_id")
+  memo          String?
+  occurredAt    DateTime        @map("occurred_at") @db.Timestamptz(3)
+  settlementKey String          @map("settlement_key")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile    @relation(fields: [merchantId], references: [id])
+  charge   Charge?            @relation(fields: [chargeId], references: [id])
+  request  SettlementRequest? @relation(fields: [requestId], references: [id])
+
+  @@index([merchantId, occurredAt])
+  @@index([settlementKey])
+  /// 스튜디오 대시보드의 "이번 달 정산" 집계가 쓰는 조합.
+  @@index([merchantId, settlementKey])
+  @@index([chargeId])
+  // 전체 원장 탭(사회복지기관 미선택) 기본 정렬.
+  @@index([occurredAt])
+  @@map("settlement_ledger")
+}
+
+model SettlementRequest {
+  id             String                  @id
+  merchantId     String                  @map("merchant_id")
+  amount         BigInt
+  status         SettlementRequestStatus @default(REQUESTED)
+  /// 원천징수 합계 = 소득세 + 지방소득세
+  withholding    BigInt                  @default(0)
+  /// 소득세 (지급액의 3%, 10원 미만 절사). 지급명세서는 소득세/지방소득세를 따로 적는다.
+  incomeTax      BigInt                  @default(0) @map("income_tax")
+  /// 지방소득세 (소득세의 10%, 10원 미만 절사)
+  localTax       BigInt                  @default(0) @map("local_tax")
+  payoutAmount   BigInt                  @default(0) @map("payout_amount")
+  /// 지급대행 이체파일 발급 배치번호. 값이 있으면 이미 이체파일이 나간 건(재발급 시 이중이체 경고).
+  payoutBatchNo  String?                 @map("payout_batch_no")
+  /// 이체파일 최초 발급 시각
+  payoutIssuedAt DateTime?               @map("payout_issued_at") @db.Timestamptz(3)
+  /// 사회복지기관가 남기는 메모
+  memo           String?
+  /// 관리자 처리 메모(반려 사유 등). 사회복지기관에게 노출된다.
+  adminMemo      String?                 @map("admin_memo")
+  adminId        String?                 @map("admin_id")
+
+  /// 원천징수 신고용 주민등록번호(암호화). 신고 완료 시 파기한다.
+  residentEnc        String?   @map("resident_enc")
+  /// 마스킹 표기(예: 901010-1******). 원문은 화면에 노출하지 않는다.
+  residentMasked     String?   @map("resident_masked")
+  /// 주민등록번호 파기 시각. 값이 있으면 원문은 이미 삭제된 상태다.
+  residentPurgedAt   DateTime? @map("resident_purged_at") @db.Timestamptz(3)
+  /// 원천징수 지급명세서 신고 완료 시각.
+  withholdingFiledAt DateTime? @map("withholding_filed_at") @db.Timestamptz(3)
+
+  /// 지급대행(쿠콘) 처리 참조번호.
+  payoutRef        String? @map("payout_ref")
+  /// 지급 실패 사유(PAYOUT_FAILED).
+  payoutFailReason String? @map("payout_fail_reason")
+
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  approvedAt  DateTime? @map("approved_at") @db.Timestamptz(3)
+  paidAt      DateTime? @map("paid_at") @db.Timestamptz(3)
+  rejectedAt  DateTime? @map("rejected_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile    @relation(fields: [merchantId], references: [id])
+  entries  SettlementLedger[]
+  /// 자동 정산 배치가 만든 회차인지. 수동 처리와 구분해 화면에 표시한다.
+  auto     Boolean            @default(false)
+
+  @@index([merchantId, requestedAt])
+  @@index([status])
+  @@map("settlement_request")
+}
+
+// ===========================================================================
+// 약관 / 동의 / 알림 / 운영
+// ===========================================================================
+
+model TermsVersion {
+  id            String      @id
+  type          ConsentType
+  version       String
+  title         String
+  content       String
+  required      Boolean     @default(true)
+  effectiveFrom DateTime    @map("effective_from") @db.Timestamptz(3)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  consents ConsentRecord[]
+
+  @@unique([type, version])
+  @@index([type, active])
+  @@map("terms_version")
+}
+
+model ConsentRecord {
+  id        String      @id
+  userId    String?     @map("user_id")
+  phoneHash String?     @map("phone_hash")
+  termsId   String      @map("terms_id")
+  type      ConsentType
+  agreed    Boolean
+  ip        String?
+  userAgent String?     @map("user_agent")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user  User?        @relation(fields: [userId], references: [id])
+  terms TermsVersion @relation(fields: [termsId], references: [id])
+
+  @@index([phoneHash])
+  @@index([userId])
+  @@map("consent_record")
+}
+
+model Notification {
+  id        String              @id
+  userId    String?             @map("user_id")
+  channel   NotificationChannel @default(IN_APP)
+  title     String
+  body      String
+  linkUrl   String?             @map("link_url")
+  readAt    DateTime?           @map("read_at") @db.Timestamptz(3)
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("notification")
+}
+
+/// 1:1 문의 (고객지원 채팅). 로그인 사용자 또는 게스트(쿠키 토큰)가 접수한다.
+model SupportInquiry {
+  id            String        @id
+  /// 로그인 사용자 문의면 app_user.id (FK 없이 참조)
+  userId        String?       @map("user_id")
+  /// 비로그인 문의 식별 토큰 (httpOnly 쿠키에 대응)
+  guestToken    String?       @unique @map("guest_token")
+  guestName     String?       @map("guest_name")
+  /// 회신 연락처(이메일/전화)는 암호화 + 마스킹만 보관한다
+  contactEnc    String?       @map("contact_enc")
+  contactMasked String?       @map("contact_masked")
+  category      String        @default("일반")
+  status        InquiryStatus @default(OPEN)
+  /// 고객센터 폼(/support)에서 입력한 거래번호. 조회 실패해도 원문을 남긴다.
+  transactionNo String?       @map("transaction_no")
+  /// 거래번호로 찾은 후원/사회복지기관 (없을 수 있다)
+  chargeId      String?       @map("charge_id")
+  merchantId    String?       @map("merchant_id")
+  /// 접수 경로: WIDGET(우측 하단 채팅) | FORM(/support 접수 폼)
+  source        String        @default("WIDGET")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastMessageAt DateTime      @default(now()) @map("last_message_at") @db.Timestamptz(3)
+
+  messages SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId])
+  @@index([category])
+  @@map("support_inquiry")
+}
+
+model SupportMessage {
+  id            String        @id
+  inquiryId     String        @map("inquiry_id")
+  sender        InquirySender
+  body          String
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  readByUserAt  DateTime?     @map("read_by_user_at") @db.Timestamptz(3)
+  readByAdminAt DateTime?     @map("read_by_admin_at") @db.Timestamptz(3)
+
+  inquiry SupportInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@index([inquiryId, createdAt])
+  @@map("support_message")
+}
+
+enum InquiryStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum InquirySender {
+  USER
+  ADMIN
+}
+
+model Report {
+  id             String       @id
+  chargeId       String?      @map("charge_id")
+  merchantId     String?      @map("merchant_id")
+  reporterHash   String?      @map("reporter_hash")
+  /// 로그인 문의자 식별용. 사회복지기관 화면에는 절대 노출하지 않고 통합 관리자만 조회한다.
+  reporterUserId String?      @map("reporter_user_id")
+  category       String
+  content        String
+  status         ReportStatus @default(OPEN)
+  handledBy      String?      @map("handled_by")
+  handledAt      DateTime?    @map("handled_at") @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@map("report")
+}
+
+model AdminAuditLog {
+  id          String   @id
+  adminId     String?  @map("admin_id")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  beforeValue Json?    @map("before_value")
+  afterValue  Json?    @map("after_value")
+  ip          String?
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  admin AdminProfile? @relation(fields: [adminId], references: [id])
+
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId])
+  // 감사로그는 담당자를 고르지 않고 최신순으로 보는 경우가 대부분이다.
+  @@index([createdAt])
+  @@map("admin_audit_log")
+}
+
+/// 연동 API 키 모드.
+/// LIVE 는 실제 결제·정산에 영향을 주고, TEST 는 샌드박스 데이터에서만 동작한다.
+enum ApiKeyMode {
+  LIVE
+  TEST
+
+  @@map("api_key_mode")
+}
+
+/// 사회복지기관 연동 API 키.
+///
+/// 기브싸인는 사회복지기관에 API 호출을 요구하지 않는다(관리자 화면에서 확인·지급 처리 가능).
+/// 자기 사이트에서 포인트를 자동 적립하고 싶은 사회복지기관에만 발급하는 선택 기능이다.
+model MerchantApiKey {
+  id         String    @id
+  merchantId String    @map("merchant_id")
+  /// 키 용도 메모 (예: 운영 서버)
+  name       String
+  /// 키 앞부분(식별용). 원문은 발급 시 1회만 노출한다.
+  prefix     String    @unique
+  /// 키 원문의 SHA-256 해시. 원문은 저장하지 않는다.
+  keyHash    String    @unique @map("key_hash")
+  /// 요청 서명(HMAC-SHA256)에 쓰는 비밀키. 암호화 저장하며 발급 시 1회만 노출한다.
+  signingEnc String    @map("signing_enc")
+  /// 이 키로 호출을 허용할 IP 목록(쉼표 구분). 비우면 제한 없음.
+  allowedIps String?   @map("allowed_ips")
+  /// 키 모드. LIVE 는 실제 결제·정산, TEST 는 샌드박스 전용이다.
+  /// 접두사도 함께 갈린다(mp_live_ / mp_test_). 운영 키를 테스트 코드에 넣는 사고를
+  /// 눈으로 걸러내기 위한 것이다.
+  mode       ApiKeyMode @default(LIVE)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, revokedAt])
+  @@map("merchant_api_key")
+}
+
+/// 사회복지기관 연동 API 호출 기록.
+///
+/// 연동을 붙이는 동안 무엇이 왜 실패했는지 사회복지기관이 스스로 볼 수 있어야 한다.
+/// 응답 본문은 남기지 않고(개인정보), 상태 코드와 오류 코드만 남긴다.
+model MerchantApiCallLog {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  /// 사용된 키. 키를 지워도 기록은 남기므로 관계를 걸지 않는다.
+  keyId      String?  @map("key_id")
+  method     String
+  path       String
+  status     Int
+  errorCode  String?  @map("error_code")
+  message    String?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@map("merchant_api_call_log")
+}
+
+model WebhookLog {
+  id           String   @id
+  source       String
+  endpoint     String
+  method       String   @default("POST")
+  headersMask  Json?    @map("headers_mask")
+  bodyMasked   Json?    @map("body_masked")
+  signatureOk  Boolean  @default(false) @map("signature_ok")
+  ip           String?
+  statusCode   Int?     @map("status_code")
+  responseNote String?  @map("response_note")
+  latencyMs    Int?     @map("latency_ms")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([source, createdAt])
+  @@index([signatureOk])
+  @@map("webhook_log")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  memo      String?
+  updatedBy String?  @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("system_setting")
+}
+
+model Banner {
+  id        String    @id
+  position  String
+  title     String
+  subtitle  String?
+  imageUrl  String?   @map("image_url")
+  linkUrl   String?   @map("link_url")
+  sortOrder Int       @default(0) @map("sort_order")
+  active    Boolean   @default(true)
+  startsAt  DateTime? @map("starts_at") @db.Timestamptz(3)
+  endsAt    DateTime? @map("ends_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([position, active])
+  @@map("banner")
+}
+
+model ContentPost {
+  id        String   @id
+  type      String
+  title     String
+  body      String
+  category  String?
+  pinned    Boolean  @default(false)
+  published Boolean  @default(true)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([type, published])
+  @@map("content_post")
+}
+
+/// 공휴일 종류.
+/// BANK_ONLY 는 관공서 공휴일은 아니지만 은행이 쉬는 날(근로자의 날 등)이다.
+/// 정산 지급은 은행 영업일에만 가능하므로 영업일 계산에는 함께 제외한다.
+enum HolidayKind {
+  STATUTORY
+  SUBSTITUTE
+  TEMPORARY
+  BANK_ONLY
+
+  @@map("holiday_kind")
+}
+
+/// 공휴일(영업일 계산용).
+///
+/// 정산일은 "후원일 다음날부터 영업일 5일" 로 계산하는데, 영업일은
+/// 토·일과 이 표의 날짜를 뺀 날이다. 임시공휴일은 매년 갑자기 지정되므로
+/// 배포 없이 관리자 화면에서 바로 추가·수정할 수 있어야 한다.
+/// 날짜는 KST 기준 YYYY-MM-DD 문자열로 둔다(시간대 오차 원천 차단).
+model PublicHoliday {
+  id        String      @id
+  /// KST 기준 YYYY-MM-DD
+  date      String      @unique
+  name      String
+  kind      HolidayKind @default(STATUTORY)
+  active    Boolean     @default(true)
+  memo      String?
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([date, active])
+  @@map("public_holiday")
+}
+
+/// MT 문자 본문 커스터마이즈.
+///
+/// 안내 문구는 운영 중에 자주 바뀌는데, 그때마다 배포를 하면 반영이 늦고 위험하다.
+/// 관리자 화면(/admin/mt-templates)에서 저장한 본문이 여기에 쌓이고,
+/// 발송 직전에 코드 기본값 대신 이 본문을 사용한다(applyMtTemplateOverride).
+///
+/// - code 는 MT_TEMPLATE 코드값이다. 행이 없으면 코드 기본 문구를 쓴다.
+/// - 보안링크가 들어가는 템플릿(REGISTER_GUIDE / CONFIRM_PAYMENT / PIN_REQUEST)은
+///   링크가 빠지면 흐름이 끊기므로 저장 자체를 막는다(validateMtTemplateBody).
+model MtMessageTemplate {
+  id        String   @id
+  /// MT_TEMPLATE 코드값
+  code      String   @unique
+  /// 치환자({후원자} 등)를 포함한 커스텀 본문
+  body      String
+  /// 마지막으로 수정한 관리자 사용자 ID
+  updatedBy String?  @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("mt_message_template")
+}
+
+// ===========================================================================
+// 샌드박스 (테스트 키 전용)
+//
+// 테스트 데이터는 실제 결제·정산 테이블에 **한 줄도 들어가지 않는다.**
+// Charge 에 플래그를 두는 방식은 정산·통계·한도 집계 어디 한 곳만 빠뜨려도
+// 테스트 금액이 실제 정산에 섞인다. 그래서 아예 별도 테이블로 분리했다.
+//
+// 응답 모양은 실제 API 와 같게 유지한다(같은 직렬화 함수를 쓴다).
+// 사회복지기관은 테스트 키로 연동을 다 만들어 본 뒤 키만 바꿔 운영으로 넘어간다.
+// ===========================================================================
+
+/// 샌드박스 충전 건. 실제 Charge 와 완전히 분리된 테스트 전용 데이터다.
+model SandboxCharge {
+  id               String    @id
+  merchantId       String    @map("merchant_id")
+  /// 실제 거래번호와 겹치지 않게 TEST 접두사를 붙인다.
+  transactionNo    String    @unique @map("transaction_no")
+  amount           BigInt
+  shippingFee      BigInt    @default(0) @map("shipping_fee")
+  message          String    @default("")
+  /// 후원자 표시용 마스킹 번호. 원문은 저장하지 않는다(테스트라도 마찬가지다).
+  payerPhoneMasked String    @map("payer_phone_masked")
+  /// 사회복지기관 전용 고정 식별자. 실제 API 와 같은 방식으로 만든다.
+  payerRef         String    @map("payer_ref")
+  productName      String?   @map("product_name")
+  /// DIGITAL | PHYSICAL
+  productKind      String?   @map("product_kind")
+  /// PENDING_PAYMENT | PAYMENT_SUCCESS | PAYMENT_FAILED
+  status           String    @default("PENDING_PAYMENT")
+  failReason       String?   @map("fail_reason")
+  /// PENDING | SENT | FAILED  (사회복지기관의 지급 처리 상태)
+  pointStatus      String    @default("PENDING") @map("point_status")
+  pointNote        String?   @map("point_note")
+  /// PREPARING | SHIPPED | DELIVERED 등. 실물 주문에만 쓴다.
+  shipmentStatus   String?   @map("shipment_status")
+  carrier          String?
+  trackingNo       String?   @map("tracking_no")
+  paidAt           DateTime? @map("paid_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, paidAt])
+  @@index([merchantId, pointStatus])
+  @@map("sandbox_charge")
+}
+
+/// 샌드박스 문자함. 테스트 중 "나갔을" 문자와 "받은 것으로 친" 문자를 남긴다.
+/// 실제로는 아무것도 발송되지 않는다.
+model SandboxMessage {
+  id            String   @id
+  merchantId    String   @map("merchant_id")
+  /// MO(후원자가 보낸 것으로 친 문자) | MT(기브싸인가 보냈을 문자)
+  direction     String
+  phoneMasked   String   @map("phone_masked")
+  /// MT 인 경우의 템플릿 코드
+  templateCode  String?  @map("template_code")
+  body          String
+  transactionNo String?  @map("transaction_no")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@map("sandbox_message")
+}
+
+// ===========================================================================
+// 사회복지기관 발송 템플릿 (MT 발송 v1)
+//
+// 사회복지기관이 자기 후원자에게 거래 안내 문자를 보내는 기능이다. 범위를 좁혀서 연다.
+//  1. 발신번호는 기브싸인 번호 고정 — 사회복지기관이 발신번호를 등록할 필요가 없다
+//  2. 정보성 문자만 — 광고·홍보는 보낼 수 없다
+//  3. 수신자는 그 사회복지기관에 거래 이력이 있는 후원자만
+//  4. 미리 등록해 검수받은 템플릿만 — 자유 본문은 보낼 수 없다
+//
+// 이 네 가지가 있으면 광고성 정보에 붙는 사전 동의·야간 발송 제한·수신거부 의무가
+// 적용 대상이 아니게 된다. 그래서 사회복지기관이 준비할 것이 거의 없다.
+// 제약을 푸는 순간 그 의무가 전부 따라오므로, 넓힐 때는 규제 검토를 함께 해야 한다.
+// ===========================================================================
+
+/// 사회복지기관 발송 템플릿 검수 상태.
+enum MerchantMtTemplateStatus {
+  /// 자동 검사에서 걸려 사람이 봐야 하는 상태. 발송에 쓸 수 없다.
+  PENDING
+  /// 발송에 쓸 수 있다.
+  APPROVED
+  /// 반려. 사유를 보고 고쳐 다시 올린다.
+  REJECTED
+
+  @@map("merchant_mt_template_status")
+}
+
+/// 사회복지기관이 등록한 발송 템플릿.
+///
+/// 검수는 등록 시점에 한 번만 한다. 통과한 템플릿은 발송 때 다시 검사하지 않는다.
+/// (발송마다 검수하면 대량 발송에서 지연이 쌓이고, 검수 기준이 바뀌면 이미 쓰던
+///  템플릿이 갑자기 막혀 사회복지기관 서비스가 멈춘다)
+model MerchantMtTemplate {
+  id          String                   @id
+  merchantId  String                   @map("merchant_id")
+  /// 사회복지기관이 정하는 코드. 발송 API 에서 이 값으로 템플릿을 고른다.
+  code        String
+  name        String
+  /// 치환자를 포함한 본문. 발신 주체 표기([기브싸인])는 발송 때 시스템이 붙인다.
+  body        String
+  /// 본문에서 뽑아 둔 치환자 이름 목록(쉼표 구분). 발송 때 이 값이 모두 채워져야 한다.
+  variables   String                   @default("")
+  status      MerchantMtTemplateStatus @default(PENDING)
+  /// 보류·반려 사유. 사회복지기관이 무엇을 고쳐야 하는지 알 수 있어야 한다.
+  reviewNote  String?                  @map("review_note")
+  reviewedAt  DateTime?                @map("reviewed_at") @db.Timestamptz(3)
+  reviewedBy  String?                  @map("reviewed_by")
+  /// 이 템플릿으로 나간 문자 수(누적). 어떤 템플릿이 실제로 쓰이는지 보기 위한 값이다.
+  sentCount   Int                      @default(0) @map("sent_count")
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, code])
+  @@index([status, createdAt])
+  @@map("merchant_mt_template")
+}
+
+// ===========================================================================
+// 웹훅 (사회복지기관 이벤트 구독)
+//
+// 사회복지기관이 주기적으로 가져가는(pull) 대신, 일이 생긴 순간 밀어 준다.
+//
+// 지켜야 하는 것
+//  - 발행이 본 흐름을 막지 않는다. 결제 성공 처리가 웹훅 때문에 실패하면 안 된다.
+//    그래서 발행은 "적재"까지만 하고 전송은 별도로 돈다.
+//  - 중복 도착을 전제로 한다. 실패하면 재전송하므로 같은 이벤트가 두 번 갈 수 있다.
+//    받는 쪽이 eventId 로 걸러야 하며, 문서에 그렇게 적어 두었다.
+// ===========================================================================
+
+enum WebhookDeliveryStatus {
+  /// 아직 보내지 않았거나 재시도를 기다리는 중
+  PENDING
+  SENT
+  /// 재시도 한도를 다 쓴 상태. 수동 재전송만 남는다.
+  DEAD
+
+  @@map("webhook_delivery_status")
+}
+
+/// 사회복지기관이 등록한 수신 URL.
+model MerchantWebhook {
+  id          String    @id
+  merchantId  String    @map("merchant_id")
+  url         String
+  /// 서명 비밀키(암호화 저장). 발급 시 1회만 노출한다.
+  secretEnc   String    @map("secret_enc")
+  /// 받을 이벤트 목록(쉼표 구분). 비우면 모든 이벤트를 받는다.
+  events      String    @default("")
+  description String?
+  active      Boolean   @default(true)
+  /// 마지막 전송의 응답 코드. 연동이 살아 있는지 한눈에 보기 위한 값이다.
+  lastStatus  Int?      @map("last_status")
+  lastAt      DateTime? @map("last_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant   MerchantProfile   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([merchantId, active])
+  @@map("merchant_webhook")
+}
+
+/// 전송 1건. 이벤트마다 수신 URL 수만큼 만들어진다.
+model WebhookDelivery {
+  id             String                @id
+  merchantId     String                @map("merchant_id")
+  webhookId      String                @map("webhook_id")
+  /// 이벤트 고유 id. 받는 쪽이 중복을 거를 때 쓰는 값이다.
+  eventId        String                @map("event_id")
+  eventType      String                @map("event_type")
+  /// 보낼 본문(JSON 문자열). 재전송할 때 같은 본문을 그대로 다시 보낸다.
+  payload        String
+  status         WebhookDeliveryStatus @default(PENDING)
+  attempts       Int                   @default(0)
+  responseStatus Int?                  @map("response_status")
+  error          String?
+  /// 다음 재시도 시각. PENDING 이면서 이 시각이 지난 건을 크론이 집어간다.
+  nextAttemptAt  DateTime?             @map("next_attempt_at") @db.Timestamptz(3)
+  deliveredAt    DateTime?             @map("delivered_at") @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  webhook  MerchantWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([merchantId, createdAt])
+  @@map("webhook_delivery")
+}

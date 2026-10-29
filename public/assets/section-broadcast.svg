@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320" fill="none" role="img" aria-label="방송 화면과 오버레이 알림이 연결된 모습">
+  <defs><linearGradient id="b2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#F2EFFF"/><stop offset="100%" stop-color="#FFF6F6"/></linearGradient></defs>
+  <rect width="640" height="320" rx="24" fill="url(#b2)"/>
+  <rect x="56" y="52" width="330" height="200" rx="18" fill="#FFFFFF" stroke="#DCDEEB" stroke-width="1.6"/>
+  <rect x="56" y="52" width="330" height="34" rx="18" fill="#EFEBFF"/>
+  <circle cx="80" cy="69" r="5" fill="#FF6B6B"/><circle cx="98" cy="69" r="5" fill="#F59E0B"/><circle cx="116" cy="69" r="5" fill="#10B981"/>
+  <rect x="84" y="188" width="274" height="44" rx="14" fill="#6C4CF1" opacity="0.92"/>
+  <rect x="102" y="202" width="120" height="8" rx="4" fill="#FFFFFF" opacity="0.95"/>
+  <rect x="102" y="216" width="180" height="7" rx="3.5" fill="#FFFFFF" opacity="0.6"/>
+  <g stroke="#6C4CF1" stroke-width="1.6" fill="none" opacity="0.8">
+    <path d="M400 150h60"/><path d="M448 140l14 10-14 10"/>
+  </g>
+  <rect x="474" y="76" width="112" height="168" rx="20" fill="#FFFFFF" stroke="#CBC0FF" stroke-width="1.6"/>
+  <rect x="490" y="104" width="80" height="10" rx="5" fill="#E5DFFF"/>
+  <rect x="490" y="124" width="56" height="9" rx="4.5" fill="#EFEBFF"/>
+  <rect x="490" y="180" width="80" height="30" rx="10" fill="#FF6B6B" opacity="0.85"/>
+</svg>
