@@ -1,6 +1,7 @@
 import { prisma } from '@/server/db';
 import { logger } from '@/lib/logger';
 import { voidReceiptForRefundedCharge } from './receipts';
+import { revertRecurringTotals } from './recurring';
 import { newId } from '@/lib/id';
 import { getPaymentAdapter } from '@/server/adapters/payment';
 import { calculateFees, postRefundSettlement } from './settlement';
@@ -211,6 +212,10 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
   // 영수증 처리 실패가 환불 결과를 바꾸지 않도록 오류는 기록만 한다.
   await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin').catch((e) =>
     logger.error('환불 후 기부금영수증 무효화 실패', { chargeId: refund.chargeId, message: (e as Error).message }),
+  );
+  // 정기후원 결제 건이면 약정의 누적(화면 표시용)을 되돌린다.
+  await revertRecurringTotals(refund.chargeId).catch((e) =>
+    logger.error('환불 후 정기후원 누적 갱신 실패', { chargeId: refund.chargeId, message: (e as Error).message }),
   );
 
   return prisma.refund.findUnique({ where: { id: refundId } });

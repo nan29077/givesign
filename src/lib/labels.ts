@@ -203,4 +203,19 @@ export const holidayKindLabel: Record<HolidayKind, { text: string; tone: Tone }>
 export const paymentModeLabel = {
   CONFIRM_LINK: '확인형 (MT 링크 확인 후 결제)',
   DIRECT_TRIGGER: '즉시형 (MO 수신 즉시 결제)',
+  RECURRING: '정기후원 자동 출금 (약정 동의)',
 } as const;
+
+/**
+ * 후원 경로(charge.channel) 표시.
+ * 'WEB' 이 아니면 모두 문자(MO)로 보던 예전 표시는 정기후원 자동 출금을 MO 로 오인하게 만든다.
+ */
+export const chargeChannelLabel: Record<string, { short: string; long: string }> = {
+  MO: { short: '문자(MO)', long: '문자(MO) 후원' },
+  WEB: { short: '웹(PC)', long: '웹(PC) 후원' },
+  RECURRING: { short: '정기', long: '정기후원 자동 출금' },
+};
+
+export function channelLabel(channel: string, form: 'short' | 'long' = 'short'): string {
+  return (chargeChannelLabel[channel] ?? chargeChannelLabel.MO)[form];
+}

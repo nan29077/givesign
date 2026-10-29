@@ -413,7 +413,7 @@ async function main() {
         await prisma.recurringDonation.create({
           data: {
             id: newId(), merchantId: org.id, payerId: payer.id, amount: 10000n, dayOfMonth: day, message: '매달 작은 마음을 보탭니다',
-            status: 'ACTIVE', nextChargeOn: dateCol(next), consentId: consent.id,
+            status: 'ACTIVE', nextChargeOn: dateCol(next), cycleMonth: next.slice(0, 7), consentId: consent.id,
           },
         });
       }

@@ -103,8 +103,14 @@ export default async function MyRecurringPage() {
                   {r.runs.map((run) => (
                     <li key={run.id} className="flex justify-between py-1">
                       <span>{run.monthKey} {run.attempt > 1 ? `(${run.attempt}차)` : ''} · {formatKst(run.ranAt, false)}</span>
-                      <span className={run.status === 'SUCCESS' ? 'font-bold text-success-500' : run.status === 'FAILED' ? 'font-bold text-danger-500' : ''}>
-                        {run.status === 'SUCCESS' ? '출금 완료' : run.status === 'FAILED' ? `실패 — ${run.reason ?? ''}` : `건너뜀 — ${run.reason ?? ''}`}
+                      <span className={run.status === 'SUCCESS' ? 'font-bold text-success-500' : run.status === 'FAILED' ? 'font-bold text-danger-500' : run.status === 'PENDING' ? 'font-bold text-warning-500' : ''}>
+                        {run.status === 'SUCCESS'
+                          ? '출금 완료'
+                          : run.status === 'FAILED'
+                            ? `실패 — ${run.reason ?? ''}`
+                            : run.status === 'PENDING'
+                              ? '결과 확인 중 — 확인될 때까지 다시 출금하지 않습니다'
+                              : `건너뜀 — ${run.reason ?? ''}`}
                       </span>
                     </li>
                   ))}

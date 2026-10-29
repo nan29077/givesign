@@ -7,6 +7,7 @@ import { getPaymentAdapter } from '@/server/adapters/payment';
 import { resolveSecureLink, consumeSecureLink } from './secure-link';
 import { validatePayerName } from './payer-name';
 import { currentTermsList } from './terms';
+import { suspendRecurringForPayer } from './recurring';
 import type { ConsentType, PaymentMethodKind } from '@/generated/prisma/enums';
 
 /**
@@ -273,5 +274,9 @@ export async function revokePaymentMethod(payerId: string) {
     where: { id: payerId },
     data: { onboardingStatus: 'SUSPENDED' },
   });
+  // 결제수단이 없어졌으니 정기후원도 멈춘다. 그대로 두면 다음 출금일에 "결제수단 없음" 실패가 3번 쌓인 뒤에야 정지된다.
+  await suspendRecurringForPayer(payerId, '결제수단 해지').catch((e: unknown) =>
+    logger.error('결제수단 해지 후 정기후원 정지 실패', { payerId, message: (e as Error)?.message }),
+  );
   return true;
 }

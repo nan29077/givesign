@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { env, isLocal } from '@/lib/env';
-import { safeEqual } from '@/lib/crypto';
+import { generateToken, safeEqual } from '@/lib/crypto';
 import { logger } from '@/lib/logger';
 import { kv } from '@/server/redis';
 import { runRecurringDonations } from '@/server/services/recurring';
@@ -42,9 +42,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message: '인증되지 않은 요청입니다.' }, { status: 401 });
   }
 
+  // 잠금 값에 이번 실행의 표식을 넣어, 끝날 때 내 잠금일 때만 푼다.
+  // (TTL 이 지나 다른 실행이 잡은 잠금을 지우면 두 배치가 겹쳐 돈다)
+  const owner = `${Date.now()}:${generateToken(8)}`;
   let locked: boolean;
   try {
-    locked = await kv.setnx(LOCK_KEY, String(Date.now()), LOCK_TTL_SEC);
+    locked = await kv.setnx(LOCK_KEY, owner, LOCK_TTL_SEC);
   } catch (e) {
     logger.error('정기후원 배치 잠금 획득 실패 — 실행하지 않습니다', { message: (e as Error).message });
     return NextResponse.json({ ok: false, message: '실행 잠금을 확인할 수 없어 배치를 건너뛰었습니다.' }, { status: 503 });
@@ -58,6 +61,7 @@ export async function GET(req: Request) {
     logger.error('정기후원 배치 실패', { message: (e as Error).message });
     return NextResponse.json({ ok: false, message: '배치 실행 중 오류가 발생했습니다.' }, { status: 500 });
   } finally {
-    await kv.del(LOCK_KEY).catch(() => undefined);
+    const current = await kv.get(LOCK_KEY).catch(() => null);
+    if (current === owner) await kv.del(LOCK_KEY).catch(() => undefined);
   }
 }

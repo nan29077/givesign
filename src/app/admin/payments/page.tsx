@@ -11,6 +11,7 @@ import { requireAdmin } from '@/server/auth';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
 import { paymentTxStatusLabel, chargeStatusLabel } from '@/lib/labels';
+import { channelLabel } from '@/lib/labels';
 import type { Prisma } from '@/generated/prisma/client';
 import type { PaymentTxStatus } from '@/generated/prisma/enums';
 
@@ -72,7 +73,7 @@ function TxRows({
               {chargeStatusLabel[t.charge.status].text}
             </span>
             <span className="mt-0.5 block text-[11px] font-semibold text-ink-300">
-              {t.charge.channel === 'WEB' ? '웹(PC) 결제' : '문자(MO) 결제'}
+              {channelLabel(t.charge.channel, 'long')}
             </span>
           </Td>
           <Td className="max-w-[200px] break-words">

@@ -201,6 +201,9 @@ enum ChargeStatus {
 enum PaymentMode {
   DIRECT_TRIGGER
   CONFIRM_LINK
+  /// 정기후원 자동 출금. 후원자가 약정 때 RECURRING_DEBIT 에 동의한 건만 쓴다.
+  /// DIRECT_TRIGGER(MO 수신 즉시 결제, 서면승인 필요)와 구분하기 위한 값이다.
+  RECURRING
 
   @@map("payment_mode")
 }
@@ -2206,6 +2209,8 @@ enum RecurringRunStatus {
   SUCCESS
   FAILED
   SKIPPED
+  /// 결제 결과 미확인(타임아웃 등). 관리자 대사로 확정될 때까지 같은 주기에 다시 출금하지 않는다.
+  PENDING
 
   @@map("recurring_run_status")
 }
@@ -2296,8 +2301,10 @@ model RecurringDonation {
   message       String          @default("정기후원")
   anonymous     Boolean         @default(false)
   status        RecurringStatus @default(ACTIVE)
-  /// 다음 출금 예정일 (KST 날짜)
+  /// 다음 출금 예정일 (KST 날짜). 실패 재시도 때는 재시도일이 들어간다.
   nextChargeOn  DateTime        @map("next_charge_on") @db.Date
+  /// 지금 처리 중인 출금 주기(KST yyyy-MM). 재시도가 다음 달로 넘어가도 원래 주기로 기록·멱등 처리한다.
+  cycleMonth    String          @map("cycle_month")
   lastChargedAt DateTime?       @map("last_charged_at") @db.Timestamptz(3)
   /// 연속 실패 횟수. 성공하면 0 으로.
   failCount     Int             @default(0) @map("fail_count")

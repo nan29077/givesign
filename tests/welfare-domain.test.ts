@@ -190,7 +190,7 @@ describe('정기후원', () => {
     const made = await createRecurringDonation({ payerId: payer.id, merchantId: fx.merchantId, amount: 10000n, dayOfMonth: 10 });
     if (!made.ok) throw new Error(made.message);
     // 출금일을 오늘로 당긴다.
-    await prisma.recurringDonation.update({ where: { id: made.recurring.id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.recurringDonation.update({ where: { id: made.recurring.id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`), cycleMonth: today().slice(0, 7) } });
 
     const first = await runRecurringDonations();
     expect(first.succeeded).toBe(1);
@@ -204,7 +204,7 @@ describe('정기후원', () => {
     expect(after.nextChargeOn.toISOString().slice(0, 7)).not.toBe(today().slice(0, 7));
 
     // 누군가 날짜를 되돌려도(또는 배치가 겹쳐도) 이달 멱등키에 걸려 결제가 또 만들어지지 않는다.
-    await prisma.recurringDonation.update({ where: { id: made.recurring.id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.recurringDonation.update({ where: { id: made.recurring.id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`), cycleMonth: today().slice(0, 7) } });
     const second = await runRecurringDonations();
     expect(second.succeeded).toBe(0);
     expect(second.skipped).toBe(1);
@@ -217,7 +217,7 @@ describe('정기후원', () => {
     const made = await createRecurringDonation({ payerId: payer.id, merchantId: fx.merchantId, amount: 10999n, dayOfMonth: 10 });
     if (!made.ok) throw new Error(made.message);
     const id = made.recurring.id;
-    const dueToday = async () => prisma.recurringDonation.update({ where: { id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`) } });
+    const dueToday = async () => prisma.recurringDonation.update({ where: { id }, data: { nextChargeOn: new Date(`${today()}T00:00:00Z`), cycleMonth: today().slice(0, 7) } });
 
     for (let i = 1; i <= RECURRING_MAX_ATTEMPTS; i += 1) {
       await dueToday();

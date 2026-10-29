@@ -323,6 +323,8 @@ export function assertProductionSafety(): string[] {
     problems.push('CRYPTO_PROVIDER=aws-kms 인데 AWS_KMS_KEY_ID 가 비어 있습니다.');
   }
   if (env.crypto.sessionSecret.startsWith('dev-only')) problems.push('SESSION_SECRET 이 기본값입니다.');
+  // 정기후원·자동정산 배치는 CRON_SECRET 이 없으면 운영에서 401 로 조용히 멈춘다.
+  if (!env.cron.secret) problems.push('CRON_SECRET 이 비어 있습니다. (정기후원·자동정산 배치가 실행되지 않습니다)');
   if (env.crypto.phoneHashSecret.startsWith('dev-only')) problems.push('PHONE_HASH_SECRET 이 기본값입니다.');
   if (env.allowInMemoryFallback) problems.push('운영에서는 ALLOW_INMEMORY_FALLBACK=false 여야 합니다.');
   // EMMA 는 HTTP 웹훅을 쓰지 않고 DB 폴링으로 붙는다(/api/cron/emma-mo).

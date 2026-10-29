@@ -62,7 +62,8 @@ export async function createRecurringAction(_prev: DonorActionState, f: FormData
   const merchant = await prisma.merchantProfile.findFirst({ where: { code, status: 'APPROVED' }, select: { id: true } });
   if (!merchant) return { ok: false, message: '후원할 기관을 찾을 수 없습니다.' };
   if (!f.get('agree')) return { ok: false, message: '정기후원 자동 출금 동의에 체크해 주세요.' };
-  const amountRaw = text(f, 'amount').replace(/[,\s원]/g, '');
+  // 직접 입력이 있으면 그 값을, 없으면 고른 금액 버튼 값을 쓴다.
+  const amountRaw = (text(f, 'amount') || text(f, 'preset')).replace(/[,\s원]/g, '');
   if (!/^\d{1,9}$/.test(amountRaw)) return { ok: false, message: '후원 금액을 숫자로 입력해 주세요.' };
   const day = Number(text(f, 'dayOfMonth'));
   const meta = await requestMeta();

@@ -22,6 +22,7 @@ import { formatKst } from '@/lib/datetime';
 import {
   deliveryStatusLabel, chargeStatusLabel, pointStatusLabel, refundStatusLabel, SELECTABLE_CHARGE_STATUSES,
 } from '@/lib/labels';
+import { channelLabel } from '@/lib/labels';
 import type { ChargeStatus, Prisma } from '@/generated/prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -291,8 +292,8 @@ export default async function StudioChargesPage({
                     <Td className="whitespace-nowrap tabular-nums">{d.payer?.phoneMasked ?? '-'}</Td>
                     <Td className="whitespace-nowrap">{d.anonymous ? '익명의 후원자' : d.displayName}</Td>
                     <Td>
-                      <Badge tone={d.channel === 'WEB' ? 'brand' : 'neutral'}>
-                        {d.channel === 'WEB' ? '웹(PC)' : '문자(MO)'}
+                      <Badge tone={d.channel === 'WEB' ? 'brand' : d.channel === 'RECURRING' ? 'success' : 'neutral'}>
+                        {channelLabel(d.channel)}
                       </Badge>
                     </Td>
                     <Td className="max-w-[180px]">

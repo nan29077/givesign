@@ -114,7 +114,7 @@ export default async function StudioRecurringPage() {
                   <Td>{displayPayerName(run.recurring.payer.displayName ?? '')}</Td>
                   <Td>{run.monthKey}</Td>
                   <Td>{run.attempt}</Td>
-                  <Td><Badge tone={run.status === 'SUCCESS' ? 'success' : run.status === 'FAILED' ? 'danger' : 'neutral'}>{run.status === 'SUCCESS' ? '성공' : run.status === 'FAILED' ? '실패' : '건너뜀'}</Badge></Td>
+                  <Td><Badge tone={run.status === 'SUCCESS' ? 'success' : run.status === 'FAILED' ? 'danger' : run.status === 'PENDING' ? 'warning' : 'neutral'}>{run.status === 'SUCCESS' ? '성공' : run.status === 'FAILED' ? '실패' : run.status === 'PENDING' ? '결과 확인 대기' : '건너뜀'}</Badge></Td>
                   <Td className="text-[12px] text-ink-500">{run.reason ?? '-'}</Td>
                 </tr>
               ))}

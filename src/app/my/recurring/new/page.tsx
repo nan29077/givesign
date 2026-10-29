@@ -7,7 +7,7 @@ import { DonorActionForm } from '@/components/my/donor-action-form';
 import { createRecurringAction } from '@/app/actions/donor';
 import { openCampaigns } from '@/server/services/fundraising';
 import { currentTermsDoc } from '@/server/services/terms';
-import { RECURRING_MAX_AMOUNT, RECURRING_MIN_AMOUNT, firstChargeDate, recurringIsMock } from '@/server/services/recurring';
+import { firstChargeDate, recurringAmountRange, recurringIsMock } from '@/server/services/recurring';
 import { normalizeMerchantCode } from '@/lib/id';
 import { kstDateKey } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
@@ -15,6 +15,7 @@ import { formatNumber } from '@/lib/money';
 export const dynamic = 'force-dynamic';
 
 const PRESETS = [10000, 20000, 30000, 50000, 100000];
+
 
 /**
  * 정기후원 신청. /donate/[code] 의 "매월 후원하기" 에서 ?merchant=코드 로 들어온다.
@@ -34,11 +35,12 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
       </>
     );
   }
-  const [hasToken, campaigns, terms, existing] = await Promise.all([
+  const [hasToken, campaigns, terms, existing, range] = await Promise.all([
     prisma.paymentMethodToken.count({ where: { payerId, status: 'ACTIVE' } }),
     openCampaigns(merchant.id),
     currentTermsDoc('RECURRING_DEBIT'),
     prisma.recurringDonation.findFirst({ where: { payerId, merchantId: merchant.id, status: { in: ['ACTIVE', 'PAUSED', 'SUSPENDED'] } }, select: { id: true } }),
+    recurringAmountRange(merchant.id, payerId),
   ]);
   const defaultDay = Math.min(28, Number(kstDateKey().slice(8, 10)));
 
@@ -64,16 +66,16 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
         <Card>
           <DonorActionForm action={createRecurringAction} submitLabel="정기후원 시작" size="lg">
             <input type="hidden" name="merchantCode" value={merchant.code} />
-            <Field label="매월 후원 금액(원)" required hint={`${formatNumber(RECURRING_MIN_AMOUNT)}원 ~ ${formatNumber(RECURRING_MAX_AMOUNT)}원`}>
+            <Field label="매월 후원 금액(원)" required hint={`${formatNumber(range.min)}원 ~ ${formatNumber(range.max)}원 (기관 설정과 이용 한도 기준)`}>
               <div className="mb-2 flex flex-wrap gap-2">
-                {PRESETS.map((p) => (
+                {PRESETS.filter((p) => BigInt(p) >= range.min && BigInt(p) <= range.max).map((p) => (
                   <label key={p} className="cursor-pointer rounded-xl border border-ink-200 px-3 py-2 text-[13px] font-bold has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
                     <input type="radio" name="preset" value={p} className="sr-only" />
                     {formatNumber(p)}원
                   </label>
                 ))}
               </div>
-              <Input name="amount" inputMode="numeric" defaultValue="10000" required />
+              <Input name="amount" inputMode="numeric" placeholder="직접 입력 (위에서 고르면 비워 두세요)" />
             </Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="출금일" required hint={`첫 출금 예정 ${firstChargeDate(defaultDay)}`}>

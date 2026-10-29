@@ -1146,6 +1146,10 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     return { ok: false, status: 'PAYMENT_FAILED', message: decision.stockError };
   }
 
+  // 정기후원 결제는 약정 서비스(recurring.ts)가 전용 안내 문자(실패·재시도·정지)를 보낸다.
+  // 여기서 일반 실패 문자를 함께 보내면 한 번의 실패에 문자가 두 통 나간다.
+  const recurringCharge = charge.channel === 'RECURRING';
+
   const limitNow = decision.limit;
   if (!limitNow.ok) {
     await setStatus(chargeId, 'LIMIT_BLOCKED', `${limitNow.code}: ${limitNow.message}`);
@@ -1160,12 +1164,14 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
         detail: { code: limitNow.code, message: limitNow.message, stage: 'PRE_PAYMENT' } as object,
       },
     });
-    await sendMtForPayer(
-      charge.payerId!,
-      tpl.tplLimitBlocked(charge.merchant.displayName, limitNow.message ?? '이용 한도'),
-      chargeId,
-      charge.merchantId,
-    );
+    if (!recurringCharge) {
+      await sendMtForPayer(
+        charge.payerId!,
+        tpl.tplLimitBlocked(charge.merchant.displayName, limitNow.message ?? '이용 한도'),
+        chargeId,
+        charge.merchantId,
+      );
+    }
     return { ok: false, status: 'LIMIT_BLOCKED', message: limitNow.message ?? '이용 한도를 초과했습니다.' };
   }
 
@@ -1305,9 +1311,14 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     await rollbackCounters(payer.id, charge.merchantId, charge.amount, reservedAt);
     // 잡아둔 재고도 함께 돌려놓는다. 여기서 빠뜨리면 결제 실패가 쌓일수록 팔 수 있는 물건이 줄어든다.
     await restoreStock(charge.productId, charge.quantity);
-    const policy = await resolvePolicy(charge.merchantId, charge.payerId);
-    const locked = await registerFailure(charge.payerId!, policy.failureLockThreshold);
-    await sendMtForPayer(charge.payerId!, tpl.tplChargeFailed(charge.merchant.displayName, failure?.message), chargeId, charge.merchantId);
+    // 정기후원 자동 출금 실패(잔액 부족 등)는 후원자가 직접 시도한 실패가 아니다.
+    // 실패 카운터에 쌓으면 정기후원 실패만으로 문자후원까지 잠긴다. 안내 문자는 약정 서비스가 보낸다.
+    let locked = false;
+    if (!recurringCharge) {
+      const policy = await resolvePolicy(charge.merchantId, charge.payerId);
+      locked = await registerFailure(charge.payerId!, policy.failureLockThreshold);
+      await sendMtForPayer(charge.payerId!, tpl.tplChargeFailed(charge.merchant.displayName, failure?.message), chargeId, charge.merchantId);
+    }
     await emitMerchantEvent(charge.merchantId, 'charge.failed', {
       transactionNo: charge.transactionNo,
       amount: Number(charge.amount),

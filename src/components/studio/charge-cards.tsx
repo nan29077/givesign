@@ -3,7 +3,7 @@ import { Clock, MessageSquareText, Monitor, Smartphone, Undo2 } from 'lucide-rea
 import { Badge, cx } from '@/components/ui';
 import { formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
-import { deliveryStatusLabel, chargeStatusLabel, refundStatusLabel } from '@/lib/labels';
+import { channelLabel, deliveryStatusLabel, chargeStatusLabel, refundStatusLabel } from '@/lib/labels';
 import type { DeliveryStatus, ChargeStatus, RefundStatus } from '@/generated/prisma/enums';
 
 /**
@@ -76,7 +76,7 @@ export function ChargeCard({ item }: { item: ChargeCardItem }) {
           {item.anonymous ? '익명의 후원자' : item.displayName}
         </span>
         <span aria-hidden>·</span>
-        <span>{isWeb ? '웹(PC) 결제' : '문자(MO) 결제'}</span>
+        <span>{channelLabel(item.channel, 'long')}</span>
       </p>
 
       {/* 문자 내용 */}
