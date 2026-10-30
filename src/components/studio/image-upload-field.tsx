@@ -17,14 +17,19 @@ export function ImageUploadField({
   label,
   hint,
   aspect = 'wide',
+  onValueChange,
+  value: controlledValue,
 }: {
   name: string;
   defaultValue?: string;
   label: string;
   hint?: string;
   aspect?: 'wide' | 'square';
+  onValueChange?: (value: string) => void;
+  value?: string;
 }) {
-  const [value, setValue] = React.useState(defaultValue);
+  const [internalValue, setValue] = React.useState(defaultValue);
+  const value = controlledValue ?? internalValue;
   const [mode, setMode] = React.useState<'upload' | 'url'>('url');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -43,6 +48,7 @@ export function ImageUploadField({
         return;
       }
       setValue(data.url);
+      onValueChange?.(data.url);
     } catch {
       setError('업로드 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
     } finally {
@@ -96,7 +102,7 @@ export function ImageUploadField({
       ) : (
         <input
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => { setValue(e.target.value); onValueChange?.(e.target.value); }}
           placeholder="https:// 또는 /uploads/... 경로"
           className="h-11 w-full rounded-xl border border-ink-200 px-3.5 text-[14px] outline-none transition-colors focus:border-brand-400"
         />
@@ -120,6 +126,7 @@ export function ImageUploadField({
             type="button"
             onClick={() => {
               setValue('');
+              onValueChange?.('');
               if (fileRef.current) fileRef.current.value = '';
             }}
             className="flex items-center gap-1 rounded-lg border border-ink-200 px-2.5 py-1.5 text-[12px] font-bold text-ink-500 hover:bg-ink-50"

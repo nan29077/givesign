@@ -74,6 +74,11 @@ function revalidateFundraising() {
 export async function saveCampaignAction(_prev: StudioActionState, f: FormData): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
     const id = text(f, 'id') || undefined;
+    let cardNews: unknown;
+    const rawCards = text(f, 'cardNews');
+    if (rawCards.length > 60000) return { ok: false, message: '카드뉴스 내용이 너무 큽니다.' };
+    try { cardNews = rawCards ? JSON.parse(rawCards) : undefined; }
+    catch { return { ok: false, message: '카드뉴스 내용을 확인해 주세요.' }; }
     const parsed = campaignSchema.safeParse({
       code: text(f, 'code'),
       title: text(f, 'title'),
@@ -82,6 +87,7 @@ export async function saveCampaignAction(_prev: StudioActionState, f: FormData):
       beneficiary: text(f, 'beneficiary'),
       usagePlan: text(f, 'usagePlan'),
       imageUrl: text(f, 'imageUrl'),
+      cardNews,
       goalAmount: text(f, 'goalAmount').replace(/,/g, ''),
       startsOn: text(f, 'startsOn'),
       endsOn: text(f, 'endsOn'),

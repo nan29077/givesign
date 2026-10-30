@@ -49,10 +49,10 @@ export async function generateMetadata(): Promise<Metadata> {
     keywords: ['기브싸인', 'GIVESIGN', '문자후원', 'MO 후원', '사회복지기관 후원', '정기후원', '기부금영수증'],
     icons: {
       icon: [
-        { url: '/givesign-mark-v5.svg?v=5', type: 'image/svg+xml', sizes: 'any' },
+        { url: '/givesign-icon-v7.png?v=7', type: 'image/png', sizes: '512x512' },
       ],
-      shortcut: '/favicon.ico?v=5',
-      apple: '/apple-touch-icon-v5.png',
+      shortcut: '/favicon.ico?v=7',
+      apple: '/apple-touch-icon-v7.png',
     },
     openGraph: {
       title: shareTitle,

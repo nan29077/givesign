@@ -7,7 +7,7 @@ import {
   Bell, Building2, CircleHelp, CircleUserRound, CreditCard, House, LayoutDashboard,
   LifeBuoy, LogIn, LogOut, Map, Menu, X,
 } from 'lucide-react';
-import { Logo, GiveSignMark } from '@/components/brand/logo';
+import { Logo } from '@/components/brand/logo';
 import { PublicMarginMascots } from '@/components/brand/mascot-decorations';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { ProfileAvatar } from '@/components/profile/generated-avatar';
@@ -188,13 +188,6 @@ export function PublicShellClient({
           aria-label="PC 메뉴"
         >
           <nav className="public-side-nav flex w-full flex-col items-center gap-0.5 rounded-[24px] border px-2 py-3 backdrop-blur-xl">
-            <Link
-              href="/"
-              aria-label="기브싸인 홈"
-              className="mb-2 grid h-10 w-10 place-items-center rounded-[14px] bg-ink-900 text-brand-400 shadow-[0_8px_18px_rgba(32,60,50,0.24)] ring-1 ring-white/10 transition-transform hover:-translate-y-0.5"
-            >
-              <GiveSignMark size={38} onDark />
-            </Link>
             {nav.map((item) => {
               const Icon = item.icon;
               const active = isActive(pathname, item.href, item.my);

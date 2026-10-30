@@ -8,6 +8,7 @@ import {
   campaignOpen,
   defaultDonationPage,
   normalizeCampaignCode,
+  campaignCardsSchema,
   type CampaignInput,
   type DonationPageInput,
 } from '@/lib/fundraising';
@@ -165,6 +166,7 @@ export async function saveCampaign(merchantId: string, input: CampaignInput, id?
     beneficiary: input.beneficiary || null,
     usagePlan: input.usagePlan || null,
     imageUrl: input.imageUrl || null,
+    ...(input.cardNews !== undefined ? { cardNews: campaignCardsSchema.parse(input.cardNews) } : {}),
     goalAmount: BigInt(input.goalAmount),
     startsOn: new Date(`${input.startsOn}T00:00:00Z`),
     endsOn: new Date(`${input.endsOn}T00:00:00Z`),

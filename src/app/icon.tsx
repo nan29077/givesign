@@ -1,5 +1,7 @@
-import { ImageResponse } from 'next/og';
-import { GiveSignMark } from '@/components/brand/logo';
-export const size = { width: 64, height: 64 };
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+export const size = { width: 512, height: 512 };
 export const contentType = 'image/png';
-export default function Icon() { return new ImageResponse(<GiveSignMark size={64} />, { ...size }); }
+export default async function Icon() {
+  return new Response(new Uint8Array(await readFile(path.join(process.cwd(), 'public/givesign-icon-v7.png'))), { headers: { 'Content-Type': contentType } });
+}

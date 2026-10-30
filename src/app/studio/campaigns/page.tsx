@@ -67,6 +67,10 @@ export default async function StudioCampaignsPage({ searchParams }: { searchPara
             const left = daysLeft(c.endsOn);
             return (
               <Card key={c.id} className="flex flex-col gap-3">
+                {c.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={c.imageUrl} alt={c.title} className="aspect-[2/1] w-full rounded-xl object-cover" loading="lazy" />
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={st.tone}>{st.text}</Badge>
                   {c.featured ? <Badge tone="warning">강조</Badge> : null}

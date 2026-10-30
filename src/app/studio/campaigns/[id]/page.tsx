@@ -23,7 +23,7 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
     <>
       <PageHeader
         title={c ? '캠페인 수정' : '캠페인 만들기'}
-        description="대표 이미지와 모집 기간, 지원 대상과 후원금 사용 계획을 입력하세요. 저장 후 목록에서 '모금 시작' 을 눌러야 공개됩니다."
+        description="표지 이미지와 카드뉴스로 캠페인의 이야기를 구성하세요. 이미지·제목·설명을 순서대로 넣고 미리볼 수 있습니다. 저장 후 '모금 시작'을 누르면 공개됩니다."
       />
       {c ? (
         <Card className="mb-5">

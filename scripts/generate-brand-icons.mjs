@@ -1,24 +1,24 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 
-const source = await readFile(new URL('../public/givesign-mark-v5.svg', import.meta.url));
+const source = await readFile(new URL('../public/assets/givesign/brand/mark-hope-transparent-v7.png', import.meta.url));
 
 async function transparentMark(size) {
   return sharp(source).resize(size, size, { fit: 'contain' }).png().toBuffer();
 }
 
 const icon512 = await transparentMark(512);
-await writeFile(new URL('../public/givesign-icon-v5.png', import.meta.url), icon512);
+await writeFile(new URL('../public/givesign-icon-v7.png', import.meta.url), icon512);
 
 
 const appleMark = await sharp(source).resize(372, 372, { fit: 'contain' }).png().toBuffer();
 const appleIcon = await sharp({
-  create: { width: 512, height: 512, channels: 4, background: '#fff8e7' },
+  create: { width: 512, height: 512, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
 })
   .composite([{ input: appleMark, gravity: 'center' }])
   .png()
   .toBuffer();
-await writeFile(new URL('../public/apple-touch-icon-v5.png', import.meta.url), appleIcon);
+await writeFile(new URL('../public/apple-touch-icon-v7.png', import.meta.url), appleIcon);
 
 const sizes = [16, 32, 48, 64];
 const images = await Promise.all(sizes.map((size) => transparentMark(size)));

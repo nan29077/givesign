@@ -3,6 +3,7 @@ import { ActionForm } from '@/components/studio/action-form';
 import { ImageUploadField } from '@/components/studio/image-upload-field';
 import { saveCampaignAction } from '@/app/actions/fundraising';
 import type { Campaign } from '@/generated/prisma/client';
+import { CampaignCardEditor } from './campaign-card-editor';
 
 /**
  * 캠페인 등록·수정 폼.
@@ -38,6 +39,7 @@ export function CampaignForm({ initial: c, today }: { initial?: Campaign | null;
           </Field>
         </div>
       </Card>
+      <CampaignCardEditor initial={c?.cardNews} />
       <Card className="space-y-4">
         <Field label="지원 대상" hint="누구를 돕는 캠페인인지 한두 문장으로">
           <Input name="beneficiary" maxLength={300} defaultValue={c?.beneficiary ?? ''} />

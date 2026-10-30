@@ -1,5 +1,7 @@
-import { ImageResponse } from 'next/og';
-import { GiveSignMark } from '@/components/brand/logo';
-export const size = { width: 180, height: 180 };
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+export const size = { width: 512, height: 512 };
 export const contentType = 'image/png';
-export default function AppleIcon() { return new ImageResponse(<GiveSignMark size={180} />, { ...size }); }
+export default async function Icon() {
+  return new Response(new Uint8Array(await readFile(path.join(process.cwd(), 'public/apple-touch-icon-v7.png'))), { headers: { 'Content-Type': contentType } });
+}

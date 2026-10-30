@@ -88,6 +88,21 @@ export function normalizeCampaignCode(raw: string): string {
   return (raw ?? '').normalize('NFKC').replace(/[\s._\-*~/+#]/gu, '').toUpperCase();
 }
 
+export const campaignCardSchema = z.object({
+  imageUrl: safeImage.default(''),
+  title: z.string().trim().max(100).default(''),
+  body: z.string().trim().max(1500).default(''),
+  alt: z.string().trim().max(200).default(''),
+  layout: z.enum(['editorial', 'image', 'text']).default('editorial'),
+  theme: z.enum(['cream', 'green', 'peach', 'white']).default('cream'),
+}).refine((v) => v.layout === 'image' ? !!v.imageUrl : !!(v.title || v.body || v.imageUrl), '카드에 이미지나 내용을 입력해 주세요.');
+export const campaignCardsSchema = z.array(campaignCardSchema).max(15, '카드뉴스는 최대 15장까지 등록할 수 있습니다.');
+export type CampaignCard = z.infer<typeof campaignCardSchema>;
+export function readCampaignCards(value: unknown): CampaignCard[] {
+  const result = campaignCardsSchema.safeParse(value);
+  return result.success ? result.data : [];
+}
+
 export const campaignSchema = z
   .object({
     code: z
@@ -102,6 +117,7 @@ export const campaignSchema = z
     beneficiary: z.string().trim().max(300).default(''),
     usagePlan: z.string().trim().max(3000).default(''),
     imageUrl: safeImage.default(''),
+    cardNews: campaignCardsSchema.optional(),
     goalAmount: z.coerce
       .number()
       .int('목표 금액은 원 단위 정수입니다.')

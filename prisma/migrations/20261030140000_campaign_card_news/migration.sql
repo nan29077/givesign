@@ -1,0 +1,1 @@
+ALTER TABLE "campaign" ADD COLUMN "card_news" JSONB NOT NULL DEFAULT '[]';

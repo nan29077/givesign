@@ -2316,6 +2316,8 @@ model Campaign {
   /// 후원금 사용 계획
   usagePlan   String?        @map("usage_plan")
   imageUrl    String?        @map("image_url")
+  /// 순서대로 표시하는 카드뉴스 이미지·제목·설명
+  cardNews    Json           @default("[]") @map("card_news")
   goalAmount  BigInt         @map("goal_amount")
   startsOn    DateTime       @map("starts_on") @db.Date
   endsOn      DateTime       @map("ends_on") @db.Date

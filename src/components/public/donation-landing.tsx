@@ -12,7 +12,8 @@ import {
   recentDonors,
   type CampaignWithStats,
 } from '@/server/services/fundraising';
-import { campaignProgress, campaignStatusLabel, daysLeft } from '@/lib/fundraising';
+import { campaignProgress, campaignStatusLabel, daysLeft, readCampaignCards } from '@/lib/fundraising';
+import { CampaignCardNews } from '@/components/public/campaign-card-news';
 import { normalizeMerchantCode } from '@/lib/id';
 import { formatNumber, formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
@@ -99,6 +100,7 @@ function Landing({
   const hero = campaign?.imageUrl || page.heroUrl || '/assets/givesign/hero.png';
   const openCampaigns = campaigns.filter((c) => c.open);
   const closedCampaigns = campaigns.filter((c) => c.status === 'CLOSED');
+  const campaignCards = readCampaignCards(campaign?.cardNews);
 
   const logoUrl = page.logoUrl || org.avatarUrl || null;
   const shellOrg = { code: org.code, displayName: org.displayName, logoUrl };
@@ -109,20 +111,28 @@ function Landing({
   return (
     <DonorShell org={shellOrg} viewer={viewer} active="home" color={color} backgroundUrl={page.backgroundUrl}>
       {/* 히어로 */}
+      {campaign ? <section className="px-5 pt-7 sm:px-7">
+        <Link href={`/donate/${org.code}`} className="text-xs font-bold text-ink-400 hover:text-ink-700">{org.displayName} / 모금 캠페인</Link>
+        <div className="mt-5 flex flex-wrap gap-2"><span className="rounded-full bg-[#edf5ee] px-3 py-1.5 text-xs font-bold" style={{ color }}>{campaignStatusLabel[campaign.status].text}</span>{campaign.open ? <span className="rounded-full bg-[#fff4e7] px-3 py-1.5 text-xs font-bold text-amber-800">{daysLeft(campaign.endsOn)}일 남음</span> : null}</div>
+        <h1 className="mt-4 break-words text-[27px] font-black leading-snug tracking-[-0.04em] text-ink-900 sm:text-[34px]">{campaign.title}</h1>
+        <p className="mt-3 text-[15px] leading-7 text-ink-500">{campaign.summary}</p>
+        <Image unoptimized width={1200} height={800} src={hero} alt={`${campaign.title} 표지`} className="mt-6 aspect-[3/2] w-full rounded-[24px] object-cover" priority />
+      </section> : <>
       <div className="relative mx-4 mt-5 overflow-hidden rounded-[30px] sm:mx-7">
         <Image unoptimized width={1600} height={800} src={hero} alt="" className="aspect-[16/11] w-full object-cover sm:aspect-[2/1]" priority />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(27,104,69,.88),rgba(27,104,69,.42)_55%,rgba(27,104,69,.05))]" />
         <div className="absolute inset-x-0 top-0 p-6 pt-10 text-white sm:p-10 sm:pt-16">
           <p className="inline-block rounded-full border border-white/40 bg-white/15 px-3.5 py-1.5 text-[11.5px] font-bold backdrop-blur">
-            {campaign ? (campaign.open ? `모금 중 · ${daysLeft(campaign.endsOn)}일 남음` : campaignStatusLabel[campaign.status].text) : '함께 만드는 따뜻한 변화'}
+            함께 만드는 따뜻한 변화
           </p>
-          <h1 className="mt-3 max-w-xl text-[22px] font-black leading-snug tracking-[-0.03em] sm:text-[28px]">{campaign?.title ?? page.title}</h1>
-          <p className="mt-2 max-w-lg text-[13.5px] leading-relaxed opacity-95 sm:text-[15px]">{campaign?.summary ?? page.subtitle}</p>
+          <h1 className="mt-3 max-w-xl text-[22px] font-black leading-snug tracking-[-0.03em] sm:text-[28px]">{page.title}</h1>
+          <p className="mt-2 max-w-lg text-[13.5px] leading-relaxed opacity-95 sm:text-[15px]">{page.subtitle}</p>
         </div>
       </div>
+      </>}
 
       {/* 기관 프로필 카드 (히어로에 겹쳐 올라온다) */}
-      <section className="relative z-[1] mx-6 -mt-14 rounded-[32px] bg-white px-5 pb-6 pt-7 text-center shadow-[0_20px_25px_-5px_rgba(0,0,0,0.08),0_8px_10px_-6px_rgba(0,0,0,0.08)] sm:mx-12 sm:-mt-20 sm:px-8">
+      <section className={campaign ? 'mx-5 mt-6 border-b border-ink-100 bg-white pb-7 text-center sm:mx-7' : 'relative z-[1] mx-6 -mt-14 rounded-[32px] bg-white px-5 pb-6 pt-7 text-center shadow-[0_20px_25px_-5px_rgba(0,0,0,0.08),0_8px_10px_-6px_rgba(0,0,0,0.08)] sm:mx-12 sm:-mt-20 sm:px-8'}>
         <OrgLogo code={org.code} name={org.displayName} logoUrl={logoUrl} className="mx-auto h-20 w-20" />
         <h2 className="mt-4 text-[22px] font-black tracking-[-0.02em] text-ink-900">{org.displayName}</h2>
         {doneeVerified(org) ? (
@@ -185,7 +195,9 @@ function Landing({
         {/* 캠페인 상세 본문 */}
         {campaign ? (
           <>
-            <TextSection title="함께 만드는 변화" body={campaign.story || page.intro || '캠페인 소개를 준비하고 있습니다.'} />
+            {campaignCards.length ? <section><div className="mb-5 flex items-end justify-between gap-3"><div><p className="text-[11px] font-bold tracking-[0.15em] text-ink-400">CAMPAIGN STORY</p><h2 className="mt-1 text-xl font-black text-ink-900">한 장씩 만나는 변화의 이야기</h2></div><span className="shrink-0 text-xs text-ink-400">총 {campaignCards.length}장</span></div><CampaignCardNews cards={campaignCards} /></section> : null}
+            {campaign.story || !campaignCards.length ? <TextSection title="함께 만드는 변화" body={campaign.story || page.intro || '캠페인 소개를 준비하고 있습니다.'} /> : null}
+            {campaignCards.length ? <div className="rounded-2xl bg-[#f1f6ed] p-6 text-center"><p className="text-lg font-black text-ink-900">이 변화에 함께해 주세요</p><p className="mt-2 text-sm text-ink-500">소중한 후원이 이웃의 일상에 닿을 수 있도록</p><Link href={webHref} className="mt-5 inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-bold text-white" style={{ background: color }}><HeartHandshake size={17} />{campaign.open ? '이 캠페인 후원하기' : '기관 일반 후원하기'}</Link></div> : null}
             {campaign.beneficiary ? <TextSection title="지원 대상" body={campaign.beneficiary} /> : null}
             {campaign.usagePlan ? <TextSection title="후원금 사용 계획" body={campaign.usagePlan} /> : null}
             {campaign.status === 'CLOSED' && campaign.resultReport ? <TextSection title="결과 보고" body={campaign.resultReport} /> : null}
