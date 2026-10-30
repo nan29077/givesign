@@ -83,8 +83,21 @@ if (!res.ok) {
   process.exit(1);
 }
 
+// 코드(스키마)와 DB 를 먼저 맞춘다. git pull 뒤 오래된 Prisma 클라이언트·밀린 마이그레이션으로
+// 서버가 떠서 화면이 깨지는 것을 막는다(tools/prepare-db.mjs).
+try {
+  const { prepareDb } = await import('./prepare-db.mjs');
+  await prepareDb();
+} catch (e) {
+  console.error(`[중단] 데이터베이스 준비에 실패했습니다: ${e.message}`);
+  console.error('       도구_DB시작.bat 으로 DB 가 켜져 있는지 확인한 뒤 다시 실행해 주세요.');
+  releaseLock();
+  process.exit(1);
+}
+
 const nextBin = localScript('next/dist/bin/next', 'next/dist/bin/next');
-child = spawn(process.execPath, [nextBin, MODE, '-p', String(APP_PORT)], {
+// package.json 의 dev/build 와 같은 번들러(webpack)를 쓴다. 섞어 쓰면 같은 .givesign-next 캐시가 꼬인다.
+child = spawn(process.execPath, [nextBin, MODE, ...(MODE === 'dev' ? ['--webpack'] : []), '-p', String(APP_PORT)], {
   stdio: 'inherit',
   env: { ...process.env, NODE_ENV: MODE === 'dev' ? 'development' : 'production' },
 });

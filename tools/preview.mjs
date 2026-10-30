@@ -122,6 +122,9 @@ function needsBuild() {
   if (!fs.existsSync(buildId)) return true;
   const builtAt = fs.statSync(buildId).mtimeMs;
 
+  // git pull 로 받은 파일은 수정 시각이 원래 커밋 시각이 아니라 받은 시각이라 여기서 잡힌다.
+  // 빌드 결과에 정적 파일(static)이 빠져 있으면(중간에 끊긴 빌드) 다시 빌드한다.
+  if (!fs.existsSync(path.join(process.cwd(), '.givesign-next', 'static'))) return true;
   const watch = ['src', 'prisma', 'public', 'package.json', 'next.config.ts', 'postcss.config.mjs'];
   let newest = 0;
   const visit = (target) => {
@@ -248,7 +251,8 @@ async function main() {
   } else {
     if (needsBuild()) {
       log('[3/4] 화면 빌드 (처음에는 1~3분 걸립니다)');
-      await run(process.execPath, [nextBin, 'build'], { ...previewEnv, NODE_ENV: 'production' });
+      // package.json 의 build 와 같은 번들러(webpack)로 빌드한다.
+      await run(process.execPath, [nextBin, 'build', '--webpack'], { ...previewEnv, NODE_ENV: 'production' });
     } else {
       log('[3/4] 이전 빌드 결과를 재사용합니다');
     }
