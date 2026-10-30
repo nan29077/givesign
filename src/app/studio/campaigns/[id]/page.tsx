@@ -4,6 +4,8 @@ import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { getCampaign } from '@/server/services/fundraising';
 import { CampaignForm } from '@/components/studio/campaign-form';
+import { QrCard } from '@/components/studio/qr-card';
+import { campaignUrl } from '@/server/services/qr';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, DataRow, Notice } from '@/components/ui';
 import { campaignProgress, campaignStatusLabel, kstToday } from '@/lib/fundraising';
@@ -17,6 +19,7 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
   const isNew = id === 'new';
   const c = isNew ? null : await getCampaign(merchantId, id);
   if (!isNew && !c) notFound();
+  const org = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true } });
   const moNumbers = await prisma.merchantMoNumber.findMany({ where: { merchantId, status: 'ASSIGNED' }, select: { phoneNumber: true, mode: true, keyword: true } });
 
   return (
@@ -41,6 +44,9 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
                 : 'MO 번호 미배정'
             }
           />
+          <div className="mt-4 border-t border-ink-100 pt-4">
+            <QrCard title={`${c.title} QR 코드`} subtitle="이 캠페인 페이지로 바로 연결됩니다" qrPath={`/api/qr/${org.code}/campaigns/${c.id}`} targetUrl={campaignUrl(org.code, c.id)} compact />
+          </div>
         </Card>
       ) : null}
       <CampaignForm initial={c} today={kstToday()} />

@@ -66,6 +66,7 @@ function buildGroups(pending: {
       items: [
         { href: '/studio/campaigns', label: '캠페인', icon: 'campaigns' },
         { href: '/studio/donation-page', label: '후원페이지', icon: 'settings' },
+        { href: '/studio/qr', label: 'QR 코드', icon: 'qr' },
         { href: '/studio/products', label: '후원 항목', icon: 'products' },
         // 실물 상품·배송·문서 상품은 사회복지기관 기본 업무가 아니라 숨긴다 (FEATURE_GOODS=true 로 노출).
         ...(goods

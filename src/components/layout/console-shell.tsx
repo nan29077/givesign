@@ -20,6 +20,7 @@ import {
   BellRing,
   Contact,
   FileSignature as FileSignatureIcon,
+  QrCode,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
@@ -60,7 +61,7 @@ export type ConsoleIconName =
   | 'system' | 'templates' | 'terms' | 'users' | 'settings' | 'send'
   | 'products' | 'orders' | 'apidocs' | 'documents'
   | 'campaigns' | 'recurring' | 'receipts' | 'donors' | 'building'
-  | 'supporters' | 'volunteers' | 'content' | 'channels' | 'notices' | 'agreements';
+  | 'supporters' | 'volunteers' | 'content' | 'channels' | 'notices' | 'agreements' | 'qr';
 
 const CONSOLE_ICONS = {
   activity: Activity,
@@ -108,6 +109,7 @@ const CONSOLE_ICONS = {
   channels: Share2,
   notices: BellRing,
   agreements: FileSignatureIcon,
+  qr: QrCode,
 } satisfies Record<ConsoleIconName, typeof Home>;
 
 export function ConsoleShell({

@@ -88,6 +88,7 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 | 약정서·신청서 | `/studio/agreements` | 전자 약정서·신청서 보관·판 이력 |
 | 콘텐츠 만들기 / SNS 채널 | `/studio/content` · `/studio/channels` | 숏폼·캠페인 이미지 생성·승인·예약 게시 (`FEATURE_CONTENT`) |
 | 알림톡·월간 안내 | `/studio/notices` | 카카오 채널·템플릿 코드, 월간 안내·영수증 주기 |
+| QR 코드 | `/studio/qr` | 후원페이지 QR 1개 + 캠페인마다 QR (`/api/qr/[code]`, `/api/qr/[code]/campaigns/[id]`, PNG·SVG·인쇄). 승인 기관·그 기관 캠페인만, 주소에 `?src=qr` |
 | 후원 설정 / 문자 관리 / 정산 관리 | 기존 유지 | |
 
 실물 상품·배송 상품(`/studio/products` 의 PHYSICAL/DOCUMENT, `/studio/orders`)은 **코드는 유지하되 메뉴와 공개 화면에서 숨긴다.** 전자문서 서식·제출 관리(`/studio/documents`)는 별도 기관 업무로 항상 제공한다. `FEATURE_GOODS=true` 환경변수로만 다시 노출한다. 꺼져 있으면 후원 항목 관리는 DIGITAL(후원 항목)만 다루고, 실물·문서 생성은 서버 액션에서도 거절하며, `/studio/orders`는 404 다. 후원 건의 `pointStatus` 는 `initialPointStatus()`(기본 `SKIPPED`)로 정한다 — 후원에는 기관이 따로 지급할 것이 없다. 메시지페이의 "포인트 지급" 상태 기계는 `FEATURE_GOODS` 를 켠 기관의 디지털 상품에만 산다.

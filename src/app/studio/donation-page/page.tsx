@@ -7,6 +7,8 @@ import { getDonationPage } from '@/server/services/fundraising';
 import { saveDonationPageAction } from '@/app/actions/fundraising';
 import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm } from '@/components/studio/action-form';
+import { QrCard } from '@/components/studio/qr-card';
+import { donationPageUrl } from '@/server/services/qr';
 import { ImageUploadField } from '@/components/studio/image-upload-field';
 import { PresetImagePicker } from '@/components/studio/preset-image-picker';
 import { DONATION_BANNERS, DONATION_MARGINS } from '@/lib/visual-presets';
@@ -36,6 +38,10 @@ export default async function DonationPageSettings() {
           </Link>
         }
       />
+
+      <Card className="mb-5">
+        <QrCard title="후원페이지 QR 코드" subtitle="포스터·전단에 넣으면 휴대폰 카메라로 바로 열립니다. 캠페인별 QR 은 QR 코드 메뉴에 있습니다." qrPath={`/api/qr/${org.code}`} targetUrl={donationPageUrl(org.code)} />
+      </Card>
 
       <ActionForm action={saveDonationPageAction} submitLabel="후원페이지 저장" className="space-y-5">
         <Card>

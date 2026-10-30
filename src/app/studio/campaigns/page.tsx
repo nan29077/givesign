@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, QrCode } from 'lucide-react';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { listCampaigns } from '@/server/services/fundraising';
@@ -98,6 +98,9 @@ export default async function StudioCampaignsPage({ searchParams }: { searchPara
                   <Link href={`/donate/${org.code}/campaigns/${c.id}`} target="_blank" className="inline-flex items-center gap-1 text-[12.5px] font-bold text-brand-700">
                     미리보기 <ExternalLink size={14} strokeWidth={1.7} />
                   </Link>
+                  <a href={`/api/qr/${org.code}/campaigns/${c.id}?format=png&size=1200&download=1`} className="inline-flex items-center gap-1 text-[12.5px] font-bold text-brand-700">
+                    <QrCode size={14} strokeWidth={1.7} /> QR 받기
+                  </a>
                   <span className="ml-auto flex flex-wrap gap-2">
                     {c.status === 'DRAFT' ? (
                       <InlineActionForm action={setCampaignStatusAction} submitLabel="모금 시작" variant="primary" fields={{ id: c.id, status: 'ACTIVE' }} disabled={moCount === 0} disabledReason="MO 번호 배정 후 시작할 수 있습니다" confirmMessage="캠페인을 공개하고 문자 키워드 수신을 시작할까요?" />
