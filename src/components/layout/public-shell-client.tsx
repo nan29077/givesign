@@ -62,6 +62,7 @@ function buildNav(myHref: string): NavItem[] {
 
 const DRAWER_EXTRA: NavItem[] = [
   { href: '/business', label: '기관 도입', icon: Building2 },
+  { href: '/electronic-documents', label: '기관 전자문서', icon: Building2 },
   { href: '/notice', label: '공지', icon: Bell },
   { href: '/support', label: '고객센터', icon: LifeBuoy },
 ];
@@ -76,10 +77,12 @@ export function PublicShellClient({
   children,
   aside,
   viewer,
+  marginUrl,
 }: {
   children: React.ReactNode;
   aside?: React.ReactNode;
   viewer: ShellViewer | null;
+  marginUrl: string;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
@@ -89,7 +92,7 @@ export function PublicShellClient({
 
   return (
     <div className="public-canvas min-h-dvh pb-20 lg:pb-0">
-      <PublicMarginMascots />
+      <PublicMarginMascots src={marginUrl} />
       <div className="relative z-[2] mx-auto flex w-full max-w-[824px] items-start justify-center">
         <div className="public-app-surface min-h-dvh w-full min-w-0 max-w-[720px] shadow-[0_0_70px_rgba(32,60,50,0.12)]">
       <header className="public-header sticky top-0 z-40 border-b backdrop-blur-xl">

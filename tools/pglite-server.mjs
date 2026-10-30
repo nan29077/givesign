@@ -16,7 +16,7 @@ const dataDir = memory ? undefined : path.resolve(process.cwd(), process.env.PGL
 
 const db = memory ? new PGlite() : new PGlite(dataDir);
 await db.waitReady;
-const server = new PGLiteSocketServer({ db, port, host: '127.0.0.1' });
+const server = new PGLiteSocketServer({ db, port, host: '127.0.0.1', maxConnections: 100 });
 await server.start();
 console.log(`[pglite] listening on 127.0.0.1:${port} (${memory ? 'memory' : dataDir})`);
 

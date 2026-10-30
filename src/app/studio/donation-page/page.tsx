@@ -8,6 +8,8 @@ import { saveDonationPageAction } from '@/app/actions/fundraising';
 import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm } from '@/components/studio/action-form';
 import { ImageUploadField } from '@/components/studio/image-upload-field';
+import { PresetImagePicker } from '@/components/studio/preset-image-picker';
+import { DONATION_BANNERS, DONATION_MARGINS } from '@/lib/visual-presets';
 import { Badge, Card, Checkbox, Field, Input, Notice, SectionTitle, Textarea } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
@@ -59,8 +61,9 @@ export default async function DonationPageSettings() {
             <Field label="한 줄 소개">
               <Input name="subtitle" defaultValue={page.subtitle ?? ''} maxLength={300} />
             </Field>
-            <ImageUploadField name="heroUrl" label="대표 배너" defaultValue={page.heroUrl ?? ''} hint="가로형 이미지를 권합니다(1600x900 내외)." />
-            <ImageUploadField name="logoUrl" label="기관 로고" defaultValue={page.logoUrl ?? ''} aspect="square" hint="비워 두면 기관 프로필 캐릭터가 표시됩니다." />
+            <PresetImagePicker name="heroUrl" label="대표 배너 · 생성형 이미지 5종" value={page.heroUrl || ''} presets={DONATION_BANNERS} />
+            <PresetImagePicker name="backgroundUrl" label="좌우 여백 · 생성형 이미지 5종" value={page.backgroundUrl} presets={DONATION_MARGINS} />
+            <ImageUploadField name="logoUrl" label="기관 로고" defaultValue={page.logoUrl ?? ''} aspect="square" hint="공개 후원페이지 왼쪽 상단·기관 소개·오른쪽 메뉴에 표시됩니다. 가로형 로고도 원본 비율로 표시하며, 미등록 시 상단에는 기관명이 표시됩니다." />
             <Field label="기관 대표 색상" hint="진행률 막대와 강조 버튼에 쓰입니다.">
               <Input type="color" name="color" defaultValue={page.color} className="h-11 w-24 p-1" />
             </Field>

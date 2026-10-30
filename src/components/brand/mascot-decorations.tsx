@@ -14,11 +14,12 @@ export function MascotAccent({ className }: { seed: string; className?: string }
 }
 
 /** 모든 PC 공개 화면의 앱 바깥 여백에 공통으로 노출되는 기브싸인 사무실 장면. */
-export function PublicMarginMascots() {
+export function PublicMarginMascots({ src = '/assets/givesign/hero.png' }: { src?: string }) {
   return (
     <div className="public-mascot-scene" aria-hidden="true">
       <Image
-        src="/assets/givesign/hero.png"
+        unoptimized
+        src={src}
         alt=""
         fill
         sizes="100vw"

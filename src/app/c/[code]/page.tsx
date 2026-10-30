@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { formatMoNumber } from '@/lib/mo-number';
 import Link from 'next/link';
 import {
   MessageSquare, CreditCard, ShieldCheck, CircleAlert,
@@ -42,18 +43,7 @@ type Params = { params: Promise<{ code: string }>; searchParams?: Promise<{ camp
  * MO 결제번호 표시용 서식. DB 에는 하이픈 없이 저장하므로 화면에서만 끊어 보여 준다.
  * sms: 링크와 복사 값은 원본(숫자만)을 그대로 쓴다.
  */
-function formatMoNumber(raw: string) {
-  const digits = raw.replace(/[^0-9]/g, '');
-  if (/^050[0-9]{8}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
-  if (/^050[0-9]{7}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
-  if (/^1[0-9]{7}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  if (/^0[0-9]{9,10}$/.test(digits)) {
-    const head = digits.startsWith('02') ? 2 : 3;
-    const tail = digits.length - head - 4;
-    return `${digits.slice(0, head)}-${digits.slice(head, head + tail)}-${digits.slice(head + tail)}`;
-  }
-  return raw;
-}
+
 
 /**
  * 로그인한 방문자의 후원자 프로필. 없으면 null.

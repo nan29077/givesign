@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { formatMoNumber } from '@/lib/mo-number';
 import { Phone, Copy, Check, Hash } from 'lucide-react';
 import { Badge, Card, cx } from '@/components/ui';
 
@@ -57,7 +58,7 @@ export function MoNumberPanel({ numbers, guideText }: { numbers: MoNumberView[];
                   <Phone size={18} strokeWidth={1.7} />
                 </span>
                 <div>
-                  <p className="font-mono text-[19px] font-black tracking-tight text-ink-900">{n.phoneNumber}</p>
+                  <p className="font-mono text-[19px] font-black tracking-tight text-ink-900">{formatMoNumber(n.phoneNumber)}</p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-ink-400">
                     <Badge tone={n.statusTone}>{n.statusText}</Badge>
                     <span>{n.mode === 'DEDICATED' ? '전용번호' : '대표번호 + 키워드'}</span>

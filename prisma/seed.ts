@@ -6,6 +6,7 @@ import { newId } from '../src/lib/id';
 import { encrypt, phoneHash, maskPhone, maskSecret } from '../src/lib/crypto';
 import { SEED_VERSION, SEED_VERSION_KEY } from './seed-version.mjs';
 import { SEED_TERMS, TERMS_VERSION, TERMS_EFFECTIVE_FROM } from './terms-content';
+import { DOCUMENT_PRESETS, fieldsToStorage } from '../src/server/services/documents';
 
 // 운영 환경 가드: 시드는 테스트 계정(admin@givesign.kr 등)과 샘플 데이터를 만들므로
 // 운영 DB 에서는 절대 실행하지 않는다. (APP_ENV 별칭 규칙은 src/lib/env.ts 와 동일하게 prod/production 을 본다)
@@ -98,8 +99,8 @@ async function main() {
 
   // ---------------------------------------------------------------- 사회복지기관
   const merchantSeeds = [
-    { email: 'merchant1@givesign.kr', name: '햇살종합사회복지관', code: 'GIV-8K2M', mo: '05051001001', mode: 'DEDICATED' as const, keyword: null },
-    { email: 'merchant2@givesign.kr', name: '함께걷는복지재단', code: 'GIV-3QP7', mo: '05059000000', mode: 'SHARED_PREFIX' as const, keyword: 'GIV3QP7' },
+    { email: 'merchant1@givesign.kr', name: '햇살종합사회복지관', code: 'GIV-8K2M', mo: '158812341234', mode: 'DEDICATED' as const, keyword: null },
+    { email: 'merchant2@givesign.kr', name: '함께걷는복지재단', code: 'GIV-3QP7', mo: '158812345678', mode: 'SHARED_PREFIX' as const, keyword: 'GIV3QP7' },
   ];
 
   for (const c of merchantSeeds) {
@@ -175,6 +176,13 @@ async function main() {
       update: {},
     });
 
+    // 기관 전자문서 기본 서식. 기존에 수정하거나 보관한 서식은 덮어쓰지 않는다.
+    for (const key of ['SUPPORT_AGREEMENT', 'VOLUNTEER_APPLICATION', 'PROGRAM_APPLICATION', 'GOODS_DONATION', 'CONSENT_PRIVACY']) {
+      const preset = DOCUMENT_PRESETS.find(p => p.key === key)!;
+      if (!(await prisma.documentTemplate.findFirst({ where: { merchantId: merchant.id, presetKey: key } }))) {
+        await prisma.documentTemplate.create({ data: { id: newId(), merchantId: merchant.id, templateType: 'PRESET', presetKey: key, name: preset.name, description: preset.description, body: preset.body, fields: fieldsToStorage(preset.fields), requireSignature: preset.requireSignature } });
+      }
+    }
     // 상품. 비실물(포인트·상품권·이용권)과 실물을 함께 깔아 둔다.
     // 금액과 지급 포인트는 1:1 이 기본이다.
     const productCount = await prisma.chargeProduct.count({ where: { merchantId: merchant.id } });
@@ -471,9 +479,9 @@ async function main() {
   });
 
   // ---------------------------------------------------------------- 050 번호 전환
-  // 시드 v5: MO 수신번호를 050(0505) 체계로 전환한다. 기존 DB 의 옛 1588 번호를 갱신한다.
-  await prisma.merchantMoNumber.updateMany({ where: { phoneNumber: '15881001' }, data: { phoneNumber: '05051001001' } });
-  await prisma.merchantMoNumber.updateMany({ where: { phoneNumber: '15889000' }, data: { phoneNumber: '05059000000' } });
+  // 검수 기관 MO 번호를 1588-1234-1234 체계로 사용한다.
+  await prisma.merchantMoNumber.updateMany({ where: { phoneNumber: '15881001' }, data: { phoneNumber: '158812341234' } });
+  await prisma.merchantMoNumber.updateMany({ where: { phoneNumber: '15889000' }, data: { phoneNumber: '158812345678' } });
 
   // ---------------------------------------------------------------- 브랜드명 정리
   // 브랜드명이 기브싸인으로 바뀌기 전(토네이도 · 도네이도)에 만들어진 시드 데이터가 남아 있으면
@@ -488,8 +496,8 @@ async function main() {
 
   console.log('시드 완료');
   console.log('  관리자     : admin@givesign.kr / givesign1234!');
-  console.log('  사회복지기관 : merchant1@givesign.kr / givesign1234! (코드 GIV-8K2M, MO 0505-100-1001)');
-  console.log('  사회복지기관 : merchant2@givesign.kr / givesign1234! (코드 GIV-3QP7, MO 0505-900-0000 + 키워드 GIV3QP7)');
+  console.log('  사회복지기관 : merchant1@givesign.kr / givesign1234! (코드 GIV-8K2M, MO 1588-1234-1234)');
+  console.log('  사회복지기관 : merchant2@givesign.kr / givesign1234! (코드 GIV-3QP7, MO 1588-1234-5678 + 키워드 GIV3QP7)');
   console.log('  후원자     : payer@givesign.kr / givesign1234! (010-1234-5678, 계좌 등록·계정 연결 완료)');
 }
 

@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { formatMoNumber } from '@/lib/mo-number';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { getCampaign } from '@/server/services/fundraising';
@@ -36,7 +37,7 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
             label="문자 안내"
             value={
               moNumbers.length
-                ? moNumbers.map((m) => `${m.phoneNumber} 로 "${m.mode === 'SHARED_PREFIX' && m.keyword ? `${m.keyword} ` : ''}${c.code} 응원 메시지"`).join(' / ')
+                ? moNumbers.map((m) => `${formatMoNumber(m.phoneNumber)} 로 "${m.mode === 'SHARED_PREFIX' && m.keyword ? `${m.keyword} ` : ''}${c.code} 응원 메시지"`).join(' / ')
                 : 'MO 번호 미배정'
             }
           />

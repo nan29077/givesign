@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatMoNumber } from '@/lib/mo-number';
 import { Badge, Card, EmptyState, Notice, Table, Td, Th } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
 import { InlineActionForm } from '@/components/studio/action-form';
@@ -134,7 +135,7 @@ export default async function StudioMessagesPage({
   const guideText = primary
     ? [
         `${merchant?.displayName ?? '사회복지기관'} 문자후원`,
-        `${primary.phoneNumber} 으로 문자를 보내주세요.`,
+        `${formatMoNumber(primary.phoneNumber)} 으로 문자를 보내주세요.`,
         primary.keyword ? `문자 맨 앞에 ${primary.keyword} 를 붙여주세요.` : null,
         '문자를 보내면 후원 금액을 고를 수 있는 링크가 발송됩니다.',
         '최초 1회 계좌 등록이 필요하며, 만 19세 이상만 이용할 수 있습니다.',

@@ -45,7 +45,7 @@ export default async function StudioDocumentsPage({
   const sp = await searchParams;
   const tab: Tab = TABS.some((t) => t.key === sp.tab) ? (sp.tab as Tab) : 'templates';
 
-  const [templates, archived, archivedTotal, submissions, submissionTotal, pendingCount, draftCount, productCounts] =
+  const [templates, archived, archivedTotal, submissions, submissionTotal, pendingCount, draftCount, _productCounts] =
     await Promise.all([
       prisma.documentTemplate.findMany({
         where: { merchantId, archivedAt: null },
@@ -79,7 +79,7 @@ export default async function StudioDocumentsPage({
     <>
       <PageHeader
         title="문서 관리"
-        description="약정서·주문서·계약서 서식을 등록하면, 그 서식을 쓰는 문서 상품을 결제한 후원자에게 작성 링크가 문자로 갑니다."
+        description="후원약정서·봉사 신청서 등 기관 서식을 등록하고 전자문서 센터에서 작성 요청을 보냅니다."
         action={
           <LinkButton href="/studio/documents/new" variant="primary">
             <Plus size={15} strokeWidth={1.6} />
@@ -96,9 +96,9 @@ export default async function StudioDocumentsPage({
           tone="brand"
         />
         <StatTile
-          label="문서 상품"
-          value={formatNumber(productCounts)}
-          sub={productCounts > 0 ? '후원 항목 관리에서 연결됨' : '아직 없음'}
+          label="기관 서식"
+          value={formatNumber(activeTemplates.length)}
+          sub="전자문서 센터에서 작성 요청"
         />
         <StatTile
           label="확인 대기"
@@ -141,14 +141,14 @@ export default async function StudioDocumentsPage({
           <div className="mb-4">
             <SectionTitle
               title="문서 서식"
-              description="서식을 등록한 뒤 후원 항목 관리에서 [문서] 상품을 만들고 이 서식을 연결하세요."
+              description="기관 서식을 등록한 뒤 전자문서 센터에서 수신인을 지정해 작성 요청 링크를 발급하세요."
             />
           </div>
 
           {templates.length === 0 ? (
             <EmptyState
               title="등록된 서식이 없습니다"
-              description="약정서·주문서 같은 서식을 먼저 등록해야 문서 상품을 만들 수 있습니다."
+              description="후원약정서·자원봉사 신청서 등 필요한 기관 서식을 먼저 등록해 주세요."
               action={
                 <LinkButton href="/studio/documents/new" variant="primary">
                   <Plus size={15} strokeWidth={1.6} />
@@ -186,13 +186,13 @@ export default async function StudioDocumentsPage({
                           ) : null}
 
                           <p className="mt-0.5 text-[11.5px] text-ink-400">
-                            입력 항목 {fields.length}개 · 연결된 상품 {t._count.products}개 · 제출{' '}
+                            입력 항목 {fields.length}개 · 작성 요청용 기관 서식 · 제출{' '}
                             {formatNumber(t._count.submissions)}건 · 등록 {formatKst(t.createdAt, false)}
                           </p>
 
                           {t._count.products === 0 ? (
                             <p className="mt-1 text-[11.5px] font-bold text-warning-500">
-                              연결된 상품이 없어 아직 아무도 이 서식을 받지 않습니다.
+                              전자문서 센터에서 수신인에게 작성 요청을 보낼 수 있습니다.
                             </p>
                           ) : null}
                         </div>

@@ -7,6 +7,7 @@ import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cx } from '@/components/ui';
 
 const slides = [
+ { image: '/assets/givesign/presets/banner-2.webp', mascotOverlay: false, eyebrow: 'GIVESIGN DOCUMENTS · 기관 전자문서', title: '후원약정부터 봉사 신청까지,\n종이 대신 간편한 전자문서', description: '기관 서식 작성·서명 요청·제출 확인·보관까지. 업무량에 맞는 충전형·정액형으로 이용하세요.', href: '/electronic-documents', cta: '기관 전자문서 알아보기' },
  { image: '/assets/givesign/hero.png', mascotOverlay: false, eyebrow: 'GIVESIGN · 함께 만드는 내일', title: '문자 한 통에 담긴 마음,\n이웃의 희망이 됩니다', description: '사회복지기관 전용 MO 번호로 시작하는 문자후원. 작은 나눔이 더 따뜻한 일상을 만듭니다.', href: '/how-it-works', cta: '문자후원 알아보기' },
  { image: '/assets/givesign/banner.png', mascotOverlay: false, eyebrow: '함께 나누는 일상', title: '우리 기관의 이야기를\n후원자와 나누세요', description: '기관 후원페이지와 캠페인을 만들고, 후원 내역과 정산을 한곳에서 관리하세요.', href: '/business', cta: '기관 도입 안내' },
 ];

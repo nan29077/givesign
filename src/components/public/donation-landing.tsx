@@ -17,7 +17,9 @@ import { normalizeMerchantCode } from '@/lib/id';
 import { formatNumber, formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
 import { isLocal } from '@/lib/env';
-import { Logo } from '@/components/brand/logo';
+
+import { PublicMarginMascots } from '@/components/brand/mascot-decorations';
+import { formatMoNumber } from '@/lib/mo-number';
 import { ProgressBar } from '@/components/public/progress-bar';
 import { ProfileAvatar } from '@/components/profile/generated-avatar';
 
@@ -29,14 +31,7 @@ import { ProfileAvatar } from '@/components/profile/generated-avatar';
  * 후원자 전화번호 원문은 어떤 경우에도 내보내지 않는다.
  */
 
-function formatMo(n: string) {
-  const d = n.replace(/\D/g, '');
-  if (/^1[5-8]\d{6}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4)}`;
-  if (/^1[5-8]\d{10}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4, 8)}-${d.slice(8)}`;
-  if (/^050\d{8}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4, 7)}-${d.slice(7)}`;
-  if (/^050\d{7}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4, 7)}-${d.slice(7)}`;
-  return n;
-}
+
 
 export async function DonationLanding({ code, campaignId }: { code: string; campaignId?: string }) {
   const org = await prisma.merchantProfile.findFirst({
@@ -102,17 +97,17 @@ function Landing({
   const closedCampaigns = campaigns.filter((c) => c.status === 'CLOSED');
 
   return (
-    <main className="min-h-screen bg-[#f6f5ef] pb-24" style={{ ['--org' as string]: color }}>
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-5 py-5">
-        <Link href="/" aria-label="기브싸인 홈"><Logo compact /></Link>
-        <nav className="flex items-center gap-4 text-[13px] font-bold text-ink-600">
+    <main className="donation-canvas relative isolate min-h-screen pb-24" style={{ ['--org' as string]: color }}>
+      <PublicMarginMascots src={page.backgroundUrl} /><div className="donation-app"><header className="flex items-center justify-between border-b border-stone-200 px-6 py-5">
+        <Link href={`/donate/${org.code}`} aria-label={`${org.displayName} 후원 홈`} className="min-w-0 flex-1 pr-4">{page.logoUrl ? <Image unoptimized src={page.logoUrl} width={220} height={64} alt={`${org.displayName} 로고`} className="h-12 w-auto max-w-full object-contain object-left" priority /> : <span className="block break-words text-lg font-black leading-snug text-ink-900">{org.displayName}</span>}</Link>
+        <nav className="flex shrink-0 items-center gap-4 text-[13px] font-bold text-ink-600">
           <Link href="/how-it-works">이용 안내</Link>
           <Link href="/my">마이페이지</Link>
         </nav>
       </header>
 
       {preview ? (
-        <p className="mx-auto mb-3 max-w-5xl rounded-xl border border-warning-500/30 bg-warning-50 px-5 py-2.5 text-[13px] text-ink-800">
+        <p className="mx-auto mb-3 max-w-[720px] rounded-xl border border-warning-500/30 bg-warning-50 px-5 py-2.5 text-[13px] text-ink-800">
           담당자 미리보기 · 후원페이지 {page.published ? '공개' : '비공개'}
           {campaign ? ` · 캠페인 ${campaignStatusLabel[campaign.status].text}` : ''}
           {' · '}<Link href="/studio/donation-page" className="font-bold underline">페이지 설정</Link>
@@ -122,31 +117,28 @@ function Landing({
         <p className="mx-auto mb-3 max-w-5xl px-5 text-[12px] text-ink-400">로컬 테스트 환경입니다. 표시된 MO 번호와 결제 흐름은 검수용이며 실제 후원 결제가 아닙니다.</p>
       ) : null}
 
-      <div className="mx-auto max-w-5xl overflow-hidden bg-white shadow-[0_24px_60px_rgba(23,22,26,0.08)] sm:rounded-[28px]">
+      <div className="mx-auto max-w-5xl overflow-hidden bg-white">
         {/* 히어로 */}
-        <div className="relative">
-          <Image unoptimized width={1600} height={800} src={hero} alt="" className="aspect-[16/8] w-full object-cover sm:aspect-[16/6]" priority />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+        <div className="donation-hero relative mx-4 mt-5 overflow-hidden rounded-[30px] sm:mx-8">
+          <Image unoptimized width={1600} height={800} src={hero} alt="" className="aspect-[4/3] w-full object-cover sm:aspect-[16/9]" priority />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(27,104,69,.9),rgba(27,104,69,.45)_52%,rgba(27,104,69,.08))]" />
           <div className="absolute bottom-0 left-0 right-0 p-6 text-white sm:p-10">
-            <div className="flex items-center gap-3">
-              {page.logoUrl ? (
-                <Image unoptimized width={96} height={96} src={page.logoUrl} alt="" className="h-12 w-12 rounded-full bg-white object-contain p-1" />
-              ) : (
-                <ProfileAvatar seed={org.code} name={org.displayName} imageUrl={org.avatarUrl} className="h-12 w-12 ring-2 ring-white/70" />
-              )}
-              <div>
-                <p className="text-[14px] font-extrabold">{org.displayName}</p>
-                {doneeVerified(org) ? (
-                  <p className="flex items-center gap-1 text-[11.5px] opacity-90"><BadgeCheck size={13} strokeWidth={2} /> 기부금영수증 발급 가능 (공익법인)</p>
-                ) : null}
-              </div>
-            </div>
-            <h1 className="mt-4 max-w-3xl text-[28px] font-black leading-tight tracking-[-0.03em] sm:text-[40px]">{campaign?.title ?? page.title}</h1>
+            <p className="inline-block rounded-full bg-white/20 px-4 py-2 text-xs font-bold backdrop-blur">함께 만드는 따뜻한 변화</p>
+            <h1 className="mt-4 max-w-3xl text-[24px] font-black leading-snug tracking-[-0.03em] sm:text-[30px]">{campaign?.title ?? page.title}</h1>
             <p className="mt-2 max-w-2xl text-[15px] leading-relaxed opacity-95 sm:text-[17px]">{campaign?.summary ?? page.subtitle}</p>
           </div>
         </div>
 
-        <div className="grid gap-8 p-6 sm:p-10 lg:grid-cols-[1fr_360px]">
+        <section className="donation-profile mx-6 mt-8 border-b border-stone-100 bg-white pb-8 pt-2 text-center sm:mx-8">
+          {page.logoUrl ? <Image unoptimized src={page.logoUrl} width={96} height={96} alt="기관 로고" className="mx-auto h-20 w-20 rounded-[24px] border-4 border-white bg-white object-contain shadow-lg" /> : <ProfileAvatar seed={org.code} name={org.displayName} imageUrl={org.avatarUrl} className="mx-auto h-20 w-20 rounded-[24px]" />}
+          <h2 className="mt-5 text-[23px] font-black text-ink-900">{org.displayName}</h2>
+          {doneeVerified(org) && <p className="mt-2 flex items-center justify-center gap-1 text-xs font-bold" style={{color}}><BadgeCheck size={14} /> 기부금영수증 발급 가능</p>}
+          {!campaign && page.showProgress && <div className="mt-6 grid grid-cols-3 gap-2"><Stat icon={<HeartHandshake size={16} />} label="누적 모금액" value={formatWon(summary.totalRaised)} /><Stat icon={<CalendarClock size={16} />} label="이번 달" value={formatWon(summary.monthRaised)} /><Stat icon={<Users size={16} />} label="후원 참여자" value={formatNumber(summary.totalDonors)+'명'} /></div>}
+          <p className="mt-5 rounded-2xl bg-[#eef6ef] px-4 py-3 text-sm leading-6" style={{color}}>여러분의 후원은 {org.displayName}의 이웃들에게 전달됩니다.</p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">{smsHref && <a href={smsHref} className="flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-bold text-white" style={{background:color}}><MessageSquareText size={17} /> 문자후원</a>}<Link href={webHref} className="flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-bold text-white" style={{background:color}}><Phone size={17} /> 웹 후원</Link><Link href={recurringHref} className="flex h-12 items-center justify-center gap-2 rounded-2xl text-sm font-bold text-white" style={{background:color}}><Repeat size={17} /> 정기후원</Link></div>
+          {route && <p className="mt-4 font-mono text-base font-extrabold" style={{color}}>{formatMoNumber(route.phoneNumber)}</p>}
+        </section>
+        <div className="donation-body flex flex-col gap-8 p-6 sm:p-8">
           {/* 본문 */}
           <div className="min-w-0 space-y-10">
             {campaign ? (
@@ -158,12 +150,6 @@ function Landing({
                   <div><dt className="text-ink-400">모금 기간</dt><dd className="font-extrabold text-ink-900">{campaign.startsOn.toISOString().slice(5, 10)} ~ {campaign.endsOn.toISOString().slice(5, 10)}</dd></div>
                   <div><dt className="text-ink-400">상태</dt><dd className="font-extrabold text-ink-900">{campaign.open ? `${daysLeft(campaign.endsOn)}일 남음` : campaignStatusLabel[campaign.status].text}</dd></div>
                 </dl>
-              </section>
-            ) : page.showProgress ? (
-              <section className="grid grid-cols-3 gap-3">
-                <Stat icon={<HeartHandshake size={16} strokeWidth={1.7} />} label="누적 후원" value={formatWon(summary.totalRaised)} />
-                <Stat icon={<Users size={16} strokeWidth={1.7} />} label="함께한 후원자" value={`${formatNumber(summary.totalDonors)}명`} />
-                <Stat icon={<Repeat size={16} strokeWidth={1.7} />} label="정기후원" value={`${formatNumber(summary.recurringActive)}명`} />
               </section>
             ) : null}
 
@@ -182,7 +168,7 @@ function Landing({
             ) : null}
 
             {!campaign && page.showCampaigns && (openCampaigns.length > 0 || closedCampaigns.length > 0) ? (
-              <section>
+              <section id="donation-campaigns">
                 <h2 className="text-[20px] font-black tracking-[-0.02em] text-ink-900">진행 중인 캠페인</h2>
                 {openCampaigns.length === 0 ? <p className="mt-3 text-ink-500">새로운 캠페인을 준비하고 있습니다.</p> : null}
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -217,7 +203,7 @@ function Landing({
             {donors.length > 0 ? (
               <section>
                 <h2 className="text-[20px] font-black tracking-[-0.02em] text-ink-900">최근 함께한 분들</h2>
-                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+                <ul className="mt-4 grid gap-3 sm:grid-cols-3">
                   {donors.map((d, i) => (
                     <li key={i} className="flex items-start justify-between gap-3 rounded-xl bg-ink-50 px-4 py-3">
                       <div className="min-w-0">
@@ -261,8 +247,8 @@ function Landing({
           </div>
 
           {/* 참여 카드 (sticky) */}
-          <aside className="lg:sticky lg:top-6 lg:self-start">
-            <div className="rounded-[22px] border border-ink-100 bg-white p-5 shadow-[0_16px_40px_rgba(23,22,26,0.08)]">
+          <aside id="donation-participation" className="w-full">
+            <div className="rounded-2xl border border-stone-200 bg-[#fafbf8] p-5">
               <p className="text-[12px] font-bold text-ink-400">{campaign ? '이 캠페인에 후원하기' : '후원 참여하기'}</p>
               {campaign && !campaign.open ? (
                 <p className="mt-3 rounded-xl bg-ink-50 p-3 text-[13px] text-ink-600">
@@ -291,7 +277,7 @@ function Landing({
                   <p className="font-extrabold text-ink-900">문자 후원 방법</p>
                   <ol className="mt-2 list-decimal space-y-1 pl-4">
                     <li>
-                      <span className="font-mono font-extrabold" style={{ color }}>{formatMo(route.phoneNumber)}</span> 로{' '}
+                      <span className="font-mono font-extrabold" style={{ color }}>{formatMoNumber(route.phoneNumber)}</span> 로{' '}
                       {keyword || prefix ? <>문자 맨 앞에 <span className="font-mono font-extrabold">{`${prefix}${keyword ?? ''}`.trim()}</span> 을 적고 </> : null}
                       응원 메시지를 보냅니다.
                     </li>
@@ -316,9 +302,14 @@ function Landing({
         </div>
       </div>
 
-      <footer className="mx-auto mt-10 max-w-5xl px-5 text-center text-[12px] text-ink-400">
-        마음을 잇는 문자후원, 기브싸인 · <Link href="/terms" className="underline">이용약관</Link> · <Link href="/privacy" className="underline">개인정보처리방침</Link>
-      </footer>
+      <footer className="donation-footer">
+        <p className="text-sm font-bold text-[#07513d]">{org.displayName}</p>
+        <nav aria-label="법적 안내" className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2">
+          <Link href="/terms">이용약관</Link><Link href="/privacy" className="font-bold text-ink-700">개인정보처리방침</Link><Link href="/terms/e-finance">전자금융거래약관</Link><Link href="/support">고객센터</Link>
+        </nav>
+        <p className="mt-5 text-[11px] text-ink-400">후원과 이웃을 잇는 기브싸인 · GiveSign</p>
+      </footer></div>
+      <nav className="donation-rail" aria-label="기관 후원 메뉴"><ProfileAvatar seed={org.code} name={org.displayName} imageUrl={page.logoUrl || org.avatarUrl} className="mx-auto h-16 w-16 rounded-[20px]" /><p className="mt-3 whitespace-normal text-center text-xs font-black leading-5 [overflow-wrap:anywhere]">{org.displayName}</p><div className="my-5 h-px bg-ink-100" /><Link href={`/donate/${org.code}`} className="donation-rail-link"><HeartHandshake size={21} />기관 홈</Link><a href="#donation-campaigns" className="donation-rail-link"><MessageSquareText size={21} />모금 캠페인</a><Link href="/my" className="donation-rail-link"><Users size={21} />마이페이지</Link><Link href="/login" className="donation-rail-login">로그인</Link></nav>
     </main>
   );
 }

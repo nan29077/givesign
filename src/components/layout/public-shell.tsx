@@ -5,6 +5,7 @@ import { INQUIRY_GUEST_COOKIE } from '@/server/services/inquiry';
 import { PublicShellClient, type ShellViewer } from './public-shell-client';
 import { SupportWidget } from '@/components/public/support-widget';
 import { isLegacyDonationContent } from '@/lib/public-content';
+import { getMainVisuals } from '@/server/services/visual-settings';
 
 /**
  * 공개 영역 레이아웃 (서버 래퍼).
@@ -20,6 +21,7 @@ export async function PublicShell({
   aside?: React.ReactNode;
 }) {
   const user = await getSessionUser().catch(() => null);
+  const mainVisual = await getMainVisuals();
 
   // 사회복지기관은 프로필 캐릭터(아바타)를 우측 메뉴 프로필에도 그대로 보여준다.
   const merchantAvatar =
@@ -61,7 +63,7 @@ export async function PublicShell({
 
   return (
     <>
-      <PublicShellClient aside={aside} viewer={viewer}>
+      <PublicShellClient aside={aside} viewer={viewer} marginUrl={mainVisual.activeUrl}>
         {children}
       </PublicShellClient>
       <SupportWidget faqs={faqs} loggedIn={Boolean(user)} hasThread={hasThread} />

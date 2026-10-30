@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/server/db';
 import { writeAudit } from '@/server/auth';
 import { newId } from '@/lib/id';
+import { isValidMoNumber, normalizeMoNumber } from '@/lib/mo-number';
 import { requestRefund, approveRefund, rejectRefund, reopenRefund } from '@/server/services/refund';
 import { reconcileUnknownPayment } from '@/server/services/payment-reconcile';
 import { isValidKeyword, normalizeKeyword } from '@/server/services/content-filter';
@@ -16,17 +17,15 @@ import { run, text, optText, money, enumValue, requiredId, assertMoneyAdmin } fr
 
 // =========================================================== MO 번호
 
-// MO 수신번호는 050(0505/0507 등) 안심번호 체계를 사용한다.
-// 사회복지기관마다 고유 번호를 부여하므로 형식을 강제해 오등록을 막는다.
-const PHONE_RE = /^050[0-9]{7,10}$/;
+// 새 MO 번호는 1588-1234-1234 형식이며, 라우팅 키는 하이픈 없이 저장한다.
 
 export async function createMoNumber(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   return run(async (admin) => {
     // MO 수신번호는 어느 사회복지기관이 결제를 받을지 정하는 라우팅 설정이다.
     // 상담 등급이 바꿀 수 있으면 자기 사회복지기관에 번호를 붙이거나 정상 사회복지기관 번호를 회수할 수 있다.
     assertMoneyAdmin(admin, 'MO 번호 관리는 운영/재무 권한에서만 가능합니다.');
-    const phoneNumber = text(fd, 'phoneNumber').replace(/[^0-9]/g, '');
-    if (!PHONE_RE.test(phoneNumber)) throw new Error('수신번호는 050 으로 시작하는 숫자 10~13자리로 입력해 주세요. (예: 05051001001)');
+    const phoneNumber = normalizeMoNumber(text(fd, 'phoneNumber'));
+    if (!isValidMoNumber(phoneNumber)) throw new Error('수신번호는 1588-1234-1234 형식의 12자리 번호로 입력해 주세요.');
 
     const mode = enumValue(fd, 'mode', ['DEDICATED', 'SHARED_PREFIX'] as const, '수신 모드');
     const rawKeyword = optText(fd, 'keyword');

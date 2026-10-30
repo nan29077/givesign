@@ -9,6 +9,8 @@ import {
 import { newObjectName, putObject } from '@/server/uploads';
 import type { DocumentSubmissionStatus, DocumentTemplateType } from '@/generated/prisma/enums';
 import type { Tone } from '@/lib/labels';
+import { createHash } from 'node:crypto';
+import type { DocumentTemplate } from '@/generated/prisma/client';
 
 /**
  * 문서 상품 (약정서 · 주문서 · 계약서).
@@ -201,6 +203,21 @@ function f(
  * 그래서 화면에도 그대로 쓰지 말고 사회복지기관 사정에 맞게 손보라고 안내한다.
  */
 export const DOCUMENT_PRESETS: DocumentPreset[] = [
+  {
+    key: 'VOLUNTEER_APPLICATION', name: '자원봉사 신청서', description: '희망 활동·일정·연락처와 참여 동의를 받는 기관용 서식',
+    body: '기관의 자원봉사 활동에 참여를 신청합니다. 활동 일정과 장소, 역할은 담당자와 확인하며 안전수칙과 개인정보 보호 지침을 준수합니다. 기관은 아래 신청 정보를 활동 안내와 참여 관리 목적으로 사용합니다. 실제 수집 항목과 보유 기간은 기관의 운영 기준에 맞게 기재해 주세요.',
+    fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('activity', '희망 활동 분야', 'TEXT'), f('date', '희망 활동일', 'DATE'), f('experience', '경험과 요청 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: true,
+  },
+  {
+    key: 'GOODS_DONATION', name: '현물 기부 신청서', description: '기부 물품·수량·전달 일정을 미리 확인하는 서식',
+    body: '아래 물품의 기부를 신청합니다. 기관은 물품 상태와 수용 가능 여부를 확인하여 접수 결과와 전달 방법을 안내합니다. 이 신청서는 기부금영수증이 아니며 영수증 발급 가능 여부와 평가 금액은 기관의 적격 확인 후 별도로 안내합니다.',
+    fields: [f('name', '기부자 성명 또는 단체명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('goods', '기부 물품과 상태', 'LONGTEXT'), f('quantity', '수량', 'NUMBER'), f('date', '희망 전달일', 'DATE', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: true,
+  },
+  {
+    key: 'PROGRAM_APPLICATION', name: '복지 프로그램 참여 신청서', description: '기관 프로그램의 참여 희망 내용과 연락처를 접수합니다',
+    body: '기관에서 운영하는 아래 프로그램에 참여를 신청합니다. 참여 가능 여부와 준비 사항은 담당자가 별도로 안내합니다. 주민등록번호와 건강정보 등 민감한 정보는 이 일반 신청서에 입력하지 마세요.',
+    fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('program', '신청 프로그램명', 'TEXT'), f('date', '희망 참여일', 'DATE', false), f('note', '문의 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: false,
+  },
   {
     key: 'SUPPORT_AGREEMENT',
     name: '후원약정서',
@@ -477,6 +494,18 @@ export interface DocumentContext {
   /** 제출한 뒤 다시 열었을 때 보여 줄 값. 제출 전에는 빈 객체다. */
   values: Record<string, string>;
   signatureUrl: string | null;
+  documentHash?: string;
+}
+
+/** Standalone requests retain the exact template sent, even after template edits. */
+export async function documentTemplateSnapshot(submissionId: string, fallback: DocumentTemplate) {
+  const saved = await prisma.systemSetting.findUnique({ where: { key: `givesign:edoc:snapshot:${submissionId}` } });
+  if (!saved) return { template: fallback, sha256: undefined };
+  const value = saved.value as { encrypted: string; sha256: string };
+  const raw = decrypt(value.encrypted);
+  if (createHash('sha256').update(raw).digest('hex') !== value.sha256) throw new Error('문서 원본 확인에 실패했습니다.');
+  const frozen = JSON.parse(raw) as DocumentTemplate;
+  return { template: { ...fallback, ...frozen }, sha256: value.sha256 };
 }
 
 export async function loadDocumentContext(
@@ -498,21 +527,24 @@ export async function loadDocumentContext(
     return { ok: false, reason: '작성 기간이 지났습니다. 사회복지기관에 문의해 주세요.' };
   }
 
-  const fields = parseDocumentFields(row.template.fields);
+  const snapshot = await documentTemplateSnapshot(row.id, row.template);
+  const template = snapshot.template;
+  const fields = parseDocumentFields(template.fields);
 
   return {
     ok: true,
     ctx: {
       submissionId: row.id,
       merchantName: row.merchant.displayName,
-      templateName: row.template.name,
-      templateType: row.template.templateType,
-      description: row.template.description,
-      body: row.template.body,
-      fileUrl: row.template.fileUrl,
-      fileName: row.template.fileName,
+      templateName: template.name,
+      templateType: template.templateType,
+      description: template.description,
+      body: template.body,
+      fileUrl: template.fileUrl,
+      fileName: template.fileName,
       fields,
-      requireSignature: row.template.requireSignature,
+      requireSignature: template.requireSignature,
+      documentHash: snapshot.sha256,
       status: row.status,
       expiresAt: row.expiresAt,
       submittedAt: row.submittedAt,

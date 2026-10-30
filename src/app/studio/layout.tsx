@@ -58,6 +58,14 @@ function buildGroups(pending: {
       ],
     },
     {
+      title: '전자문서',
+      items: [
+        { href: '/studio/e-documents', label: '전자문서 센터', icon: 'documents', badge: pending.documents },
+        { href: '/studio/documents', label: '서식·제출 문서', icon: 'documents' },
+        { href: '/studio/document-billing', label: '충전·정액 이용', icon: 'settlement' },
+      ],
+    },
+    {
       title: '정산·영수증',
       items: [
         { href: '/studio/settlement', label: '정산 관리', icon: 'settlement' },

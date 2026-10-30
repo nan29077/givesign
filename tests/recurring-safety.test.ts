@@ -18,6 +18,11 @@ import { revokePaymentMethod } from '@/server/services/payer-registration';
  */
 
 let fx: Fixture;
+// PGlite's socket adapter multiplexes all clients onto one backend transaction.
+// Promise.all of independent interactive transactions cannot represent real
+// PostgreSQL isolation here and corrupts later wire responses. Keep this race
+// regression enabled on PostgreSQL; run the other safety cases on both engines.
+const singleBackend = process.env.PGLITE === '1' || (process.env.DATABASE_URL ?? '').includes(`:${process.env.PGLITE_PORT ?? '5463'}/`);
 const kst = (d = new Date()) => new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 10);
 const dueToday = (id: string) =>
   prisma.recurringDonation.update({ where: { id }, data: { nextChargeOn: new Date(`${kst()}T00:00:00Z`), cycleMonth: kst().slice(0, 7) } });
@@ -120,7 +125,7 @@ describe('정기후원 — 결과 미확인 (H-1)', () => {
 });
 
 describe('정기후원 — 약정 (H-2, H-5, M-4)', () => {
-  it('같은 기관 약정을 동시에 두 번 요청해도 한 건만 생긴다', async () => {
+  it.skipIf(singleBackend)('같은 기관 약정을 동시에 두 번 요청해도 한 건만 생긴다', async () => {
     const payer = await seedRegisteredPayer(fx.payerPhone);
     const req = () => createRecurringDonation({ payerId: payer.id, merchantId: fx.merchantId, amount: 10000n, dayOfMonth: 10 });
     const rs = await Promise.all([req(), req(), req()]);

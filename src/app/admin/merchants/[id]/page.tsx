@@ -1,4 +1,5 @@
 import { maskBusinessNo } from '@/components/admin/mask';
+import { formatMoNumber } from '@/lib/mo-number';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { PageHeader } from '@/components/layout/console-shell';
@@ -291,7 +292,7 @@ export default async function AdminMerchantDetailPage({ params }: { params: Prom
                   <tbody>
                     {merchant.moRoutes.map((m) => (
                       <tr key={m.id}>
-                        <Td className="font-mono text-[12px]">{m.phoneNumber}</Td>
+                        <Td className="font-mono text-[12px]">{formatMoNumber(m.phoneNumber)}</Td>
                         <Td>{m.keyword ?? '-'}</Td>
                         <Td>{m.mode === 'DEDICATED' ? '전용번호' : '대표번호 공유'}</Td>
                         <Td>

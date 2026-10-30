@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatMoNumber } from '@/lib/mo-number';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, CardTitle, EmptyState, Notice, SectionTitle, StatTile, Table, Td, Th } from '@/components/ui';
 import { AdminField, AdminInput, AdminSelect, FilterBar } from '@/components/admin/controls';
@@ -34,7 +35,7 @@ export default async function AdminMoNumbersPage({
 
   const where: Prisma.MerchantMoNumberWhereInput = {
     ...(status ? { status } : {}),
-    ...(q ? { OR: [{ phoneNumber: { contains: q } }, { keyword: { contains: q.toUpperCase() } }] } : {}),
+    ...(q ? { OR: [{ phoneNumber: { contains: q.replace(/[\s-]/g, '') } }, { keyword: { contains: q.toUpperCase() } }, { merchant: { displayName: { contains: q } } }] } : {}),
   };
 
   const [numbers, grouped, costSum, approvedMerchants] = await Promise.all([
@@ -91,8 +92,8 @@ export default async function AdminMoNumbersPage({
             사업자에게 발급받은 수신번호를 재고로 등록합니다. 대표번호 공유 모드는 키워드가 반드시 필요합니다.
           </p>
           <ActionForm disabled={!canEdit} action={createMoNumber} submitLabel="재고 등록">
-            <AdminField label="수신번호" hint="숫자만 입력 (예: 05051234567)">
-              <AdminInput name="phoneNumber" inputMode="numeric" placeholder="05051234567" required />
+            <AdminField label="수신번호" hint="1588-1234-1234 형식 (하이픈 없이 입력해도 됩니다)">
+              <AdminInput name="phoneNumber" inputMode="tel" placeholder="1588-1234-1234" maxLength={14} required />
             </AdminField>
             <AdminField label="키워드" hint="대표번호 공유 모드에서 문자 맨 앞에 붙는 식별 키워드">
               <AdminInput name="keyword" placeholder="GIVESIGN" />
@@ -121,7 +122,7 @@ export default async function AdminMoNumbersPage({
           <div className="mt-3">
             <FilterBar action="/admin/mo-numbers" resetHref="/admin/mo-numbers">
               <AdminField label="번호·키워드 검색" className="w-52">
-                <AdminInput name="q" defaultValue={q} placeholder="0505... 또는 GiveSign" />
+                <AdminInput name="q" defaultValue={q} placeholder="1588... 또는 기관명" />
               </AdminField>
               <AdminField label="상태" className="w-40">
                 <AdminSelect name="status" defaultValue={status ?? ''}>
@@ -160,7 +161,7 @@ export default async function AdminMoNumbersPage({
           <tbody>
             {numbers.map((n) => (
               <tr key={n.id}>
-                <Td className="font-mono text-[13px] font-semibold">{n.phoneNumber}</Td>
+                <Td className="font-mono text-[13px] font-semibold">{formatMoNumber(n.phoneNumber)}</Td>
                 <Td>{n.keyword ?? '-'}</Td>
                 <Td>{n.mode === 'DEDICATED' ? '전용번호' : '대표번호 공유'}</Td>
                 <Td>

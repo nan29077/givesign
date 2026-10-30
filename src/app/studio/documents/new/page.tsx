@@ -133,7 +133,7 @@ function PresetPicker() {
         </Notice>
       </div>
       <ul className="space-y-2.5">
-        {DOCUMENT_PRESETS.map((p) => (
+        {DOCUMENT_PRESETS.filter(p => ['SUPPORT_AGREEMENT', 'CONSENT_PRIVACY', 'VOLUNTEER_APPLICATION', 'GOODS_DONATION', 'PROGRAM_APPLICATION'].includes(p.key)).map((p) => (
           <li key={p.key}>
             <Link href={`/studio/documents/new?type=preset&preset=${p.key}`} className="block">
               <Card className="transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-[var(--shadow-lift)]">

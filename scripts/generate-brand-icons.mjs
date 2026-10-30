@@ -1,15 +1,15 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 
-const source = await readFile(new URL('../public/givesign-mark-v4.svg', import.meta.url));
+const source = await readFile(new URL('../public/givesign-mark-v5.svg', import.meta.url));
 
 async function transparentMark(size) {
   return sharp(source).resize(size, size, { fit: 'contain' }).png().toBuffer();
 }
 
 const icon512 = await transparentMark(512);
-await writeFile(new URL('../public/givesign-icon-v4.png', import.meta.url), icon512);
-await writeFile(new URL('../src/app/icon.png', import.meta.url), icon512);
+await writeFile(new URL('../public/givesign-icon-v5.png', import.meta.url), icon512);
+
 
 const appleMark = await sharp(source).resize(372, 372, { fit: 'contain' }).png().toBuffer();
 const appleIcon = await sharp({
@@ -18,7 +18,7 @@ const appleIcon = await sharp({
   .composite([{ input: appleMark, gravity: 'center' }])
   .png()
   .toBuffer();
-await writeFile(new URL('../public/apple-touch-icon-v4.png', import.meta.url), appleIcon);
+await writeFile(new URL('../public/apple-touch-icon-v5.png', import.meta.url), appleIcon);
 
 const sizes = [16, 32, 48, 64];
 const images = await Promise.all(sizes.map((size) => transparentMark(size)));
@@ -42,4 +42,4 @@ sizes.forEach((size, index) => {
   offset += images[index].length;
 });
 
-await writeFile(new URL('../src/app/favicon.ico', import.meta.url), Buffer.concat([header, ...images]));
+await writeFile(new URL('../public/favicon.ico', import.meta.url), Buffer.concat([header, ...images]));

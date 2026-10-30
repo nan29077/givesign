@@ -14,6 +14,7 @@ import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import {
   DOCUMENT_LINK_TTL_DAYS, documentStatusLabel, documentTemplateTypeLabel, parseDocumentFields,
+  documentTemplateSnapshot,
 } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
@@ -46,6 +47,8 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
     },
   });
   if (!row) notFound();
+  const snapshot = await documentTemplateSnapshot(row.id, row.template);
+  row.template = snapshot.template;
 
   const fields = parseDocumentFields(row.template.fields);
   const label = documentStatusLabel[row.status];
@@ -121,8 +124,7 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
             <Card>
               <CardTitle>문서 본문</CardTitle>
               <p className="mb-2 mt-0.5 text-[11.5px] leading-relaxed text-ink-400">
-                현재 저장된 서식 본문입니다. 서식을 고치면 이 내용도 바뀌므로, 제출 당시 본문이 필요하면 따로
-                보관해 두세요.
+                {snapshot.sha256 ? '작성 요청을 발급한 시점에 고정한 서식 본문입니다. 이후 서식 변경은 이 문서에 반영되지 않습니다.' : '이전 방식으로 발급한 문서의 현재 서식 본문입니다. 제출 당시 본문은 별도 보관 자료를 확인해 주세요.'}
               </p>
               <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl bg-ink-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink-700">
                 {row.template.body}
@@ -185,7 +187,7 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
           </Card>
 
           <Card>
-            <CardTitle>결제 정보</CardTitle>
+            <CardTitle>{row.charge ? '연결된 후원 정보' : '전자문서 이용 정보'}</CardTitle>
             {row.charge ? (
               <div className="mt-2">
                 <DataRow
@@ -204,7 +206,7 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
                 />
               </div>
             ) : (
-              <p className="mt-2 text-[12.5px] text-ink-400">연결된 결제 건이 없습니다.</p>
+              <div className="mt-2 text-[12.5px] leading-6 text-ink-500"><p>후원 결제와 별개로 생성한 기관 전자문서입니다.</p><Link href="/studio/document-billing" className="font-bold text-brand-700 underline">충전·정액 이용 내역 확인</Link>{snapshot.sha256 && <p className="mt-3 break-all font-mono text-[10px]">원본 SHA-256 · {snapshot.sha256}</p>}</div>
             )}
           </Card>
         </aside>

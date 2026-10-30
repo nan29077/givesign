@@ -44,3 +44,10 @@
 - 서버 실행 후 `node e2e/givesign.mjs` (Chrome 설치 필요)
 
 생성형 이미지 및 프롬프트는 `docs/GENERATED_ASSETS.md`에 기록했습니다.
+
+## 디자인·전자문서 추가 설정 (2026-10-30)
+
+기관 배너·여백: /studio/donation-page · 메인 디자인: /admin/appearance
+전자문서: /studio/e-documents · 기관 이용요금: /studio/document-billing
+관리자 전자문서 운영: /admin/e-documents · 안내 페이지: /electronic-documents
+상세 설명과 검증 결과: docs/UPGRADE_20261030.md

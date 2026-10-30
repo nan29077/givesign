@@ -302,16 +302,34 @@ a {
     display: block;
     overflow: hidden;
     pointer-events: none;
-    background: #203c32;
+    background: #f6f2e8;
   }
 
   .public-mascot-scene .public-margin-backdrop {
     opacity: 0.94;
+    object-position: center center;
   }
 
   .console-corner-mascot {
     display: block;
   }
+}
+
+/* Institution donation pages: centered paper surface and a separate right rail. */
+.donation-canvas { background: #f6f2e8; }
+.donation-app { position: relative; z-index: 2; width: 100%; max-width: 720px; margin: 0 auto; background: #ffffff; min-height: 100vh; }
+.donation-rail { display: none; }
+.donation-profile .grid > div { background: #f7f6ee; border: 0; padding: 16px 8px; }
+.donation-profile .grid > div:nth-child(2) { background: #f8f1e7; }
+.donation-profile .grid > div:nth-child(3) { background: #eef5ed; }
+.donation-profile .grid > div > p:first-child { justify-content: center; }
+.donation-profile .grid > div > p:last-child { font-size: clamp(14px, 2vw, 20px); }
+@media (min-width: 1180px) {
+  .donation-app { transform: translateX(-62px); margin-top: 24px; border-radius: 32px; overflow: hidden; box-shadow: 0 20px 60px #30412d16; }
+  .donation-rail { display: block; position: fixed; z-index: 5; top: 50%; transform: translateY(-50%); max-height: calc(100dvh - 32px); overflow-y: auto; left: calc(50% + 318px); width: 120px; padding: 20px 12px; border-radius: 30px; background: #fffdf9f5; box-shadow: 0 14px 40px #30412d12; }
+  .donation-rail-link { display: flex; flex-direction: column; align-items: center; gap: 8px; border-radius: 18px; padding: 16px 4px; font-size: 11px; color: #5e7567; }
+  .donation-rail-link:hover { background: #edf5ed; }
+  .donation-rail-login { display: block; margin-top: 14px; padding: 13px 0; background: var(--org); color: white; text-align: center; border-radius: 18px; font-size: 13px; font-weight: 800; }
 }
 
 @media (min-width: 1024px) {
@@ -532,3 +550,8 @@ a {
   50%      { opacity: 0.45; }
 }
 .animate-urgent { animation: givesign-urgent 900ms ease-in-out infinite; }
+
+
+.donation-footer { margin-top: 24px; border-top: 1px solid #e7ebe5; background: #f8faf7; padding: 32px 24px 36px; text-align: center; font-size: 12px; color: #748076; }
+.donation-footer a { padding: 4px 0; transition: color .15s; }
+.donation-footer a:hover { color: #07513d; text-decoration: underline; }

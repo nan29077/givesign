@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatMoNumber } from '@/lib/mo-number';
 import {
   CircleAlert,
   CircleCheck,
@@ -126,7 +127,7 @@ export default async function StudioDashboardPage() {
       label: 'MO 수신번호',
       ok: moAssigned,
       value: moNumber
-        ? `${moNumber.phoneNumber}${moNumber.keyword ? ` (${moNumber.keyword})` : ''} · ${moNumberStatusLabel[moNumber.status].text}`
+        ? `${formatMoNumber(moNumber.phoneNumber)}${moNumber.keyword ? ` (${moNumber.keyword})` : ''} · ${moNumberStatusLabel[moNumber.status].text}`
         : '배정된 번호 없음',
       href: '/studio/messages',
     },

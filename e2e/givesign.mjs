@@ -74,7 +74,7 @@ try {
   await page.waitForURL('**/campaigns/**', { timeout: 20_000 });
   assert.match(await bodyText(page), /도시락 재료와 전달 활동/);
   const sms = await page.locator('a[href^="sms:"]').first().getAttribute('href');
-  assert.match(sms ?? '', /^sms:0505/);
+  assert.match(sms ?? '', /^sms:1588/);
   assert.match(decodeURIComponent(sms ?? ''), new RegExp(campaignCode));
   await page.screenshot({ path: 'output/qa/campaign-desktop.png', fullPage: true });
 

@@ -67,7 +67,7 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 | 기관 정보 | `/studio/profile` | 기관 유형·고유번호·대표자·지정기부금단체·모집등록번호 |
 | 후원 설정 / 문자 관리 / 정산 관리 | 기존 유지 | |
 
-실물 상품·배송·문서 상품(`/studio/products` 의 PHYSICAL/DOCUMENT, `/studio/orders`, `/studio/documents`)은 **코드는 유지하되 메뉴와 공개 화면에서 숨긴다.** `FEATURE_GOODS=true` 환경변수로만 다시 노출한다. 꺼져 있으면 후원 항목 관리는 DIGITAL(후원 항목)만 다루고, 실물·문서 생성은 서버 액션에서도 거절하며, `/studio/orders`·`/studio/documents` 는 404 다. 후원 건의 `pointStatus` 는 `initialPointStatus()`(기본 `SKIPPED`)로 정한다 — 후원에는 기관이 따로 지급할 것이 없다. 메시지페이의 "포인트 지급" 상태 기계는 `FEATURE_GOODS` 를 켠 기관의 디지털 상품에만 산다.
+실물 상품·배송 상품(`/studio/products` 의 PHYSICAL/DOCUMENT, `/studio/orders`)은 **코드는 유지하되 메뉴와 공개 화면에서 숨긴다.** 전자문서 서식·제출 관리(`/studio/documents`)는 별도 기관 업무로 항상 제공한다. `FEATURE_GOODS=true` 환경변수로만 다시 노출한다. 꺼져 있으면 후원 항목 관리는 DIGITAL(후원 항목)만 다루고, 실물·문서 생성은 서버 액션에서도 거절하며, `/studio/orders`는 404 다. 후원 건의 `pointStatus` 는 `initialPointStatus()`(기본 `SKIPPED`)로 정한다 — 후원에는 기관이 따로 지급할 것이 없다. 메시지페이의 "포인트 지급" 상태 기계는 `FEATURE_GOODS` 를 켠 기관의 디지털 상품에만 산다.
 
 규칙:
 - **배송지·문서 원문(`*Enc`)은 목록에서 자동 복호화하지 않는다.** 열람할 때마다 감사로그를 남긴다. 영수증용 주민번호도 같은 기준이다(`RECEIPT_RESIDENT_NO_VIEW`).
@@ -140,3 +140,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## 2026-10-30 추가 서비스
+
+- 기관 배너·여백 프리셋 각 5종은 public/assets/givesign/presets/에 저장. 최초 기관별 무작위 배정을 SystemSetting에 저장하며 직접 선택·업로드가 우선한다.
+- 메인 여백 5종과 선택값은 /admin/appearance에서 최고관리자가 관리한다.
+- 신규 MO는 1588-1234-1234 형식. 저장 키는 숫자 12자리이며 과거 거래의 수신번호는 바꾸지 않는다.
+- 전자문서 센터 /studio/e-documents, 이용요금 /studio/document-billing, 운영 /admin/e-documents. 기존 결제 상품 없이 작성 요청을 만들 수 있다.
+- 전자문서 서식 스냅샷·개인정보는 암호화하고 요청 생성과 이용량 차감은 원자적으로 처리한다. 서비스 이용 잔액과 후원금은 별개다.
+- 충전·정액 신청은 입금·계약 확인 후 수동 승인. 실제 결제·공인인증·TSA 연동 완료를 꾸미지 않는다.
+- 상세 범위와 테스트 환경 제한: docs/UPGRADE_20261030.md.

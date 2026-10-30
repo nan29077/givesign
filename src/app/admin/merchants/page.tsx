@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatMoNumber } from '@/lib/mo-number';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, CardTitle, EmptyState, Notice, SectionTitle, StatTile, Table, Td, Th } from '@/components/ui';
 import { AdminField, AdminInput, AdminSelect, FilterBar, Pager } from '@/components/admin/controls';
@@ -78,8 +79,8 @@ function MerchantRows({
           <Td>
             {c.moRoutes.length > 0 ? (
               c.moRoutes.map((m) => (
-                <span key={`${m.phoneNumber}-${m.keyword ?? ''}`} className="block text-[12px]">
-                  {m.phoneNumber}
+                <span key={`${formatMoNumber(m.phoneNumber)}-${m.keyword ?? ''}`} className="block text-[12px]">
+                  {formatMoNumber(m.phoneNumber)}
                   {m.keyword ? ` (${m.keyword})` : ''}
                 </span>
               ))

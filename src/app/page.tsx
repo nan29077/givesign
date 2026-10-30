@@ -1,3 +1,4 @@
+import { EDocumentIntro } from '@/components/public/e-document-intro';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -20,5 +21,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ w
  <BannerStrip position="HOME_MIDDLE" className="mt-12" />
  <section className="mt-12 overflow-hidden rounded-3xl bg-white shadow-sm"><Image unoptimized width={1600} height={800} src="/assets/givesign/banner.png" alt="복지기관에서 도시락을 준비하는 봉사자들" className="aspect-[2/1] w-full object-cover" /><div className="p-6"><h2 className="text-2xl font-black">우리 기관의 이야기가<br />후원으로 이어지도록</h2><p className="mt-4 text-sm leading-7">대표 이미지와 기관 소개, 목표금액과 사용계획을 담은 캠페인으로 후원자를 만나세요.</p><Link href="/merchant-apply" className="mt-5 block font-bold text-brand-800">사회복지기관 도입 신청 →</Link></div></section>
  <section className="mt-12"><h2 className="text-2xl font-black">후원은 이렇게 시작합니다</h2><ol className="mt-6 space-y-4">{['기관 전용 MO 번호로 문자를 보냅니다.', '받은 링크에서 본인과 결제수단을 확인합니다.', '후원 대상과 금액을 확인한 뒤 승인합니다.', '처리 결과를 확인하고 따뜻한 마음을 전합니다.'].map((x, i) => <li key={x} className="flex gap-4 rounded-2xl border border-ink-100 bg-white p-5"><span className="font-bold text-brand-700">0{i + 1}</span><p className="text-sm leading-6">{x}</p></li>)}</ol><p className="mt-4 text-xs leading-6 text-ink-500">문자 발송만으로 후원이 완료되지는 않습니다. 안내된 승인 절차와 결제 결과에 따라 처리됩니다.</p></section>
- <Card className="mt-12 !bg-brand-50"><h2 className="text-2xl font-black">마음을 잇는 기브싸인</h2><p className="mt-3 text-sm leading-7">사회복지기관 전용 후원 운영 환경을 직접 확인해 보세요.</p><div className="mt-5 flex gap-3"><LinkButton href="/login">기관 로그인</LinkButton><LinkButton href="/business">도입 안내</LinkButton></div></Card></PublicShell>;
+ <EDocumentIntro /><Card className="mt-12 !bg-brand-50"><h2 className="text-2xl font-black">마음을 잇는 기브싸인</h2><p className="mt-3 text-sm leading-7">사회복지기관 전용 후원 운영 환경을 직접 확인해 보세요.</p><div className="mt-5 flex gap-3"><LinkButton href="/login">기관 로그인</LinkButton><LinkButton href="/business">도입 안내</LinkButton></div></Card></PublicShell>;
 }

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { formatMoNumber } from '@/lib/mo-number';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, CardTitle, EmptyState, Notice, SectionTitle, Table, Td, Th } from '@/components/ui';
 import { AdminField, AdminInput, AdminSelect, AdminTextarea } from '@/components/admin/controls';
@@ -110,7 +111,7 @@ export default async function AdminSimulatorPage() {
                 {numbers.length === 0 ? <option value="">배정된 번호 없음</option> : null}
                 {numbers.map((n) => (
                   <option key={n.id} value={n.phoneNumber}>
-                    {n.phoneNumber}
+                    {formatMoNumber(n.phoneNumber)}
                     {n.keyword ? ` (${n.keyword})` : ''} · {n.merchant?.displayName ?? '미배정'}
                   </option>
                 ))}
@@ -153,7 +154,7 @@ export default async function AdminSimulatorPage() {
                 <tbody>
                   {numbers.map((n) => (
                     <tr key={n.id}>
-                      <Td className="font-mono text-[12px]">{n.phoneNumber}</Td>
+                      <Td className="font-mono text-[12px]">{formatMoNumber(n.phoneNumber)}</Td>
                       <Td>{n.keyword ?? '-'}</Td>
                       <Td>{n.mode === 'DEDICATED' ? '전용번호' : '대표번호 공유'}</Td>
                       <Td>

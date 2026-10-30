@@ -127,6 +127,7 @@ export async function saveDonationPageAction(_prev: StudioActionState, f: FormDa
       subtitle: text(f, 'subtitle'),
       intro: text(f, 'intro'),
       heroUrl: text(f, 'heroUrl'),
+      backgroundUrl: text(f, 'backgroundUrl'),
       logoUrl: text(f, 'logoUrl'),
       color: text(f, 'color') || '#28634e',
       thanks: text(f, 'thanks'),

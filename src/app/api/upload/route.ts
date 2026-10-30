@@ -1,4 +1,4 @@
-import { requireMerchant } from '@/server/auth';
+import { getSessionUser, requireMerchant } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
 import { putObject, newObjectName } from '@/server/uploads';
@@ -45,12 +45,14 @@ export async function POST(req: Request) {
   }
 
   const merchant = await requireMerchant().catch(() => null);
-  if (!merchant) {
-    return Response.json({ ok: false, message: '사회복지기관 로그인이 필요합니다.' }, { status: 401 });
+  const admin = !merchant ? await getSessionUser().catch(() => null) : null;
+  const superAdmin = admin?.role === 'ADMIN' && admin.adminPermission === 'SUPER_ADMIN';
+  if (!merchant && !superAdmin) {
+    return Response.json({ ok: false, message: '기관 담당자 또는 최고관리자 로그인이 필요합니다.' }, { status: 401 });
   }
 
   // 5MB 파일을 횟수 제한 없이 올릴 수 있으면 저장소·비용이 소진된다.
-  const byMerchant = await consumeRateLimit('upload', merchant.merchantId, 60, 600);
+  const byMerchant = await consumeRateLimit('upload', merchant?.merchantId ?? `admin:${admin!.id}`, 60, 600);
   if (!byMerchant.ok) {
     return Response.json(
       { ok: false, message: '이미지 업로드가 너무 잦습니다. 잠시 후 다시 시도해 주세요.' },

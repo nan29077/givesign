@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { formatMoNumber } from '@/lib/mo-number';
 import Link from 'next/link';
 import { featureGoodsEnabled } from '@/lib/env';
 import { ExternalLink, Info } from 'lucide-react';
@@ -930,7 +931,7 @@ export default async function StudioSettingsPage({
                 <div className="space-y-3">
                   {moNumbers.map((mo) => (
                     <div key={mo.id} className="rounded-xl border border-ink-100 px-3 py-2">
-                      <DataRow label="수신번호" value={<span className="font-mono">{mo.phoneNumber}</span>} />
+                      <DataRow label="수신번호" value={<span className="font-mono">{formatMoNumber(mo.phoneNumber)}</span>} />
                       <DataRow
                         label="수신 방식"
                         value={mo.mode === 'DEDICATED' ? '전용번호 (문자 내용만 전송)' : '대표번호 + 키워드'}
@@ -945,8 +946,8 @@ export default async function StudioSettingsPage({
                         <p className="mb-1 text-[11.5px] font-bold text-ink-400">후원자 안내 문구</p>
                         <p className="rounded-lg bg-ink-50 px-3 py-2 text-[12.5px] text-ink-700">
                           {mo.keyword
-                            ? `${mo.phoneNumber} 로 "${mo.keyword}" 를 문자로 보내주세요.`
-                            : `${mo.phoneNumber} 로 문자를 보내주세요.`}
+                            ? `${formatMoNumber(mo.phoneNumber)} 로 "${mo.keyword}" 를 문자로 보내주세요.`
+                            : `${formatMoNumber(mo.phoneNumber)} 로 문자를 보내주세요.`}
                         </p>
                       </div>
                     </div>

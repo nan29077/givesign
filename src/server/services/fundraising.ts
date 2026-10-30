@@ -13,6 +13,8 @@ import {
 } from '@/lib/fundraising';
 import type { Campaign, MerchantDonationPage } from '@/generated/prisma/client';
 import type { CampaignStatus, Prisma } from '@/generated/prisma/client';
+import { getOrgVisuals } from './visual-settings';
+import { orgVisualKey } from '@/lib/visual-presets';
 
 /**
  * 후원페이지·캠페인·모금 현황.
@@ -25,17 +27,19 @@ import type { CampaignStatus, Prisma } from '@/generated/prisma/client';
 // 후원페이지
 // ---------------------------------------------------------------------------
 
-export type DonationPage = Omit<MerchantDonationPage, 'updatedAt'>;
+export type DonationPage = Omit<MerchantDonationPage, 'updatedAt'> & { backgroundUrl: string };
 
 export async function getDonationPage(merchantId: string): Promise<DonationPage> {
   const row = await prisma.merchantDonationPage.findUnique({ where: { merchantId } });
-  if (row) return row;
+  const visuals = await getOrgVisuals(merchantId);
+  if (row) return { ...row, heroUrl: !row.heroUrl || row.heroUrl === '/assets/givesign/hero.png' ? visuals.defaultBanner : row.heroUrl, backgroundUrl: visuals.resolvedBackground };
   return {
     merchantId,
     title: defaultDonationPage.title,
     subtitle: defaultDonationPage.subtitle,
     intro: defaultDonationPage.intro,
-    heroUrl: defaultDonationPage.heroUrl,
+    heroUrl: visuals.defaultBanner,
+    backgroundUrl: visuals.resolvedBackground,
     logoUrl: null,
     color: defaultDonationPage.color,
     thanks: defaultDonationPage.thanks,
@@ -48,6 +52,7 @@ export async function getDonationPage(merchantId: string): Promise<DonationPage>
 }
 
 export async function saveDonationPage(merchantId: string, input: DonationPageInput) {
+  const visuals = await getOrgVisuals(merchantId);
   const data = {
     title: input.title,
     subtitle: input.subtitle || null,
@@ -62,11 +67,12 @@ export async function saveDonationPage(merchantId: string, input: DonationPageIn
     showProgress: input.showProgress,
     showRecentDonors: input.showRecentDonors,
   };
-  return prisma.merchantDonationPage.upsert({
+  const [page] = await prisma.$transaction([prisma.merchantDonationPage.upsert({
     where: { merchantId },
     create: { merchantId, ...data },
     update: data,
-  });
+  }), prisma.systemSetting.update({ where: { key: orgVisualKey(merchantId) }, data: { value: { bannerIndex: visuals.bannerIndex, marginIndex: visuals.marginIndex, backgroundUrl: input.backgroundUrl } } })]);
+  return page;
 }
 
 // ---------------------------------------------------------------------------

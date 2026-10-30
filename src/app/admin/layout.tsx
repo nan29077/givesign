@@ -57,6 +57,8 @@ const groups: NavGroup[] = [
     items: [
       { href: '/admin/fundraising', label: '모금 현황', icon: 'campaigns' },
       { href: '/admin/banners', label: '배너', icon: 'banners' },
+      { href: '/admin/appearance', label: '메인 화면 디자인', icon: 'banners' },
+      { href: '/admin/e-documents', label: '전자문서·이용요금', icon: 'documents' },
       { href: '/admin/contents', label: '공지·FAQ', icon: 'contents' },
       { href: '/admin/moderation', label: '신고·금칙어', icon: 'moderation' },
       { href: '/admin/inquiries', label: '문의 관리', icon: 'inquiries' },

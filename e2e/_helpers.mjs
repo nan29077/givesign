@@ -28,8 +28,8 @@ export const SEED = {
   merchant1Code: 'GIV-8K2M',
   merchant2Code: 'GIV-3QP7',
   merchant1Name: '햇살종합사회복지관',
-  merchant1Mo: '05051001001',
-  merchant2Mo: '05059000000',
+  merchant1Mo: '158812341234',
+  merchant2Mo: '158812345678',
   merchant2Keyword: 'GIV3QP7',
   payerPhone: '010-1234-5678',
 };

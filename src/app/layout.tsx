@@ -40,7 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   const metadataBase = new URL(siteUrl);
-  const shareImage = new URL('/assets/givesign-og-v2.png', metadataBase).toString();
+  const shareImage = new URL('/assets/givesign-og-v3.png', metadataBase).toString();
 
   return {
     metadataBase,
@@ -49,9 +49,10 @@ export async function generateMetadata(): Promise<Metadata> {
     keywords: ['기브싸인', 'GIVESIGN', '문자후원', 'MO 후원', '사회복지기관 후원', '정기후원', '기부금영수증'],
     icons: {
       icon: [
-        { url: '/givesign-mark.svg?v=1', type: 'image/svg+xml', sizes: 'any' },
+        { url: '/givesign-mark-v5.svg?v=5', type: 'image/svg+xml', sizes: 'any' },
       ],
-      shortcut: '/givesign-mark.svg?v=1',
+      shortcut: '/favicon.ico?v=5',
+      apple: '/apple-touch-icon-v5.png',
     },
     openGraph: {
       title: shareTitle,
@@ -60,7 +61,7 @@ export async function generateMetadata(): Promise<Metadata> {
       url: metadataBase,
       siteName: 'GiveSign(기브싸인)',
       locale: 'ko_KR',
-      images: [{ url: shareImage, width: 1200, height: 630, alt: '기브싸인 - 문자 한 통으로, 결제와 후원이 끝납니다' }],
+      images: [{ url: shareImage, width: 1200, height: 630, alt: '기브싸인 - 작은 나눔이 자라나는 희망으로' }],
     },
     twitter: {
       card: 'summary_large_image',
