@@ -62,7 +62,7 @@ function buildGroups(pending: {
       items: [
         { href: '/studio/e-documents', label: '전자문서 센터', icon: 'documents', badge: pending.documents },
         { href: '/studio/documents', label: '서식·제출 문서', icon: 'documents' },
-        { href: '/studio/document-billing', label: '충전·정액 이용', icon: 'settlement' },
+        { href: '/studio/document-billing', label: '전자문서 이용요금', icon: 'settlement' },
       ],
     },
     {

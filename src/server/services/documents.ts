@@ -184,6 +184,12 @@ export interface DocumentPreset {
   body: string;
   fields: DocumentField[];
   requireSignature: boolean;
+  /** 사회복지기관 업무와 맞지 않아 목록에서 숨기는 옛 서식. 키는 기존 서식 호환을 위해 남긴다. */
+  hidden?: boolean;
+  /** 서명 요청(전자문서 센터)에서 기본으로 넣는 서명자 역할. 첫 번째가 내용을 작성한다. */
+  signers?: Array<{ role: 'DONOR' | 'GUARDIAN' | 'VOLUNTEER' | 'PARTICIPANT' | 'STAFF' | 'OTHER'; label: string }>;
+  /** 화면 분류 */
+  category?: '후원' | '자원봉사' | '이용자' | '동의서';
 }
 
 function f(
@@ -204,22 +210,22 @@ function f(
  */
 export const DOCUMENT_PRESETS: DocumentPreset[] = [
   {
-    key: 'VOLUNTEER_APPLICATION', name: '자원봉사 신청서', description: '희망 활동·일정·연락처와 참여 동의를 받는 기관용 서식',
+    key: 'VOLUNTEER_APPLICATION', category: '자원봉사', signers: [{ role: 'VOLUNTEER', label: '신청자' }], name: '자원봉사 신청서', description: '희망 활동·일정·연락처와 참여 동의를 받는 기관용 서식',
     body: '기관의 자원봉사 활동에 참여를 신청합니다. 활동 일정과 장소, 역할은 담당자와 확인하며 안전수칙과 개인정보 보호 지침을 준수합니다. 기관은 아래 신청 정보를 활동 안내와 참여 관리 목적으로 사용합니다. 실제 수집 항목과 보유 기간은 기관의 운영 기준에 맞게 기재해 주세요.',
     fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('activity', '희망 활동 분야', 'TEXT'), f('date', '희망 활동일', 'DATE'), f('experience', '경험과 요청 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: true,
   },
   {
-    key: 'GOODS_DONATION', name: '현물 기부 신청서', description: '기부 물품·수량·전달 일정을 미리 확인하는 서식',
+    key: 'GOODS_DONATION', category: '후원', signers: [{ role: 'DONOR', label: '기부자' }], name: '현물 기부 신청서', description: '기부 물품·수량·전달 일정을 미리 확인하는 서식',
     body: '아래 물품의 기부를 신청합니다. 기관은 물품 상태와 수용 가능 여부를 확인하여 접수 결과와 전달 방법을 안내합니다. 이 신청서는 기부금영수증이 아니며 영수증 발급 가능 여부와 평가 금액은 기관의 적격 확인 후 별도로 안내합니다.',
     fields: [f('name', '기부자 성명 또는 단체명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('goods', '기부 물품과 상태', 'LONGTEXT'), f('quantity', '수량', 'NUMBER'), f('date', '희망 전달일', 'DATE', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: true,
   },
   {
-    key: 'PROGRAM_APPLICATION', name: '복지 프로그램 참여 신청서', description: '기관 프로그램의 참여 희망 내용과 연락처를 접수합니다',
+    key: 'PROGRAM_APPLICATION', category: '이용자', signers: [{ role: 'PARTICIPANT', label: '신청자' }], name: '복지 프로그램 참여 신청서', description: '기관 프로그램의 참여 희망 내용과 연락처를 접수합니다',
     body: '기관에서 운영하는 아래 프로그램에 참여를 신청합니다. 참여 가능 여부와 준비 사항은 담당자가 별도로 안내합니다. 주민등록번호와 건강정보 등 민감한 정보는 이 일반 신청서에 입력하지 마세요.',
     fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('program', '신청 프로그램명', 'TEXT'), f('date', '희망 참여일', 'DATE', false), f('note', '문의 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: false,
   },
   {
-    key: 'SUPPORT_AGREEMENT',
+    key: 'SUPPORT_AGREEMENT', category: '후원', signers: [{ role: 'DONOR', label: '후원자' }],
     name: '후원약정서',
     description: '정기·일시 후원 약정 내용을 확인받는 서식',
     body: [
@@ -251,7 +257,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'INSURANCE_AGREEMENT',
+    key: 'INSURANCE_AGREEMENT', hidden: true,
     name: '보험약정서',
     description: '보험 상품 가입 의사와 고지 사항을 확인받는 서식',
     body: [
@@ -286,7 +292,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'ORDER_SHEET',
+    key: 'ORDER_SHEET', hidden: true,
     name: '주문서',
     description: '품목·수량·수령 정보를 받아 두는 서식',
     body: [
@@ -311,7 +317,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: false,
   },
   {
-    key: 'SERVICE_CONTRACT',
+    key: 'SERVICE_CONTRACT', hidden: true,
     name: '용역계약서',
     description: '작업 범위·기간·대금을 정하는 서식',
     body: [
@@ -341,7 +347,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'CONSENT_PRIVACY',
+    key: 'CONSENT_PRIVACY', category: '동의서', signers: [{ role: 'DONOR', label: '정보주체' }],
     name: '개인정보 수집·이용 동의서',
     description: '수집 항목·목적·보유 기간을 알리고 동의를 받는 서식',
     body: [
@@ -360,7 +366,149 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     ],
     requireSignature: true,
   },
+  {
+    key: 'VOLUNTEER_CONFIRMATION', category: '자원봉사',
+    signers: [{ role: 'VOLUNTEER', label: '봉사자' }, { role: 'STAFF', label: '기관 담당자' }],
+    name: '자원봉사 활동 확인서',
+    description: '활동 일시·시간·내용을 봉사자와 담당자가 함께 확인하는 서식',
+    body: [
+      '아래 자원봉사 활동 사실을 확인합니다.',
+      '',
+      '· 활동 시간은 실제 활동한 시간만 적습니다(이동·대기 시간 제외는 기관 기준을 따릅니다).',
+      '· 이 확인서는 기관 내부 기록용이며, 1365 자원봉사포털·VMS 등 공식 실적 등록은 기관이 별도로 처리합니다.',
+      '',
+      '봉사자와 기관 담당자가 각각 서명하면 확인이 끝납니다.',
+    ].join('\n'),
+    fields: [
+      f('name', '봉사자 성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('date', '활동일', 'DATE'),
+      f('hours', '활동 시간(시간)', 'NUMBER'),
+      f('activity', '활동 내용', 'LONGTEXT'),
+      f('place', '활동 장소', 'TEXT', false),
+      f('agree_true', '위 활동 내용이 사실임을 확인합니다', 'CHECKBOX'),
+    ],
+    requireSignature: true,
+  },
+  {
+    key: 'PORTRAIT_CONSENT', category: '동의서',
+    signers: [{ role: 'PARTICIPANT', label: '본인' }],
+    name: '초상권 이용 동의서',
+    description: '활동 사진·영상을 기관 소식지·홈페이지에 쓰기 전 동의를 받는 서식',
+    body: [
+      '1. 이용 대상: 기관 활동 중 촬영한 본인의 사진·영상',
+      '2. 이용 목적: 기관 소식지, 홈페이지, 사회관계망(SNS), 후원 안내 자료',
+      '3. 이용 기간: 동의일로부터 아래 기재한 기간까지. 기간 중이라도 철회를 요청하면 새로 게시하지 않고 기관이 관리하는 게시물은 내립니다.',
+      '4. 동의 거부 권리: 동의하지 않아도 프로그램 참여에 불이익이 없습니다.',
+      '',
+      '만 14세 미만이면 법정대리인 동의서를 함께 받아 주세요.',
+    ].join('\n'),
+    fields: [
+      f('name', '성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('period', '이용 기간', 'TEXT', true, '예: 2027-12-31 까지'),
+      f('agree_online', '홈페이지·SNS 게시에 동의합니다', 'CHECKBOX'),
+      f('agree_print', '소식지·인쇄물 게시에 동의합니다', 'CHECKBOX', false),
+      f('blur_face', '얼굴을 알아볼 수 없게 처리해 주세요', 'CHECKBOX', false),
+    ],
+    requireSignature: true,
+  },
+  {
+    key: 'GUARDIAN_CONSENT', category: '동의서',
+    signers: [{ role: 'GUARDIAN', label: '법정대리인' }],
+    name: '법정대리인 동의서',
+    description: '아동·청소년 이용자의 프로그램 참여와 개인정보 처리에 보호자 동의를 받는 서식',
+    body: [
+      '본인은 아래 아동·청소년의 법정대리인으로서, 기관 프로그램 참여와 그에 필요한 개인정보 수집·이용에 동의합니다.',
+      '',
+      '· 개인정보 보호법에 따라 만 14세 미만 아동의 개인정보는 법정대리인의 동의를 받아야 합니다.',
+      '· 건강·장애 등 민감정보는 이 서식에 적지 말고 기관의 별도 절차를 따라 주세요.',
+      '· 동의는 언제든지 철회할 수 있습니다.',
+    ].join('\n'),
+    fields: [
+      f('child_name', '아동·청소년 성명', 'TEXT'),
+      f('child_birth', '아동·청소년 생년월일', 'DATE'),
+      f('guardian_name', '법정대리인 성명', 'TEXT'),
+      f('relation', '관계', 'TEXT', true, '부 · 모 · 후견인 등'),
+      f('phone', '법정대리인 연락처', 'PHONE'),
+      f('program', '참여 프로그램', 'TEXT', false),
+      f('agree_join', '프로그램 참여에 동의합니다', 'CHECKBOX'),
+      f('agree_privacy', '아동의 개인정보 수집·이용에 동의합니다', 'CHECKBOX'),
+    ],
+    requireSignature: true,
+  },
+  {
+    key: 'WELFARE_SERVICE_CONTRACT', category: '이용자',
+    signers: [{ role: 'PARTICIPANT', label: '이용자' }, { role: 'GUARDIAN', label: '보호자' }, { role: 'STAFF', label: '기관 담당자' }],
+    name: '사회복지서비스 이용 계약서',
+    description: '서비스 내용·기간·이용료를 이용자(보호자)와 기관이 함께 서명하는 계약서',
+    body: [
+      '제1조 (목적) 이 계약은 기관이 제공하는 사회복지서비스의 내용과 조건을 정하는 것을 목적으로 합니다.',
+      '제2조 (서비스 내용) 기관은 아래 기재한 서비스를 계약 기간 동안 제공합니다.',
+      '제3조 (이용료) 이용자는 아래 이용료를 납부하며, 감면 대상이면 관련 기준에 따릅니다.',
+      '제4조 (계약의 변경·해지) 이용자는 언제든지 서비스 변경이나 해지를 요청할 수 있습니다.',
+      '제5조 (개인정보·비밀유지) 기관은 서비스 제공 목적 외에 이용자 정보를 쓰지 않으며, 알게 된 비밀을 누설하지 않습니다.',
+      '',
+      '이 서식은 작성 편의를 위한 뼈대입니다. 기관의 운영규정과 사회복지사업법 관련 기준에 맞게 내용을 고쳐 쓰세요.',
+    ].join('\n'),
+    fields: [
+      f('name', '이용자 성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('service', '서비스 내용', 'LONGTEXT'),
+      f('start_date', '계약 시작일', 'DATE'),
+      f('end_date', '계약 종료일', 'DATE'),
+      f('fee', '월 이용료(원)', 'NUMBER', false),
+      f('agree_terms', '계약 내용을 확인했습니다', 'CHECKBOX'),
+    ],
+    requireSignature: true,
+  },
+  {
+    key: 'DESIGNATED_DONATION', category: '후원',
+    signers: [{ role: 'DONOR', label: '후원자' }],
+    name: '지정후원금 사용 동의서',
+    description: '지정후원금의 사용처·잔액 처리 방법에 대해 후원자 동의를 받는 서식',
+    body: [
+      '본인은 아래 지정후원금을 지정한 용도에 쓰는 데 동의합니다.',
+      '',
+      '· 지정 용도에 쓰고 남은 금액이나 대상자 사정으로 쓸 수 없게 된 금액은 아래에서 고른 방법으로 처리합니다.',
+      '· 기관은 사회복지법인 및 사회복지시설 재무·회계 규칙에 따라 후원금 수입·사용 결과를 공개합니다.',
+    ].join('\n'),
+    fields: [
+      f('name', '후원자 성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('amount', '지정후원 금액(원)', 'NUMBER'),
+      f('purpose', '지정 용도', 'TEXT', true, '예: 아동 학습지원'),
+      f('remainder', '남은 금액 처리 방법', 'TEXT', true, '비지정후원금 전환 · 같은 용도 이월'),
+      f('agree_use', '위 용도와 처리 방법에 동의합니다', 'CHECKBOX'),
+    ],
+    requireSignature: true,
+  },
+  {
+    key: 'RECURRING_CHANGE', category: '후원',
+    signers: [{ role: 'DONOR', label: '후원자' }],
+    name: '정기후원 변경·해지 신청서',
+    description: '정기후원 금액·출금일 변경이나 해지를 서면으로 받아 두는 서식',
+    body: [
+      '본인은 아래와 같이 정기후원 변경(또는 해지)을 신청합니다.',
+      '',
+      '· 신청일이 속한 달의 다음 출금일부터 반영합니다. 이미 출금된 후원금은 이 신청으로 환불되지 않습니다.',
+      '· 기부금영수증은 실제 출금된 금액 기준으로 발급합니다.',
+    ].join('\n'),
+    fields: [
+      f('name', '후원자 성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('request', '신청 구분', 'TEXT', true, '금액 변경 · 출금일 변경 · 일시 중지 · 해지'),
+      f('new_amount', '변경 후 금액(원)', 'NUMBER', false),
+      f('new_day', '변경 후 출금일', 'NUMBER', false, '1~28'),
+      f('reason', '사유', 'LONGTEXT', false),
+      f('agree', '위 내용으로 신청합니다', 'CHECKBOX'),
+    ],
+    requireSignature: true,
+  },
 ];
+
+/** 목록에 보이는 사회복지기관용 기본 서식 */
+export const WELFARE_PRESETS = (): DocumentPreset[] => DOCUMENT_PRESETS.filter((p) => !p.hidden);
 
 export function presetOf(key: string | null | undefined): DocumentPreset | null {
   if (!key) return null;
@@ -632,7 +780,7 @@ export function validateValues(
  * 화면에서 캔버스로 그린 PNG data URL 만 받는다. 후원자(비로그인)가 올리는 값이라
  * 형식·용량을 서버에서 다시 판정한다(/api/upload 는 사회복지기관 로그인이 필요해 쓸 수 없다).
  */
-async function storeSignature(dataUrl: string): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+export async function storeSignature(dataUrl: string): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl.trim());
   if (!m) return { ok: false, message: '서명을 다시 그려 주세요.' };
   let buf: Buffer;

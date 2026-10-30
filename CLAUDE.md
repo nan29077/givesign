@@ -155,7 +155,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 기관 배너·여백 프리셋 각 5종은 public/assets/givesign/presets/에 저장. 최초 기관별 무작위 배정을 SystemSetting에 저장하며 직접 선택·업로드가 우선한다.
 - 메인 여백 5종과 선택값은 /admin/appearance에서 최고관리자가 관리한다.
 - 신규 MO는 1588-1234-1234 형식. 저장 키는 숫자 12자리이며 과거 거래의 수신번호는 바꾸지 않는다.
-- 전자문서 센터 /studio/e-documents, 이용요금 /studio/document-billing, 운영 /admin/e-documents. 기존 결제 상품 없이 작성 요청을 만들 수 있다.
-- 전자문서 서식 스냅샷·개인정보는 암호화하고 요청 생성과 이용량 차감은 원자적으로 처리한다. 서비스 이용 잔액과 후원금은 별개다.
-- 충전·정액 신청은 입금·계약 확인 후 수동 승인. 실제 결제·공인인증·TSA 연동 완료를 꾸미지 않는다.
+- 전자문서 센터 /studio/e-documents, 이용요금 /studio/document-billing, 운영 /admin/e-documents, 서명 화면 /sign/[토큰]. 배치 /api/cron/edoc.
+
+## 전자문서 (서명 요청 · 이용요금)
+
+- 서명 요청은 `EDocEnvelope`(봉투) + `EDocSigner`(최대 5명, 동시/순차) 다. 발송 시점 서식을 암호화 스냅샷으로 고정한다. 첫 번째 서명자가 항목을 작성하고 나머지는 확인 후 서명한다.
+- 서명자는 받은 번호로 문자 인증번호를 확인해야 내용을 본다. 서명 링크 토큰은 해시만 저장하고, 재발송하면 새 토큰을 만들어 이전 링크를 무효로 한다.
+- 모든 사건은 `edoc_event` 에 append-only(DB 트리거)로 쌓이고 직전 해시를 잇는 해시 체인을 가진다(`verifyEnvelopeChain`). 공동인증서·공인전자문서 중계·TSA 는 연동하지 않았고 화면에도 그렇게 적는다.
+- 이용요금 근거는 `edoc_ledger`(append-only, 멱등키 use:/refund:/topup:/bonus:/plan:/expire:/adjust:/trial:)다. `edoc_wallet` 은 캐시이며 `verifyWallet` 로 원장과 대조한다. 금액은 공급가액·부가세를 나눠 남긴다.
+- 차감 순서: 30일 정액 제공량 → 시범 제공량 → 충전 잔액. 봉투 생성과 차감은 한 트랜잭션(지갑 FOR UPDATE). 아무도 열기 전 취소만 환원한다. 만료·거절은 환원하지 않는다.
+- 요금제는 `EDocPlan` 버전으로 두고 `effectiveFrom` 으로 적용한다(지난 요금제는 고치지 않음). 충전·정액은 기관 신청 → 관리자가 입금 확인 체크 후 승인. 정액은 자동 갱신하지 않는다. 이용 잔액은 후원금·정산과 별개다.
+- 기부금영수증은 전자서명 문서로 만들지 않는다. 영수증 대장(`/studio/receipts`)에서만 발급한다.
 - 상세 범위와 테스트 환경 제한: docs/UPGRADE_20261030.md.

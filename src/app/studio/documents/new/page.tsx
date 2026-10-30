@@ -8,7 +8,7 @@ import { createDocumentTemplateAction } from '@/app/actions/studio-documents';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import {
-  DOCUMENT_PRESETS, MAX_DOCUMENT_TEMPLATES, documentTemplateTypeLabel, presetOf,
+  WELFARE_PRESETS, MAX_DOCUMENT_TEMPLATES, documentTemplateTypeLabel, presetOf,
 } from '@/server/services/documents';
 import type { DocumentTemplateType } from '@/generated/prisma/enums';
 
@@ -133,7 +133,7 @@ function PresetPicker() {
         </Notice>
       </div>
       <ul className="space-y-2.5">
-        {DOCUMENT_PRESETS.filter(p => ['SUPPORT_AGREEMENT', 'CONSENT_PRIVACY', 'VOLUNTEER_APPLICATION', 'GOODS_DONATION', 'PROGRAM_APPLICATION'].includes(p.key)).map((p) => (
+        {WELFARE_PRESETS().map((p) => (
           <li key={p.key}>
             <Link href={`/studio/documents/new?type=preset&preset=${p.key}`} className="block">
               <Card className="transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-[var(--shadow-lift)]">

@@ -169,10 +169,16 @@ function FieldInput({ field }: { field: FormField }) {
  * 그림을 놓을 때마다 PNG data URL 을 만들어 부모에 올린다(hidden input 으로 함께 제출된다).
  * 화면 크기에 맞춰 늘어나므로 devicePixelRatio 를 반영해 흐려지지 않게 한다.
  */
-function SignaturePad({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function SignaturePad({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const drawing = React.useRef(false);
-  const [dirty, setDirty] = React.useState(false);
+  // 획이 빠르면 pointerup 이 다시 그리기 전에 와서 state 값이 아직 false 다. 판정은 ref 로 한다.
+  const dirtyRef = React.useRef(false);
+  const [, setDirtyState] = React.useState(false);
+  const setDirty = (v: boolean) => {
+    dirtyRef.current = v;
+    setDirtyState(v);
+  };
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -222,7 +228,7 @@ function SignaturePad({ value, onChange }: { value: string; onChange: (v: string
     if (!drawing.current) return;
     drawing.current = false;
     const canvas = canvasRef.current;
-    if (!canvas || !dirty) return;
+    if (!canvas || !dirtyRef.current) return;
     onChange(canvas.toDataURL('image/png'));
   };
 

@@ -21,7 +21,7 @@ export async function resetDb() {
     'content_post', 'banner', 'system_setting',
     // FK 가 없어 CASCADE 로 지워지지 않는 테이블들. 빠뜨리면 테스트 간에 살아남아
     // 실행 순서에 따라 결과가 달라진다. (public_holiday 는 마이그레이션이 넣는 기준 데이터라 제외)
-    'mt_message_template', 'support_message', 'support_inquiry',
+    'mt_message_template', 'support_message', 'support_inquiry', 'edoc_plan',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서

@@ -46,6 +46,12 @@ export const MT_TEMPLATE = {
   RECURRING_SUSPENDED: 'RECURRING_SUSPENDED',
   /** 기부금영수증 발급 안내 (열람 링크) */
   RECEIPT_ISSUED: 'RECEIPT_ISSUED',
+  /** 전자문서 서명 요청(서명 링크) */
+  EDOC_SIGN_REQUEST: 'EDOC_SIGN_REQUEST',
+  /** 전자문서 서명 본인확인 인증번호 */
+  EDOC_SIGN_VERIFY: 'EDOC_SIGN_VERIFY',
+  /** 전자문서 서명 완료 안내 */
+  EDOC_COMPLETED: 'EDOC_COMPLETED',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -464,6 +470,27 @@ export function tplPhoneLinkVerify(code: string): TemplateOutput {
   return verifyTemplate(MT_TEMPLATE.PHONE_LINK_VERIFY, '휴대폰 번호 확인', code);
 }
 
+/** 전자문서 서명 본인확인 인증번호. */
+export function tplEDocVerify(code: string): TemplateOutput {
+  return verifyTemplate(MT_TEMPLATE.EDOC_SIGN_VERIFY, '전자문서 본인확인', code);
+}
+
+/** 전자문서 서명 요청. reminder 면 재안내 문구를 쓴다. */
+export function tplEDocSignRequest(input: { merchantName: string; title: string; link: string; dueDate: string; reminder?: boolean }): TemplateOutput {
+  const head = input.reminder ? '서명을 아직 마치지 않으셨습니다.' : '서명 요청이 도착했습니다.';
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 「${input.title}」 ${head} ${input.dueDate}까지 내용을 확인하고 서명해 주세요. 서명:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.EDOC_SIGN_REQUEST, text, masked: maskLink(text) };
+}
+
+/** 전자문서 서명 완료 안내. 링크는 넣지 않는다(받은 서명 링크에서 완료본을 다시 볼 수 있다). */
+export function tplEDocCompleted(input: { merchantName: string; title: string }): TemplateOutput {
+  const text = `[기브싸인] ${input.merchantName} 「${input.title}」 서명이 모두 끝났습니다. 완료본은 받으신 서명 링크에서 확인할 수 있습니다.`;
+  return { code: MT_TEMPLATE.EDOC_COMPLETED, text, masked: text };
+}
+
 /** 결제 페이지 PC 웹 결제 인증번호. */
 export function tplPaymentVerify(code: string): TemplateOutput {
   return verifyTemplate(MT_TEMPLATE.PAYMENT_VERIFY, '후원 페이지 후원', code);
@@ -670,6 +697,27 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     editable: false,
     defaultBody:
       '{사회복지기관} {문서} 작성이 필요합니다. 아래 링크에서 내용을 확인하고 작성해 주세요. (작성 링크 포함)',
+    variables: [V.merchant, V.document],
+  },
+  [MT_TEMPLATE.EDOC_SIGN_REQUEST]: {
+    label: '전자문서 서명 요청',
+    description: '기관이 전자문서 센터에서 서명을 요청하면 서명 링크를 보냅니다. 링크가 들어가므로 화면에서 수정할 수 없습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 「{문서}」 서명 요청이 도착했습니다. 기한까지 내용을 확인하고 서명해 주세요. 서명: [보안링크]',
+    variables: [V.merchant, V.document],
+  },
+  [MT_TEMPLATE.EDOC_SIGN_VERIFY]: {
+    label: '전자문서 본인확인 인증번호',
+    description: '서명 링크를 연 사람이 받은 번호의 주인인지 확인하는 인증번호입니다.',
+    editable: true,
+    defaultBody: '전자문서 본인확인 인증번호는 {인증번호} 입니다. {유효시간}분 안에 입력해 주세요.',
+    variables: [V.verifyCode, V.ttl],
+  },
+  [MT_TEMPLATE.EDOC_COMPLETED]: {
+    label: '전자문서 서명 완료 안내',
+    description: '모든 서명자가 서명을 마치면 서명자 전원에게 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 「{문서}」 서명이 모두 끝났습니다. 완료본은 받으신 서명 링크에서 확인할 수 있습니다.',
     variables: [V.merchant, V.document],
   },
 };

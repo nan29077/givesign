@@ -680,6 +680,11 @@ model MerchantProfile {
   receipts           DonationReceipt[]
   receiptExports     ReceiptExport[]
   donorMembers       DonorMember[]
+  edocWallet         EDocWallet?
+  edocLedger         EDocLedger[]
+  edocSubscriptions  EDocSubscription[]
+  edocBillingRequests EDocBillingRequest[]
+  edocEnvelopes      EDocEnvelope[]
 
   @@index([status])
   @@map("merchant_profile")
@@ -897,6 +902,7 @@ model DocumentTemplate {
   merchant    MerchantProfile      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   submissions DocumentSubmission[]
   products    ChargeProduct[]
+  envelopes   EDocEnvelope[]
 
   @@index([merchantId, active])
   @@map("document_template")
@@ -2523,4 +2529,322 @@ model DonorSession {
   @@index([memberId])
   @@index([expiresAt])
   @@map("donor_session")
+}
+
+
+// ===========================================================================
+// 전자문서 (기관 → 후원자·자원봉사자 등 서명 요청)
+// ===========================================================================
+
+enum EDocLedgerKind {
+  /// 충전 승인(+원)
+  TOPUP
+  /// 정액 제공(+건, 기록용)
+  PLAN_GRANT
+  /// 시범 제공(+건)
+  TRIAL_GRANT
+  /// 발송 차감(-원 또는 -건)
+  USE
+  /// 발송 취소 환원(+원 또는 +건)
+  REFUND
+  /// 정액 기간 종료로 남은 제공량 소멸(-건, 기록용)
+  EXPIRE
+  /// 관리자 정정(±, 사유 필수)
+  ADJUST
+
+  @@map("edoc_ledger_kind")
+}
+
+enum EDocUseSource {
+  MONTHLY
+  TRIAL
+  PREPAID
+
+  @@map("edoc_use_source")
+}
+
+enum EDocBillingKind {
+  TOPUP
+  MONTHLY
+
+  @@map("edoc_billing_kind")
+}
+
+enum EDocBillingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@map("edoc_billing_status")
+}
+
+enum EDocSubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+
+  @@map("edoc_subscription_status")
+}
+
+enum EDocEnvelopeStatus {
+  /// 발송됨(아무도 서명 전)
+  SENT
+  /// 일부 서명
+  IN_PROGRESS
+  COMPLETED
+  DECLINED
+  EXPIRED
+  CANCELLED
+
+  @@map("edoc_envelope_status")
+}
+
+enum EDocSignerStatus {
+  /// 순차 서명에서 앞사람을 기다림
+  WAITING
+  SENT
+  VIEWED
+  SIGNED
+  DECLINED
+
+  @@map("edoc_signer_status")
+}
+
+enum EDocSignerRole {
+  DONOR
+  GUARDIAN
+  VOLUNTEER
+  PARTICIPANT
+  STAFF
+  OTHER
+
+  @@map("edoc_signer_role")
+}
+
+enum EDocSigningOrder {
+  PARALLEL
+  SEQUENTIAL
+
+  @@map("edoc_signing_order")
+}
+
+/// 전자문서 요금 정책 버전. 적용 여부는 effectiveFrom 으로 판단한다(수수료 정책과 같은 규칙).
+/// 금액은 모두 부가세 포함 원 단위.
+model EDocPlan {
+  id            String   @id
+  /// 충전형: 발송 1건당 금액
+  perDocument   Int      @map("per_document")
+  /// 정액형: 30일 요금과 제공 건수
+  monthlyPrice  Int      @map("monthly_price")
+  monthlyQuota  Int      @map("monthly_quota")
+  /// 신규 기관 시범 제공 건수
+  trialQuota    Int      @map("trial_quota")
+  /// 충전 보너스 구간 [{ "min": 100000, "percent": 5 }]
+  topupBonus    Json?    @map("topup_bonus")
+  /// 잔액이 이 금액 아래로 내려가면 기관에 알린다
+  lowBalance    Int      @default(2000) @map("low_balance")
+  effectiveFrom DateTime @map("effective_from") @db.Timestamptz(3)
+  note          String?
+  createdBy     String?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([effectiveFrom])
+  @@map("edoc_plan")
+}
+
+/// 기관 전자문서 지갑(현재 잔액). 근거는 항상 원장이다.
+model EDocWallet {
+  merchantId           String    @id @map("merchant_id")
+  balance              Int       @default(0)
+  trialRemaining       Int       @default(0) @map("trial_remaining")
+  totalUsed            Int       @default(0) @map("total_used")
+  lowBalanceNotifiedAt DateTime? @map("low_balance_notified_at") @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("edoc_wallet")
+}
+
+/// 전자문서 이용 원장. append-only(DB 트리거로 UPDATE/DELETE 차단). 정정은 ADJUST 로 남긴다.
+model EDocLedger {
+  id               String          @id
+  merchantId       String          @map("merchant_id")
+  kind             EDocLedgerKind
+  /// 금액 변화(원, ±). 건수형 항목은 0
+  amount           Int             @default(0)
+  /// 건수 변화(±). 금액형 항목은 0
+  units            Int             @default(0)
+  source           EDocUseSource?
+  /// 금액의 공급가액·부가세 분리(절대 규칙 8)
+  supplyAmount     Int             @default(0) @map("supply_amount")
+  vatAmount        Int             @default(0) @map("vat_amount")
+  balanceAfter     Int             @map("balance_after")
+  trialAfter       Int             @map("trial_after")
+  envelopeId       String?         @map("envelope_id")
+  billingRequestId String?         @map("billing_request_id")
+  subscriptionId   String?         @map("subscription_id")
+  /// 같은 처리가 두 번 기록되지 않게 한다(예: use:{envelopeId}, refund:{envelopeId})
+  idempotencyKey   String          @unique @map("idempotency_key")
+  memo             String?
+  actorId          String?         @map("actor_id")
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([kind, createdAt])
+  @@map("edoc_ledger")
+}
+
+/// 30일 정액 이용. 자동 갱신하지 않는다(결제 연동 전).
+model EDocSubscription {
+  id               String                 @id
+  merchantId       String                 @map("merchant_id")
+  billingRequestId String?                @unique @map("billing_request_id")
+  price            Int
+  quota            Int
+  used             Int                    @default(0)
+  startsAt         DateTime               @map("starts_at") @db.Timestamptz(3)
+  endsAt           DateTime               @map("ends_at") @db.Timestamptz(3)
+  status           EDocSubscriptionStatus @default(ACTIVE)
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status, endsAt])
+  @@map("edoc_subscription")
+}
+
+/// 충전·정액 신청. 관리자가 실제 입금·계약을 확인한 뒤 승인한다(실결제 연동 전).
+model EDocBillingRequest {
+  id            String            @id
+  merchantId    String            @map("merchant_id")
+  kind          EDocBillingKind
+  /// 신청 금액(부가세 포함)
+  amount        Int
+  /// 정액: 제공 건수 / 충전: 0
+  quota         Int               @default(0)
+  /// 충전 보너스(원). 승인 시 신청 시점 요금제 기준으로 확정
+  bonus         Int               @default(0)
+  status        EDocBillingStatus @default(PENDING)
+  depositorName String?           @map("depositor_name")
+  wantsTaxInvoice Boolean         @default(true) @map("wants_tax_invoice")
+  taxInvoiceIssued Boolean        @default(false) @map("tax_invoice_issued")
+  requestedBy   String?           @map("requested_by")
+  resolvedBy    String?           @map("resolved_by")
+  resolvedAt    DateTime?         @map("resolved_at") @db.Timestamptz(3)
+  rejectReason  String?           @map("reject_reason")
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([merchantId, createdAt])
+  @@map("edoc_billing_request")
+}
+
+/// 서명 요청 봉투. 서식 스냅샷(암호화)과 서명자 여럿을 묶는다.
+model EDocEnvelope {
+  id            String             @id
+  merchantId    String             @map("merchant_id")
+  templateId    String             @map("template_id")
+  title         String
+  /// 발송 시점 서식(본문·항목·서명 여부) JSON 을 암호화. 발송 뒤 서식을 고쳐도 바뀌지 않는다
+  snapshotEnc   String             @map("snapshot_enc")
+  snapshotHash  String             @map("snapshot_hash")
+  /// 미리 채운 값(암호화 JSON)
+  prefillEnc    String?            @map("prefill_enc")
+  signingOrder  EDocSigningOrder   @default(PARALLEL) @map("signing_order")
+  status        EDocEnvelopeStatus @default(SENT)
+  /// 서명자에게 보이는 안내 문구
+  message       String?
+  chargeSource  EDocUseSource?     @map("charge_source")
+  /// 대량 발송 묶음
+  batchId       String?            @map("batch_id")
+  createdBy     String?            @map("created_by")
+  expiresAt     DateTime           @map("expires_at") @db.Timestamptz(3)
+  sentAt        DateTime           @default(now()) @map("sent_at") @db.Timestamptz(3)
+  completedAt   DateTime?          @map("completed_at") @db.Timestamptz(3)
+  cancelledAt   DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  cancelReason  String?            @map("cancel_reason")
+  /// 완료본 해시(스냅샷 + 서명자별 입력·서명)
+  documentHash  String?            @map("document_hash")
+  /// 감사추적 해시 체인 끝값
+  lastEventHash String?            @map("last_event_hash")
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  template DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  signers  EDocSigner[]
+  events   EDocEvent[]
+
+  @@index([merchantId, status, createdAt])
+  @@index([batchId])
+  @@index([status, expiresAt])
+  @@map("edoc_envelope")
+}
+
+model EDocSigner {
+  id            String           @id
+  envelopeId    String           @map("envelope_id")
+  order         Int              @default(1)
+  role          EDocSignerRole   @default(DONOR)
+  nameEnc       String           @map("name_enc")
+  nameMasked    String           @map("name_masked")
+  phoneEnc      String           @map("phone_enc")
+  phoneHash     String           @map("phone_hash")
+  phoneMasked   String           @map("phone_masked")
+  /// 서명 링크 토큰 해시(원문 저장 안 함)
+  tokenHash     String           @unique @map("token_hash")
+  status        EDocSignerStatus @default(SENT)
+  /// SMS_OTP: 받은 번호로 인증번호 확인 / NONE: 링크만
+  authMethod    String           @default("SMS_OTP") @map("auth_method")
+  otpVerifiedAt DateTime?        @map("otp_verified_at") @db.Timestamptz(3)
+  sentAt        DateTime?        @map("sent_at") @db.Timestamptz(3)
+  viewedAt      DateTime?        @map("viewed_at") @db.Timestamptz(3)
+  signedAt      DateTime?        @map("signed_at") @db.Timestamptz(3)
+  declinedAt    DateTime?        @map("declined_at") @db.Timestamptz(3)
+  declineReason String?          @map("decline_reason")
+  valuesEnc     String?          @map("values_enc")
+  signatureUrl  String?          @map("signature_url")
+  signIp        String?          @map("sign_ip")
+  signAgent     String?          @map("sign_agent")
+  remindCount   Int              @default(0) @map("remind_count")
+  lastRemindedAt DateTime?       @map("last_reminded_at") @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  envelope EDocEnvelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+
+  @@index([envelopeId, order])
+  @@index([phoneHash])
+  @@map("edoc_signer")
+}
+
+/// 전자문서 감사추적. append-only. 각 행은 직전 행 해시를 이어 붙인 해시를 가진다(위변조 검출).
+model EDocEvent {
+  id         String   @id
+  envelopeId String   @map("envelope_id")
+  signerId   String?  @map("signer_id")
+  /// CREATED · SENT · VIEWED · OTP_SENT · OTP_VERIFIED · SIGNED · DECLINED · COMPLETED · REMINDED · CANCELLED · EXPIRED · DOWNLOADED
+  type       String
+  /// 행위자 표시(기관 담당자 id, signer:{id}, system)
+  actor      String
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  detail     Json?
+  prevHash   String   @map("prev_hash")
+  hash       String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  envelope EDocEnvelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+
+  @@index([envelopeId, createdAt])
+  @@map("edoc_event")
 }
