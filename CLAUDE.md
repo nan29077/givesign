@@ -28,6 +28,15 @@
 9. **기부금영수증은 결제 성공(PAID_STATUSES) 건만 합산하고, 환불된 건은 제외한다.** 이미 발급된 영수증 금액이 바뀌는 환불은 영수증을 `VOID` 처리하고 재발급한다. 발급 번호는 재사용하지 않는다. 발급은 기관의 공익법인 지정이 **관리자 확인(`designatedDoneeVerifiedAt`)** 되고 만료 전일 때만 가능하다. 영수증은 발급 당시 후원자 정보(주민번호 암호문 포함)를 스냅샷으로 가지며 홈택스 명세는 스냅샷으로만 만든다. 명세 CSV 내려받기는 비밀번호 재확인 + 사유 + 하루 횟수 제한 + 1회용 토큰을 거친다(`hometax-export-gate.ts`).
 10. **캠페인별 모금액은 `charge.campaign_id` 기준으로 집계한다.** 별도 누적 컬럼을 캐시로 두더라도 원천은 항상 결제 건이다.
 
+11. **자동화(발굴·안내) 규칙.** (`docs/2026-10-30_자동화_적용보고서.md`)
+   - 외부 연동(알림톡·SNS 게시·전자서명·콘텐츠 생성)은 어댑터 + mock 이 기본이고 `ALIMTALK_ENABLED` `SOCIAL_PUBLISH_ENABLED` `ESIGN_ENABLED` 로 연다. 운영에서 켰는데 공급자가 mock 이면 부팅을 거부한다. mock 은 게시물 주소·지표·서명 완료를 만들어 내지 않는다.
+   - 알림톡은 **정보성** 템플릿(`ALIMTALK_TEMPLATES`)만, 기관 채널이 관리자 확인(`ACTIVE`)이고 승인 코드가 있을 때만 보낸다. 실패하면 같은 본문을 문자로 대체하고 `mt_outbound_message.channel/fallback` 에 남긴다. 광고성(후원 권유) 발송 기능을 만들지 않는다. 결제 링크·인증번호는 문자로만 보낸다.
+   - 문자 예약어 `정기·정기후원·약정 / 봉사·자원봉사` 는 결제 건을 만들지 않고 링크만 회신한다. 캠페인 키워드로 쓸 수 없다.
+   - 월간 안내는 `notice_run (merchant, month)` + `notice_delivery (run, payer)` 로 한 번만. 수신 거부(`payer_merchant_link.notice_opt_out_at`)는 제외한다.
+   - 콘텐츠는 항상 "AI 생성 콘텐츠" 표시, 모집등록번호가 없으면 승인 불가, 기본은 담당자 승인제. 게시는 `content_publish (item, platform)` 1회, 예약→게시 중 전환은 조건부 갱신으로 잡는다. 수혜자 실사진·실명을 쓰지 않는다.
+   - 약정서·신청서(`agreement_document`)는 스냅샷 + SHA-256, 바꾸면 새 판(이전 판 보존). 스냅샷에는 마스킹 값만 넣는다.
+   - 유입 경로는 `?src=&cid=` → `givesign_src` 쿠키(7일) → `charge.source/content_item_id`, 약정·봉사 신청에 기록한다. 원천은 각 테이블이다.
+
 ## 약관
 
 약관 본문은 `prisma/terms-content.ts` 에 두고 시드로 넣는다. 개정할 때는 `TERMS_VERSION` 과 `TERMS_EFFECTIVE_FROM` 을 올리고 **이전 버전을 비활성화하지 않는다** — 현행본은 시행일로 고르고(`terms.ts`), 이전 버전에만 동의한 후원자는 다음 후원 확정 화면에서 재동의한다(`staleRequiredConsents`). 약관은 후원(기부) 서비스 기준이다. 상품·포인트 대금 표현을 다시 넣지 않는다.
@@ -74,6 +83,11 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 | 후원페이지 | `/studio/donation-page` | 공개 `/donate/[code]` 구성 |
 | 기부금영수증 | `/studio/receipts` | 연도별 발급·일괄 발급·홈택스 제출 파일 |
 | 기관 정보 | `/studio/profile` | 기관 유형·고유번호·대표자·지정기부금단체·모집등록번호 |
+| 후원자·봉사자 | `/studio/supporters` | 통합 구성원·세그먼트·기관 명단 업로드·약정 미완료 재안내 (`/studio/donors` 는 후원자 상세 분석) |
+| 자원봉사 | `/studio/volunteers` | 신청 승인·배정·활동 기록·1365 등록 자료 CSV (`FEATURE_VOLUNTEER`) |
+| 약정서·신청서 | `/studio/agreements` | 전자 약정서·신청서 보관·판 이력 |
+| 콘텐츠 만들기 / SNS 채널 | `/studio/content` · `/studio/channels` | 숏폼·캠페인 이미지 생성·승인·예약 게시 (`FEATURE_CONTENT`) |
+| 알림톡·월간 안내 | `/studio/notices` | 카카오 채널·템플릿 코드, 월간 안내·영수증 주기 |
 | 후원 설정 / 문자 관리 / 정산 관리 | 기존 유지 | |
 
 실물 상품·배송 상품(`/studio/products` 의 PHYSICAL/DOCUMENT, `/studio/orders`)은 **코드는 유지하되 메뉴와 공개 화면에서 숨긴다.** 전자문서 서식·제출 관리(`/studio/documents`)는 별도 기관 업무로 항상 제공한다. `FEATURE_GOODS=true` 환경변수로만 다시 노출한다. 꺼져 있으면 후원 항목 관리는 DIGITAL(후원 항목)만 다루고, 실물·문서 생성은 서버 액션에서도 거절하며, `/studio/orders`는 404 다. 후원 건의 `pointStatus` 는 `initialPointStatus()`(기본 `SKIPPED`)로 정한다 — 후원에는 기관이 따로 지급할 것이 없다. 메시지페이의 "포인트 지급" 상태 기계는 `FEATURE_GOODS` 를 켠 기관의 디지털 상품에만 산다.

@@ -20,6 +20,7 @@
  *       (기관 정보·후원페이지·캠페인·정기후원·영수증 정보 샘플, 후원 FAQ)
  *  12 - 데모 기관의 공익법인 지정을 관리자 확인 상태로 표시(영수증 발급 통제 도입)
  *  13 - 약관 3.0(후원 서비스 기준 전면 재작성) 시드, 이전 버전은 재동의 판정을 위해 활성 유지
+ *  14 - 자동화 데모: 자원봉사 동의 약관, 알림톡 채널(mock), 콘텐츠·자원봉사·약정서·기관 명단 샘플
  */
-export const SEED_VERSION = 13;
+export const SEED_VERSION = 14;
 export const SEED_VERSION_KEY = 'seed.version';

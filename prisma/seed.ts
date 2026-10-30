@@ -434,6 +434,43 @@ async function main() {
         });
       }
       console.log('  캠페인 2건(모금 중·종료), 영수증 정보, 정기후원 약정 1건 생성');
+
+      // 시드 v14: 자동화 데모 — 알림톡 채널(mock·사용 중), 콘텐츠 2건, 자원봉사 1건, 약정서, 기관 명단.
+      // 모두 서비스 함수로 만든다(화면과 같은 규칙·멱등). 이미 있으면 건너뛴다.
+      const svc = {
+        alimtalk: await import('../src/server/services/alimtalk'),
+        content: await import('../src/server/services/content'),
+        volunteers: await import('../src/server/services/volunteers'),
+        agreements: await import('../src/server/services/agreements'),
+        supporters: await import('../src/server/services/supporters'),
+      };
+      if (!(await prisma.merchantAlimtalkChannel.findUnique({ where: { merchantId: org.id } }))) {
+        const codes = Object.fromEntries(svc.alimtalk.ALIMTALK_TEMPLATES.map((c, i) => [c, `GS_DEMO_${String(i + 1).padStart(2, '0')}`]));
+        await svc.alimtalk.saveAlimtalkChannel(org.id, { channelId: '@햇살복지관', senderKey: 'DEMOSENDERKEY0000000000000000000', templateCodes: codes });
+        await prisma.merchantAlimtalkChannel.update({ where: { merchantId: org.id }, data: { status: 'ACTIVE', verifiedAt: new Date(), verifiedBy: 'seed', note: '데모 채널 (mock 발송)' } });
+      }
+      const kimjang = await prisma.campaign.findUnique({ where: { merchantId_code: { merchantId: org.id, code: '김장' } } });
+      if (kimjang && (await prisma.contentItem.count({ where: { merchantId: org.id } })) === 0) {
+        await prisma.merchantContentSetting.upsert({ where: { merchantId: org.id }, create: { merchantId: org.id, tone: 'WARM', hashtags: ['성북구', '김장나눔'] }, update: {} });
+        for (const kind of ['SHORTFORM', 'IMAGE_SQUARE'] as const) {
+          await svc.content.requestContent({ merchantId: org.id, campaignId: kimjang.id, kind, userId: org.userId });
+        }
+      }
+      const live = await prisma.recurringDonation.findFirst({ where: { payerId: payer.id, merchantId: org.id } });
+      if (live && !live.agreementDocId) await svc.agreements.issueRecurringAgreement(live.id, {}, { notify: false });
+      if ((await prisma.volunteerApplication.count({ where: { merchantId: org.id } })) === 0) {
+        await svc.volunteers.applyVolunteer({
+          payerId: payer.id, merchantId: org.id, interests: ['급식·도시락', '돌봄·말벗'], availableDays: ['SAT'], timeSlot: 'WEEKEND',
+          wish: '김장 나눔 행사', message: '주말에 시간이 됩니다.', safetyPledge: true, agree: true, source: 'INSTAGRAM',
+        });
+      }
+      if ((await prisma.supporterContact.count({ where: { merchantId: org.id } })) === 0) {
+        await svc.supporters.commitSupporterImport({
+          merchantId: org.id, userId: org.userId, fileName: 'demo-후원의밤-2025.csv', consentConfirmed: true, consentBasis: '2025 후원의 밤 참가 신청서(데모)',
+          csv: '이름,휴대폰,구분,태그\n김나눔,010-2000-0001,후원자,후원의밤\n이봉사,010-2000-0002,봉사자,급식\n박이웃,010-2000-0003,기타,후원의밤\n',
+        });
+      }
+      console.log('  자동화 데모: 알림톡 채널(mock), 콘텐츠 2건, 자원봉사 신청 1건, 약정서, 기관 명단 3명');
     }
   }
 
