@@ -13,6 +13,14 @@ process.env.ALLOW_INMEMORY_FALLBACK = 'true';
 // 테스트에서는 Redis 대신 인메모리 스토어를 사용해 상태를 격리한다.
 process.env.REDIS_URL = '';
 process.env.MO_ALLOWED_IPS = '';
+// 자동화 외부 연동은 모두 mock 공급자로 켠 상태에서 검증한다(기관 채널이 ACTIVE 가 아니면 알림톡은 나가지 않는다).
+process.env.ALIMTALK_ENABLED = 'true';
+process.env.ALIMTALK_PROVIDER = 'mock';
+process.env.SOCIAL_PUBLISH_ENABLED = 'true';
+process.env.SOCIAL_PROVIDER = 'mock';
+process.env.ESIGN_ENABLED = 'true';
+process.env.ESIGN_PROVIDER = 'mock';
+process.env.CONTENT_PROVIDER = 'mock';
 
 // 내장 DB(PGlite)는 단일 세션 위에 여러 연결을 다중화(multiplex)한다.
 // 연결 풀이 2개 이상이면 동시 요청의 트랜잭션·prepared statement 가 서로 섞여

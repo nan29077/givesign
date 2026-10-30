@@ -4,6 +4,7 @@ import { encrypt, phoneHash, maskPhone, maskSecret } from '@/lib/crypto';
 import { resetMockPaymentState } from '@/server/adapters/payment';
 import { resetMockPayoutState } from '@/server/adapters/payout';
 import { clearMockOutbox, readMockOutbox, setMockMtFailure } from '@/server/adapters/mt';
+import { clearMockAlimtalkOutbox } from '@/server/adapters/alimtalk';
 import { clearMtTemplateOverrideCache } from '@/server/services/mt-templates';
 import { clearMemoryKv } from '@/server/redis';
 
@@ -37,6 +38,7 @@ export async function resetDb() {
   resetMockPaymentState();
   resetMockPayoutState();
   clearMockOutbox();
+  clearMockAlimtalkOutbox();
   setMockMtFailure(null);
   // mt_message_template 을 비웠으므로 프로세스 캐시도 함께 버린다.
   // 남겨 두면 앞 테스트가 저장한 커스텀 본문이 TTL 동안 계속 적용된다.

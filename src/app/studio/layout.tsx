@@ -4,7 +4,8 @@ import { redirect } from 'next/navigation';
 import { ConsoleShell, type NavGroup } from '@/components/layout/console-shell';
 import { getSessionUser, requireMerchant } from '@/server/auth';
 import { getStudioPendingCounts } from '@/server/services/studio-pending';
-import { featureGoodsEnabled } from '@/lib/env';
+import { featureContentEnabled, featureGoodsEnabled, featureVolunteerEnabled } from '@/lib/env';
+import { prisma } from '@/server/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,17 +27,36 @@ function buildGroups(pending: {
   points: number;
   reports: number;
   documents: number;
+  volunteers: number;
+  contentReview: number;
 }): NavGroup[] {
   const goods = featureGoodsEnabled();
+  const volunteer = featureVolunteerEnabled();
+  const content = featureContentEnabled();
   return [
     {
       title: '현황',
       items: [
         { href: '/studio', label: '대시보드', icon: 'dashboard' },
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
-        { href: '/studio/donors', label: '후원자 관리', icon: 'donors' },
+        { href: '/studio/supporters', label: '후원자·봉사자', icon: 'supporters' },
         { href: '/studio/recurring', label: '정기후원', icon: 'recurring' },
+        ...(volunteer ? [{ href: '/studio/volunteers', label: '자원봉사', icon: 'volunteers' as const, badge: pending.volunteers }] : []),
+        { href: '/studio/agreements', label: '약정서·신청서', icon: 'agreements' },
         { href: '/studio/messages', label: '문자 관리', icon: 'messages' },
+      ],
+    },
+    {
+      // 발굴(콘텐츠·SNS) → 안내(알림톡·월간 안내). 외부 심사 전에는 mock 으로 동작하고 화면에 표시한다.
+      title: '발굴·안내',
+      items: [
+        ...(content
+          ? [
+              { href: '/studio/content', label: '콘텐츠 만들기', icon: 'content' as const, badge: pending.contentReview },
+              { href: '/studio/channels', label: 'SNS 채널', icon: 'channels' as const },
+            ]
+          : []),
+        { href: '/studio/notices', label: '알림톡·월간 안내', icon: 'notices' },
       ],
     },
     {
@@ -133,6 +153,10 @@ export default async function StudioLayout({ children }: { children: React.React
   // 밀린 일을 메뉴에서 바로 보이게 한다.
   // 대시보드도 같은 집계를 쓰므로 요청 단위 캐시로 묶어 한 번만 실행한다.
   const pending = await getStudioPendingCounts(user.merchantId);
+  const [volunteers, contentReview] = await Promise.all([
+    prisma.volunteerApplication.count({ where: { merchantId: user.merchantId, status: 'RECEIVED' } }),
+    prisma.contentItem.count({ where: { merchantId: user.merchantId, status: 'REVIEW' } }),
+  ]);
 
   return (
     <ConsoleShell
@@ -142,6 +166,8 @@ export default async function StudioLayout({ children }: { children: React.React
         points: pending.points,
         reports: pending.reports,
         documents: pending.documents,
+        volunteers,
+        contentReview,
       })}
       user={{
         id: user.id,

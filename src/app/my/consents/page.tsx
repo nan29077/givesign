@@ -18,6 +18,7 @@ const CONSENT_LABEL: Record<ConsentType, string> = {
   MARKETING: '마케팅 정보 수신 (선택)',
   RECEIPT_ISSUANCE: '기부금영수증 발급 정보 수집·이용',
   RECURRING_DEBIT: '정기후원 자동 출금',
+  VOLUNTEER_PRIVACY: '자원봉사 개인정보',
 };
 
 const CONSENT_LINK: Partial<Record<ConsentType, string>> = {

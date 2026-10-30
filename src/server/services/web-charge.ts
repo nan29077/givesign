@@ -46,6 +46,9 @@ export interface WebChargeInput {
   /** 지정 캠페인(모금 중인 것만 유효) */
   campaignId?: string | null;
   anonymous?: boolean;
+  /** 유입 경로 (SNS 게시물 링크의 src·cid). 없으면 WEB */
+  source?: string | null;
+  contentItemId?: string | null;
 }
 
 export interface WebChargeResult {
@@ -147,6 +150,8 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         paymentMode: resolvePaymentMode(merchant.paymentMode),
         campaignId,
         anonymous: Boolean(input.anonymous),
+        source: input.source ?? 'WEB',
+        contentItemId: input.contentItemId ?? null,
       },
     });
   } catch (error) {

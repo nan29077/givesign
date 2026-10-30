@@ -269,6 +269,28 @@ export const env = {
     secret: str('CRON_SECRET'),
   },
 
+  /**
+   * 자동화(발굴 → 전환 → 관리 → 안내) 외부 연동.
+   * 모두 어댑터 + mock 으로 먼저 완성하고, 심사·계약이 끝나는 순서대로 켠다.
+   * 공급자 값이 mock 이면 화면에 mock 임을 표시하고 실제 발송·게시·서명은 일어나지 않는다(절대 규칙 2).
+   */
+  automation: {
+    /** 카카오 알림톡 발송. 꺼져 있으면 모든 안내를 문자로 보낸다. */
+    alimtalkEnabled: bool('ALIMTALK_ENABLED', false),
+    /** mock | coolsms | emma (MT 사업자와 같은 곳의 알림톡 API) */
+    alimtalkProvider: str('ALIMTALK_PROVIDER', 'mock') as ProviderMode,
+    /** SNS 게시. 꺼져 있으면 승인된 콘텐츠를 내려받아 기관이 직접 올린다. */
+    socialPublishEnabled: bool('SOCIAL_PUBLISH_ENABLED', false),
+    /** mock | youtube·meta 실연동 (구글 API 감사·메타 앱 검수 후) */
+    socialProvider: str('SOCIAL_PROVIDER', 'mock') as ProviderMode,
+    /** 전자서명(페이싸인·모두싸인 등). 꺼져 있으면 동의 기록 약정서만 만든다. */
+    esignEnabled: bool('ESIGN_ENABLED', false),
+    /** mock | paysign | modusign */
+    esignProvider: str('ESIGN_PROVIDER', 'mock') as ProviderMode,
+    /** 콘텐츠 생성 공급자 (LLM·이미지·TTS). mock 은 기관 데이터로 서식 대본과 SVG 장면을 만든다. */
+    contentProvider: str('CONTENT_PROVIDER', 'mock') as ProviderMode,
+  },
+
   safety: {
     /** 금융사 서면승인 등록 전에는 DIRECT_TRIGGER 를 열지 않는다. */
     allowDirectTrigger: bool('ALLOW_DIRECT_TRIGGER', false),
@@ -313,6 +335,16 @@ export function featureGoodsEnabled(): boolean {
   return process.env.FEATURE_GOODS === 'true';
 }
 
+/** 자원봉사 접수·관리 기능 (기본 켜짐). FEATURE_VOLUNTEER=false 로 메뉴·라우트를 닫는다. */
+export function featureVolunteerEnabled(): boolean {
+  return process.env.FEATURE_VOLUNTEER !== 'false';
+}
+
+/** 콘텐츠 자동 생성·승인 기능 (기본 켜짐). FEATURE_CONTENT=false 로 메뉴·라우트를 닫는다. */
+export function featureContentEnabled(): boolean {
+  return process.env.FEATURE_CONTENT !== 'false';
+}
+
 /** 운영 배포 전 반드시 통과해야 하는 환경 점검 */
 export function assertProductionSafety(): string[] {
   const problems: string[] = [];
@@ -354,6 +386,16 @@ export function assertProductionSafety(): string[] {
     problems.push(`PAYMENT_PIN_SUCCESS_CODES 에 mock 전용 코드가 남아 있습니다: ${mockCodes.join(', ')}`);
   }
   if (env.payment.provider === 'mock') problems.push('PAYMENT_PROVIDER 가 mock 입니다.');
+  // 외부 연동을 켰는데 공급자가 mock 이면 "보냈다·게시했다·서명받았다" 고 보이지만 아무 일도 일어나지 않는다.
+  if (env.automation.alimtalkEnabled && env.automation.alimtalkProvider === 'mock') {
+    problems.push('ALIMTALK_ENABLED=true 인데 ALIMTALK_PROVIDER 가 mock 입니다.');
+  }
+  if (env.automation.socialPublishEnabled && env.automation.socialProvider === 'mock') {
+    problems.push('SOCIAL_PUBLISH_ENABLED=true 인데 SOCIAL_PROVIDER 가 mock 입니다.');
+  }
+  if (env.automation.esignEnabled && env.automation.esignProvider === 'mock') {
+    problems.push('ESIGN_ENABLED=true 인데 ESIGN_PROVIDER 가 mock 입니다.');
+  }
   // 결제사(헥토)를 붙였는데 PIN 인증만 mock 으로 남아 있으면, 실제 출금이 가능한 빌키를 든 채
   // 인증 단계만 모의 화면으로 통과시키게 된다. 조합 자체를 막는다.
   if (env.payment.provider === 'hecto' && isMockPinLink()) {

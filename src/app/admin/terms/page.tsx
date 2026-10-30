@@ -21,6 +21,7 @@ const TYPES: Array<{ value: ConsentType; label: string }> = [
   { value: 'MARKETING', label: '마케팅 수신 동의' },
   { value: 'RECEIPT_ISSUANCE', label: '기부금영수증 정보 수집 동의' },
   { value: 'RECURRING_DEBIT', label: '정기후원 자동 출금 동의' },
+  { value: 'VOLUNTEER_PRIVACY', label: '자원봉사 개인정보 동의' },
 ];
 
 const typeLabel = Object.fromEntries(TYPES.map((t) => [t.value, t.label])) as Record<ConsentType, string>;

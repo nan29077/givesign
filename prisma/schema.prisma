@@ -320,6 +320,8 @@ enum ConsentType {
   RECEIPT_ISSUANCE
   /// 정기후원 자동 출금 동의 (등록된 결제수단으로 매월 출금)
   RECURRING_DEBIT
+  /// 자원봉사 신청을 위한 개인정보(활동 가능 시간·비상연락처 등) 수집·이용 동의
+  VOLUNTEER_PRIVACY
 
   @@map("consent_type")
 }
@@ -514,6 +516,10 @@ model PayerProfile {
   receiptProfile PayerReceiptProfile?
   recurringDonations RecurringDonation[]
   receipts      DonationReceipt[]
+  volunteerProfile      VolunteerProfile?
+  volunteerApplications VolunteerApplication[]
+  volunteerActivities   VolunteerActivity[]
+  agreementDocuments    AgreementDocument[]
 
   @@index([lockedUntil])
   @@index([onboardingStatus])
@@ -544,6 +550,8 @@ model PayerMerchantLink {
   /// 사회복지기관 사이트의 회원 ID. 사회복지기관이 API 로 연결해 둔다(선택).
   /// 이 값이 있으면 사회복지기관은 자기 회원 ID 만으로 결제 이력을 찾을 수 있다.
   merchantMemberId String? @map("merchant_member_id")
+  /// 후원자가 이 기관의 월간 후원 안내(알림톡·문자) 수신을 거부한 시각. 결제·영수증 안내는 계속 나간다.
+  noticeOptOutAt DateTime? @map("notice_opt_out_at") @db.Timestamptz(3)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -642,6 +650,10 @@ model MerchantProfile {
   fundraisingRegNo    String?           @map("fundraising_reg_no")
   /// 모집 등록 관청 (행정안전부·시도 등)
   fundraisingRegAuthority String?       @map("fundraising_reg_authority")
+  /// 기부금영수증 발급 주기. YEARLY(연 1회 합산, 기본) · MONTHLY(매월 전월분 발급)
+  receiptCycle        String            @default("YEARLY") @map("receipt_cycle")
+  /// 매월 1일 전월 후원 내역 안내 발송 여부
+  monthlyNoticeEnabled Boolean          @default(true) @map("monthly_notice_enabled")
   approvedAt        DateTime?      @map("approved_at") @db.Timestamptz(3)
   suspendedAt       DateTime?      @map("suspended_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -685,6 +697,16 @@ model MerchantProfile {
   edocSubscriptions  EDocSubscription[]
   edocBillingRequests EDocBillingRequest[]
   edocEnvelopes      EDocEnvelope[]
+  volunteerApplications VolunteerApplication[]
+  volunteerActivities   VolunteerActivity[]
+  supporterImports      SupporterImport[]
+  supporterContacts     SupporterContact[]
+  alimtalkChannel       MerchantAlimtalkChannel?
+  noticeRuns            NoticeRun[]
+  agreementDocuments    AgreementDocument[]
+  contentSetting        MerchantContentSetting?
+  contentItems          ContentItem[]
+  socialChannels        SocialChannel[]
 
   @@index([status])
   @@map("merchant_profile")
@@ -1068,6 +1090,10 @@ model MtOutboundMessage {
   idempotencyKey    String?        @map("idempotency_key")
   /// 사회복지기관이 API 로 직접 보낸 문자인지. 통계와 한도 계산을 시스템 발송과 분리한다.
   merchantSent      Boolean        @default(false) @map("merchant_sent")
+  /// 실제로 나간 채널. SMS(문자) · ALIMTALK(카카오 알림톡)
+  channel           String         @default("SMS")
+  /// 알림톡을 시도했다가 실패해 문자로 대체 발송했는지
+  fallback          Boolean        @default(false)
   sentAt            DateTime?      @map("sent_at") @db.Timestamptz(3)
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -1203,6 +1229,10 @@ model Charge {
   recurringId   String?      @map("recurring_id")
   /// 발급된(유효한) 기부금영수증. VOID 되면 null 로 되돌려 재발급 대상이 된다.
   receiptId     String?      @map("receipt_id")
+  /// 유입 경로 (YOUTUBE · INSTAGRAM · FACEBOOK · SMS · WEB · QR). 없으면 알 수 없음.
+  source        String?
+  /// 유입을 만든 콘텐츠 (SNS 게시물 링크의 cid)
+  contentItemId String?      @map("content_item_id")
 
   /// 결제수수료 차감액 (부가세 포함)
   pgFee       BigInt @default(0) @map("pg_fee")
@@ -1254,6 +1284,7 @@ model Charge {
   receipt       DonationReceipt?     @relation(fields: [receiptId], references: [id], onDelete: SetNull)
 
   @@index([campaignId, status])
+  @@index([contentItemId])
   @@index([recurringId])
   @@index([receiptId])
   @@index([merchantId, receivedAt])
@@ -2335,6 +2366,11 @@ model RecurringDonation {
   totalAmount   BigInt          @default(0) @map("total_amount")
   /// 정기후원 동의 기록
   consentId     String?         @map("consent_id")
+  /// 유입 경로 (charge.source 와 같은 값)
+  source        String?
+  contentItemId String?         @map("content_item_id")
+  /// 현행 약정서 (약정을 바꿀 때마다 새 버전이 생기고 이 값이 옮겨 간다)
+  agreementDocId String?        @map("agreement_doc_id")
   pausedAt      DateTime?       @map("paused_at") @db.Timestamptz(3)
   suspendedAt   DateTime?       @map("suspended_at") @db.Timestamptz(3)
   canceledAt    DateTime?       @map("canceled_at") @db.Timestamptz(3)
@@ -2533,8 +2569,7 @@ model DonorSession {
 }
 
 
-// ===========================================================================
-// 전자문서 (기관 → 후원자·자원봉사자 등 서명 요청)
+// ====================================================================// 전자문서 (기관 → 후원자·자원봉사자 등 서명 요청)
 // ===========================================================================
 
 enum EDocLedgerKind {
@@ -2867,4 +2902,440 @@ model DonorSocialAccount {
   @@unique([merchantId, provider, providerUserHash])
   @@unique([memberId, provider])
   @@map("donor_social_account")
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// 자동화 — 자원봉사 · 구성원 · 알림톡 · 약정서 · 콘텐츠 · SNS (2026-10-30)
+// ═════════════════════════════════════════════════════════════════════════
+
+enum VolunteerApplicationStatus {
+  RECEIVED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+
+  @@map("volunteer_application_status")
+}
+
+/// 자원봉사자 정보 (후원자 1명당 1행, 여러 기관에 공통). 비상연락처는 3분리 저장 (절대 규칙 6).
+model VolunteerProfile {
+  payerId             String    @id @map("payer_id")
+  /// 활동 분야 (돌봄·급식·교육·행사·사무 등)
+  interests           String[]
+  /// 가능 요일 (MON..SUN)
+  availableDays       String[]  @map("available_days")
+  /// 가능 시간대 (MORNING · AFTERNOON · EVENING · WEEKEND)
+  timeSlot            String?   @map("time_slot")
+  experience          String?
+  emergencyName       String?   @map("emergency_name")
+  emergencyPhoneEnc   String?   @map("emergency_phone_enc")
+  emergencyPhoneMasked String?  @map("emergency_phone_masked")
+  /// 안전 수칙 서약 시각
+  safetyPledgedAt     DateTime? @map("safety_pledged_at") @db.Timestamptz(3)
+  consentId           String?   @map("consent_id")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@map("volunteer_profile")
+}
+
+/// 기관별 자원봉사 신청. 진행 중(RECEIVED·APPROVED) 신청은 기관당 1건 (부분 유니크 인덱스).
+model VolunteerApplication {
+  id          String                     @id
+  merchantId  String                     @map("merchant_id")
+  payerId     String                     @map("payer_id")
+  status      VolunteerApplicationStatus @default(RECEIVED)
+  /// 희망 활동
+  wish        String?
+  /// 후원자가 남긴 말
+  message     String?
+  /// 기관 내부 메모 (후원자에게 보이지 않음)
+  memo        String?
+  /// 기관이 배정한 활동·일정 안내
+  assignment  String?
+  source      String?
+  contentItemId String?                  @map("content_item_id")
+  decidedAt   DateTime?                  @map("decided_at") @db.Timestamptz(3)
+  decidedBy   String?                    @map("decided_by")
+  withdrawnAt DateTime?                  @map("withdrawn_at") @db.Timestamptz(3)
+  agreementDocId String?                 @map("agreement_doc_id")
+  createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status, createdAt])
+  @@index([payerId])
+  @@map("volunteer_application")
+}
+
+/// 자원봉사 활동 기록. 1365 자원봉사포털 실적 등록용 내보내기의 원천이다 (연동은 하지 않는다).
+model VolunteerActivity {
+  id           String   @id
+  merchantId   String   @map("merchant_id")
+  payerId      String   @map("payer_id")
+  activityDate DateTime @map("activity_date") @db.Date
+  /// 활동 시간 (분)
+  minutes      Int
+  title        String
+  note         String?
+  /// 확인한 기관 담당자 user id
+  confirmedBy  String   @map("confirmed_by")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, activityDate])
+  @@index([payerId, activityDate])
+  @@map("volunteer_activity")
+}
+
+/// 기관 보유 명단 업로드 이력. 수집·이용 동의 확인 책임은 업로드한 기관에 있다.
+model SupporterImport {
+  id               String   @id
+  merchantId       String   @map("merchant_id")
+  fileName         String   @map("file_name")
+  rowCount         Int      @map("row_count")
+  acceptedCount    Int      @map("accepted_count")
+  duplicateCount   Int      @map("duplicate_count")
+  errorCount       Int      @map("error_count")
+  /// 업로드한 기관이 "연락처 수집·이용 동의를 받은 명단"임을 확인한 시각
+  consentConfirmedAt DateTime @map("consent_confirmed_at") @db.Timestamptz(3)
+  /// 동의 근거 메모 (예: 2025 후원의 밤 신청서)
+  consentBasis     String   @map("consent_basis")
+  checksum         String
+  createdBy        String   @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  contacts SupporterContact[]
+
+  @@index([merchantId, createdAt])
+  @@map("supporter_import")
+}
+
+/// 기관이 보유한 연락처 (업로드 명단). 전화번호 3분리 저장, 같은 기관 안에서 번호당 1행.
+/// 후원자로 가입한 번호면 payerId 가 연결된다.
+model SupporterContact {
+  id          String   @id
+  merchantId  String   @map("merchant_id")
+  importId    String?  @map("import_id")
+  name        String
+  phoneHash   String   @map("phone_hash")
+  phoneEnc    String   @map("phone_enc")
+  phoneMasked String   @map("phone_masked")
+  /// DONOR · VOLUNTEER · OTHER
+  role        String   @default("OTHER")
+  tags        String[]
+  note        String?
+  payerId     String?  @map("payer_id")
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  import   SupporterImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  @@unique([merchantId, phoneHash])
+  @@index([merchantId, role])
+  @@map("supporter_contact")
+}
+
+enum AlimtalkChannelStatus {
+  NOT_CONNECTED
+  /// 기관이 채널 정보를 등록했고 관리자(카카오 승인) 확인을 기다림
+  PENDING
+  /// 카카오 발신프로필·템플릿 승인 확인 완료. 이 상태일 때만 알림톡으로 보낸다.
+  ACTIVE
+  SUSPENDED
+
+  @@map("alimtalk_channel_status")
+}
+
+/// 기관별 카카오 알림톡 채널. 발신프로필 키는 암호화 저장한다.
+model MerchantAlimtalkChannel {
+  merchantId    String                @id @map("merchant_id")
+  /// 카카오톡 채널 검색용 아이디 (@기관)
+  channelId     String                @map("channel_id")
+  senderKeyEnc  String?               @map("sender_key_enc")
+  senderKeyMasked String?             @map("sender_key_masked")
+  status        AlimtalkChannelStatus @default(PENDING)
+  /// 기브싸인 템플릿 코드 → 카카오 승인 템플릿 코드 {"RECEIPT_ISSUED":"GS_RCPT_01"}
+  templateCodes Json                  @default("{}") @map("template_codes")
+  note          String?
+  verifiedAt    DateTime?             @map("verified_at") @db.Timestamptz(3)
+  verifiedBy    String?               @map("verified_by")
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_alimtalk_channel")
+}
+
+/// 월간 후원 안내 실행. 기관·월당 1행 (월 1회 멱등).
+model NoticeRun {
+  id             String    @id
+  merchantId     String    @map("merchant_id")
+  /// 안내 대상 월 (KST yyyy-MM, 보통 전월)
+  monthKey       String    @map("month_key")
+  status         String    @default("RUNNING")
+  recipientCount Int       @default(0) @map("recipient_count")
+  sentCount      Int       @default(0) @map("sent_count")
+  alimtalkCount  Int       @default(0) @map("alimtalk_count")
+  fallbackCount  Int       @default(0) @map("fallback_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  skippedCount   Int       @default(0) @map("skipped_count")
+  receiptsIssued Int       @default(0) @map("receipts_issued")
+  error          String?
+  startedAt      DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(3)
+
+  merchant   MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveries NoticeDelivery[]
+
+  @@unique([merchantId, monthKey])
+  @@index([startedAt])
+  @@map("notice_run")
+}
+
+/// 월간 안내 후원자별 발송 기록. 같은 실행에서 같은 후원자에게 두 번 보내지 않는다.
+model NoticeDelivery {
+  id          String   @id
+  noticeRunId String   @map("notice_run_id")
+  payerId     String   @map("payer_id")
+  /// SENT · FAILED · SKIPPED
+  status      String
+  channel     String?
+  amount      BigInt   @default(0)
+  mtMessageId String?  @map("mt_message_id")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  run NoticeRun @relation(fields: [noticeRunId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeRunId, payerId])
+  @@map("notice_delivery")
+}
+
+enum AgreementKind {
+  RECURRING_PLEDGE
+  VOLUNTEER_APPLICATION
+
+  @@map("agreement_kind")
+}
+
+enum ESignStatus {
+  /// 전자서명 없이 동의 기록(시각·IP·약관 버전)으로 성립
+  NONE
+  REQUESTED
+  SIGNED
+  DECLINED
+  EXPIRED
+
+  @@map("esign_status")
+}
+
+/// 전자 약정서·신청서. 작성 시점의 내용을 스냅샷으로 고정하고 SHA-256 을 남긴다.
+/// 약정을 바꾸면 새 버전을 만들고 이전 버전은 그대로 보존한다.
+model AgreementDocument {
+  id             String        @id
+  merchantId     String        @map("merchant_id")
+  payerId        String        @map("payer_id")
+  kind           AgreementKind
+  /// 약정 ID 또는 봉사 신청 ID
+  subjectId      String        @map("subject_id")
+  version        Int           @default(1)
+  /// 문서 번호 {기관코드}-AG-{yyyyMM}-{6자리}
+  docNo          String        @unique @map("doc_no")
+  title          String
+  /// 서식에 들어간 값 (기관·후원자 마스킹 정보·금액·출금일·캠페인·동의 문구)
+  snapshot       Json
+  contentHash    String        @map("content_hash")
+  consentAt      DateTime      @map("consent_at") @db.Timestamptz(3)
+  consentIp      String?       @map("consent_ip")
+  userAgent      String?       @map("user_agent")
+  termsVersion   String?       @map("terms_version")
+  esignProvider  String?       @map("esign_provider")
+  esignRequestId String?       @map("esign_request_id")
+  esignStatus    ESignStatus   @default(NONE) @map("esign_status")
+  signedAt       DateTime?     @map("signed_at") @db.Timestamptz(3)
+  /// 이전 버전을 대체했으면 그 문서 ID
+  supersedesId   String?       @map("supersedes_id")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Restrict)
+
+  @@unique([kind, subjectId, version])
+  @@index([merchantId, createdAt])
+  @@index([payerId, createdAt])
+  @@index([esignRequestId])
+  @@map("agreement_document")
+}
+
+enum ContentKind {
+  SHORTFORM
+  IMAGE_SQUARE
+  IMAGE_STORY
+
+  @@map("content_kind")
+}
+
+enum ContentStatus {
+  DRAFT
+  GENERATING
+  REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  ARCHIVED
+
+  @@map("content_status")
+}
+
+/// 기관별 콘텐츠 자동 생성 설정
+model MerchantContentSetting {
+  merchantId  String   @id @map("merchant_id")
+  /// WARM(따뜻한) · HOPEFUL(희망찬) · CALM(차분한) · URGENT(긴급)
+  tone        String   @default("WARM")
+  /// 콘텐츠에 쓰지 않을 단어
+  bannedWords String[] @map("banned_words")
+  /// 승인 없이 바로 게시 예약까지 진행 (기본 꺼짐)
+  autoApprove Boolean  @default(false) @map("auto_approve")
+  /// 월 생성 한도 (건)
+  monthlyLimit Int     @default(30) @map("monthly_limit")
+  /// 기본 해시태그
+  hashtags    String[]
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("merchant_content_setting")
+}
+
+/// 자동 생성 콘텐츠 1건 (숏폼 또는 이미지). 생성 → 검토 → 승인 → 게시.
+model ContentItem {
+  id           String        @id
+  merchantId   String        @map("merchant_id")
+  campaignId   String?       @map("campaign_id")
+  kind         ContentKind
+  status       ContentStatus @default(DRAFT)
+  title        String
+  /// 내레이션·자막 대본
+  script       String?
+  /// 장면 목록 [{caption, durationSec, svg}]
+  scenes       Json          @default("[]")
+  /// 게시물 캡션 (링크·키워드·AI 표기·모집등록번호 포함)
+  caption      String?
+  hashtags     String[]
+  /// 대표 이미지/썸네일 SVG
+  coverSvg     String?       @map("cover_svg")
+  /// 생성형 AI 산출물 표시 (AI 기본법) — 항상 true 로 만든다
+  aiLabeled    Boolean       @default(true) @map("ai_labeled")
+  /// 기부금품 모집등록번호가 콘텐츠에 들어갔는지. false 면 승인할 수 없다.
+  regNoIncluded Boolean      @default(false) @map("reg_no_included")
+  /// 생성 공급자 (mock · openai · …)
+  provider     String
+  /// 생성 비용 (원, 공급자 단가 기준 추정)
+  costKrw      Int           @default(0) @map("cost_krw")
+  error        String?
+  createdBy    String        @map("created_by")
+  approvedBy   String?       @map("approved_by")
+  approvedAt   DateTime?     @map("approved_at") @db.Timestamptz(3)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant  MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  jobs      ContentJob[]
+  publishes ContentPublish[]
+
+  @@index([merchantId, status, createdAt])
+  @@index([campaignId])
+  @@map("content_item")
+}
+
+/// 콘텐츠 생성 단계 기록. (콘텐츠, 단계) 당 1행 — 같은 단계를 두 번 과금하지 않는다.
+model ContentJob {
+  id        String   @id
+  itemId    String   @map("item_id")
+  /// SCRIPT · SCENES · VOICE · ASSEMBLE · COVER
+  step      String
+  status    String
+  provider  String
+  costKrw   Int      @default(0) @map("cost_krw")
+  output    Json?
+  error     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  item ContentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, step])
+  @@map("content_job")
+}
+
+enum SocialPlatform {
+  YOUTUBE
+  INSTAGRAM
+  FACEBOOK
+
+  @@map("social_platform")
+}
+
+/// 기관이 연결한 SNS 계정. 토큰은 암호화 저장한다.
+model SocialChannel {
+  id              String         @id
+  merchantId      String         @map("merchant_id")
+  platform        SocialPlatform
+  accountName     String         @map("account_name")
+  externalId      String?        @map("external_id")
+  accessTokenEnc  String?        @map("access_token_enc")
+  refreshTokenEnc String?        @map("refresh_token_enc")
+  expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
+  /// CONNECTED · EXPIRED · REVOKED
+  status          String         @default("CONNECTED")
+  /// mock 연결이면 실제 게시가 일어나지 않는다
+  mock            Boolean        @default(true)
+  connectedBy     String         @map("connected_by")
+  connectedAt     DateTime       @default(now()) @map("connected_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, platform])
+  @@map("social_channel")
+}
+
+/// 콘텐츠 게시. (콘텐츠, 플랫폼) 당 1회 (멱등).
+model ContentPublish {
+  id             String         @id
+  itemId         String         @map("item_id")
+  platform       SocialPlatform
+  /// SCHEDULED · PUBLISHING · PUBLISHED · PRIVATE_UPLOADED · FAILED · CANCELED
+  status         String         @default("SCHEDULED")
+  mock           Boolean        @default(true)
+  scheduledAt    DateTime       @map("scheduled_at") @db.Timestamptz(3)
+  publishedAt    DateTime?      @map("published_at") @db.Timestamptz(3)
+  externalPostId String?        @map("external_post_id")
+  url            String?
+  attempts       Int            @default(0)
+  error          String?
+  views          Int            @default(0)
+  likes          Int            @default(0)
+  clicks         Int            @default(0)
+  metricsAt      DateTime?      @map("metrics_at") @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  item ContentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, platform])
+  @@index([status, scheduledAt])
+  @@map("content_publish")
 }

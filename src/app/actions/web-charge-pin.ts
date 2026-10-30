@@ -1,5 +1,6 @@
 'use server';
 
+import { currentAttribution } from '@/server/attribution';
 import { cookies } from 'next/headers';
 import { prisma } from '@/server/db';
 import { kv } from '@/server/redis';
@@ -167,6 +168,7 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
     return registerGuide({ phone, ph, masked, merchantId, payerExists: Boolean(payer) });
   }
 
+  const attribution = await currentAttribution();
   const result = await createWebCharge({
     phoneHash: ph,
     merchantId,
@@ -175,6 +177,8 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
     requestId,
     campaignId,
     anonymous,
+    source: attribution?.source ?? 'WEB',
+    contentItemId: attribution?.contentItemId ?? null,
   });
 
   if (!result.ok || !result.chargeId) {

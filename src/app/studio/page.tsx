@@ -23,6 +23,7 @@ import { featureGoodsEnabled } from '@/lib/env';
 import { campaignProgress, daysLeft } from '@/lib/fundraising';
 import { ProgressBar } from '@/components/public/progress-bar';
 import { listCampaigns, merchantDonationSummary, monthlyTrend } from '@/server/services/fundraising';
+import { AutomationFunnel } from '@/components/studio/automation-funnel';
 import { receiptCandidates } from '@/server/services/receipts';
 
 export const dynamic = 'force-dynamic';
@@ -158,9 +159,12 @@ export default async function StudioDashboardPage() {
         <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
           <TodoTile href="/studio/campaigns" label="모금 중 캠페인" value={openCampaigns.length} unit="개" hint={openCampaigns.length ? `${formatWon(openCampaigns.reduce((a, c) => a + c.stats.raised, 0n))} 모금` : '캠페인 만들기'} />
           <TodoTile href="/studio/recurring" label="정기후원" value={donation.recurringActive} unit="명" hint={donation.recurringActive ? `월 ${formatWon(donation.recurringMonthly)}` : '약정 없음'} />
-          <TodoTile href="/studio/donors" label="함께한 후원자" value={donation.totalDonors} unit="명" hint={`누적 ${formatWon(donation.totalRaised)}`} />
+          <TodoTile href="/studio/supporters" label="함께한 후원자" value={donation.totalDonors} unit="명" hint={`누적 ${formatWon(donation.totalRaised)}`} />
           <TodoTile href="/studio/receipts" label="영수증 발급 대기" value={receiptPending} unit="명" hint={receiptPending ? '기부금영수증 발급' : '대기 없음'} />
         </div>
+
+        {/* 0-2) 자동화 깔때기 — 콘텐츠 유입 → 후원·약정·봉사 전환 → 알림톡·영수증 안내 */}
+        <AutomationFunnel merchantId={merchantId} />
         {goodsEnabled ? (
           <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
             <TodoTile href="/studio/orders?tab=delivery" label="배송 준비" value={ordersPending} unit="건" hint={ordersPending > 0 ? '송장 등록 필요' : '밀린 주문 없음'} />

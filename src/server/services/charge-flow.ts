@@ -4,12 +4,15 @@ import { newId, newOrderNo, newTransactionNo } from '@/lib/id';
 import { decrypt, encrypt, maskPhone, normalizePhone, phoneHash as hashPhone } from '@/lib/crypto';
 import { payerDisplayName } from '@/lib/payer-name';
 import { logger } from '@/lib/logger';
-import { env, allowLegacyConfirmLink } from '@/lib/env';
+import { env, allowLegacyConfirmLink, featureVolunteerEnabled } from '@/lib/env';
+import { reservedKeywordKind } from '@/lib/fundraising';
+import { kv } from '@/server/redis';
 import type { MoInbound } from '@/server/adapters/mo';
 import { getMtAdapter, decideMessageType } from '@/server/adapters/mt';
 import { getPaymentAdapter, MockPaymentTimeout } from '@/server/adapters/payment';
-import { filterContent, normalizeKeyword, splitKeyword, type BannedWordRule } from './content-filter';
+import { filterContent, normalizeKeyword, normalizeText, splitKeyword, type BannedWordRule } from './content-filter';
 import { donationMeta, matchCampaignKeyword } from './fundraising';
+import { resolveAlimtalkRoute, sendAlimtalk } from './alimtalk';
 import { emitMerchantEvent } from './webhooks';
 import { checkLimits, commitCounters, rollbackCounters, registerFailure, clearFailures, resolvePolicy } from './limits';
 import { withAdvisoryLock } from '@/server/db';
@@ -68,11 +71,51 @@ async function sendMtDetailed(input: {
    * 사회복지기관 발송은 어느 사회복지기관 템플릿이었는지 남겨야 해서 따로 넘긴다.
    */
   templateCodeLabel?: string | null;
-}): Promise<{ ok: boolean; id: string }> {
+}): Promise<{ ok: boolean; id: string; channel: 'SMS' | 'ALIMTALK'; fallback: boolean }> {
   const adapter = getMtAdapter();
   // 관리자가 화면에서 저장한 본문이 있으면 그 문구로 바꿔 보낸다.
   // (조회 실패 시에는 원본 템플릿이 그대로 돌아오므로 발송 자체는 막히지 않는다)
   const template = await tpl.applyMtTemplateOverride(input.template);
+
+  // 알림톡 경로: 기관 채널이 관리자 확인(ACTIVE)이고 템플릿 코드가 있으면 알림톡을 먼저 보낸다.
+  // 기관이 API 로 직접 보내는 문자는 기관이 검수받은 문자 템플릿이라 알림톡으로 바꾸지 않는다.
+  // 알림톡이 실패하면 아래 문자 경로로 그대로 대체 발송한다(fallback=true 로 기록).
+  let fallback = false;
+  const route = input.merchantSent ? null : await resolveAlimtalkRoute(input.merchantId, template.code).catch(() => null);
+  if (route) {
+    const at = await sendAlimtalk(normalizePhone(input.phone), route, template.text);
+    if (at.ok) {
+      const atRow = await prisma.mtOutboundMessage.create({
+        data: {
+          id: newId(),
+          phoneHash: hashPhone(input.phone),
+          phoneEnc: encrypt(normalizePhone(input.phone)),
+          phoneMasked: maskPhone(input.phone),
+          fromNumber: env.mt.fromNumber,
+          messageType: decideMessageType(template.text),
+          templateCode: input.templateCodeLabel ?? template.code,
+          bodyMasked: template.masked,
+          chargeId: input.chargeId ?? null,
+          merchantId: input.merchantId ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
+          merchantSent: input.merchantSent ?? false,
+          channel: 'ALIMTALK',
+          status: 'SENT',
+          providerCode: `alimtalk:${at.provider}`,
+          providerMessageId: at.messageId,
+          attempts: 1,
+          sentAt: new Date(),
+        },
+      });
+      if (input.chargeId) {
+        await prisma.charge.update({ where: { id: input.chargeId }, data: { mtStatus: 'SENT' } });
+      }
+      return { ok: true, id: atRow.id, channel: 'ALIMTALK', fallback: false };
+    }
+    fallback = true;
+    logger.warn('알림톡 발송 실패 — 문자로 대체합니다', { template: template.code, code: at.code });
+  }
+
   const row = await prisma.mtOutboundMessage.create({
     data: {
       id: newId(),
@@ -87,6 +130,8 @@ async function sendMtDetailed(input: {
       merchantId: input.merchantId ?? null,
       idempotencyKey: input.idempotencyKey ?? null,
       merchantSent: input.merchantSent ?? false,
+      channel: 'SMS',
+      fallback,
     },
   });
 
@@ -110,14 +155,14 @@ async function sendMtDetailed(input: {
         data: { mtStatus: res.ok ? 'SENT' : 'FAILED' },
       });
     }
-    return { ok: res.ok, id: row.id };
+    return { ok: res.ok, id: row.id, channel: 'SMS', fallback };
   } catch (e) {
     await prisma.mtOutboundMessage.update({
       where: { id: row.id },
       data: { status: 'FAILED', resultMessage: (e as Error).message, attempts: { increment: 1 } },
     });
     logger.error('MT 발송 실패', { message: (e as Error).message });
-    return { ok: false, id: row.id };
+    return { ok: false, id: row.id, channel: 'SMS', fallback };
   }
 }
 
@@ -553,6 +598,12 @@ async function processMoRow(
   }
 
   const payer = await getOrCreatePayer(inbound.fromNumber);
+
+  // (2-1) 문자 예약어: '정기' → 정기후원 약정 링크, '봉사' → 자원봉사 신청 링크.
+  // 후원(결제) 건을 만들지 않는다. 결제수단 등록 여부와 상관없이 안내 링크만 보낸다
+  // (약정 화면이 등록·로그인을 이어서 안내한다).
+  const reserved = await handleReservedMoKeyword({ inbound, routed, moRowId: moRow.id, ph });
+  if (reserved) return reserved;
 
   // (3) 실제 활성 빌키가 있을 때만 결제 결제로 진행한다.
   const token = await prisma.paymentMethodToken.findFirst({
@@ -1582,6 +1633,68 @@ async function sendMtForPayer(payerId: string, template: TemplateOutput, chargeI
   if (!payer) return false;
   const phone = decrypt(payer.phoneEnc);
   return sendMt({ phone, template, chargeId, merchantId });
+}
+
+/**
+ * 문자 예약어 처리. 예약어가 아니면 null 을 돌려주고 일반 후원 흐름으로 넘어간다.
+ *
+ * 같은 번호가 같은 예약어를 10분 안에 다시 보내면 링크를 다시 보내지 않는다(문자 폭주 방지).
+ * 기록은 수신 문자(resultDetail)에 남겨 기관 콘솔 '약정 미완료 재안내'의 근거로 쓴다.
+ */
+export const RESERVED_DETAIL = { PLEDGE: 'PLEDGE_REQUEST', VOLUNTEER: 'VOLUNTEER_REQUEST' } as const;
+
+async function handleReservedMoKeyword(input: {
+  inbound: MoInbound;
+  routed: NonNullable<RoutedMerchant>;
+  moRowId: string;
+  ph: string;
+}): Promise<MoHandleResult | null> {
+  const body = normalizeTextForReserved(input.routed.body);
+  const m = body.match(/^(\S+)(?:\s+([\s\S]*))?$/u);
+  if (!m) return null;
+  const kind = reservedKeywordKind(m[1]!);
+  if (!kind) return null;
+  if (kind === 'VOLUNTEER' && !featureVolunteerEnabled()) return null;
+
+  const merchant = input.routed.merchant;
+  // 예약어 뒤에 캠페인 키워드가 오면 약정을 그 캠페인으로 지정한다 (예: "정기 김장").
+  const rest = (m[2] ?? '').trim();
+  const campaign = kind === 'PLEDGE' && rest ? (await matchCampaignKeyword(merchant.id, rest)).campaign : null;
+
+  const throttleKey = `mo:reserved:${merchant.id}:${input.ph}:${kind}`;
+  const first = await kv.setnx(throttleKey, '1', 600).catch(() => true);
+  await prisma.moInboundMessage.update({
+    where: { id: input.moRowId },
+    data: {
+      result: 'ROUTED',
+      resultDetail: `${RESERVED_DETAIL[kind]}${campaign ? `:${campaign.code}` : ''}${first ? '' : ' (10분 내 재요청·링크 생략)'}`,
+      processedAt: new Date(),
+    },
+  });
+  if (!first) {
+    return { result: 'ROUTED', moMessageId: input.moRowId, message: '같은 안내를 방금 보냈습니다. 링크를 다시 보내지 않았습니다.' };
+  }
+
+  const qs = new URLSearchParams({ merchant: merchant.code, src: 'sms' });
+  if (campaign) qs.set('campaign', campaign.id);
+  const link =
+    kind === 'PLEDGE'
+      ? `${env.baseUrl}/my/recurring/new?${qs.toString()}`
+      : `${env.baseUrl}/my/volunteer/apply?${qs.toString()}`;
+  const template =
+    kind === 'PLEDGE'
+      ? tpl.tplPledgeLink({ merchantName: merchant.displayName, link })
+      : tpl.tplVolunteerLink({ merchantName: merchant.displayName, link });
+  await sendMt({ phone: input.inbound.fromNumber, template, merchantId: merchant.id });
+  return {
+    result: 'ROUTED',
+    moMessageId: input.moRowId,
+    message: kind === 'PLEDGE' ? '정기후원 약정 링크를 보냈습니다. 후원 건은 만들지 않았습니다.' : '자원봉사 신청 링크를 보냈습니다.',
+  };
+}
+
+function normalizeTextForReserved(v: string) {
+  return normalizeText(v ?? '');
 }
 
 export { sendMt, sendMtDetailed, sendMtForPayer, setStatus };

@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
 import { confirmChargeAmount } from '@/server/services/charge-select';
 import type { ConsentType } from '@/generated/prisma/enums';
 
-const CONSENT_TYPES: ConsentType[] = ['TERMS_SERVICE', 'PRIVACY', 'E_FINANCE', 'WITHDRAWAL_AGREE', 'AGE_CONFIRM', 'MARKETING', 'RECEIPT_ISSUANCE', 'RECURRING_DEBIT'];
+const CONSENT_TYPES: ConsentType[] = ['TERMS_SERVICE', 'PRIVACY', 'E_FINANCE', 'WITHDRAWAL_AGREE', 'AGE_CONFIRM', 'MARKETING', 'RECEIPT_ISSUANCE', 'RECURRING_DEBIT', 'VOLUNTEER_PRIVACY'];
 import { clientIpFrom } from '@/server/rate-limit';
 
 /**

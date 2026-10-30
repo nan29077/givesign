@@ -52,6 +52,18 @@ export const MT_TEMPLATE = {
   EDOC_SIGN_VERIFY: 'EDOC_SIGN_VERIFY',
   /** 전자문서 서명 완료 안내 */
   EDOC_COMPLETED: 'EDOC_COMPLETED',
+  /** 문자 '정기' 회신: 정기후원 약정 링크 */
+  PLEDGE_LINK: 'PLEDGE_LINK',
+  /** 문자 '봉사' 회신: 자원봉사 신청 링크 */
+  VOLUNTEER_LINK: 'VOLUNTEER_LINK',
+  /** 자원봉사 신청 접수 */
+  VOLUNTEER_RECEIVED: 'VOLUNTEER_RECEIVED',
+  /** 자원봉사 신청 승인·배정 안내 */
+  VOLUNTEER_APPROVED: 'VOLUNTEER_APPROVED',
+  /** 월간 후원 내역 안내 */
+  MONTHLY_NOTICE: 'MONTHLY_NOTICE',
+  /** 전자 약정서 발급 안내 (열람 링크) */
+  AGREEMENT_ISSUED: 'AGREEMENT_ISSUED',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -398,6 +410,47 @@ export function tplReceiptIssued(input: { merchantName: string; taxYear: number;
   return { code: MT_TEMPLATE.RECEIPT_ISSUED, text, masked: maskLink(text) };
 }
 
+export function tplPledgeLink(input: { merchantName: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName} 정기후원 약정 안내입니다. 금액과 출금일을 정해 약정서를 작성해 주세요:`, input.link);
+  return { code: MT_TEMPLATE.PLEDGE_LINK, text, masked: maskLink(text) };
+}
+
+export function tplVolunteerLink(input: { merchantName: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName} 자원봉사 신청 안내입니다. 활동 분야와 가능한 시간을 적어 신청해 주세요:`, input.link);
+  return { code: MT_TEMPLATE.VOLUNTEER_LINK, text, masked: maskLink(text) };
+}
+
+export function tplVolunteerReceived(input: { merchantName: string }): TemplateOutput {
+  const text = `[기브싸인] ${input.merchantName} 자원봉사 신청이 접수되었습니다. 담당자가 확인한 뒤 활동 일정을 안내해 드립니다.`;
+  return { code: MT_TEMPLATE.VOLUNTEER_RECEIVED, text, masked: text, vars: { 사회복지기관: input.merchantName } };
+}
+
+export function tplVolunteerApproved(input: { merchantName: string; assignment: string }): TemplateOutput {
+  const text = `[기브싸인] ${input.merchantName} 자원봉사 신청이 승인되었습니다. 안내: ${input.assignment}`;
+  return { code: MT_TEMPLATE.VOLUNTEER_APPROVED, text, masked: text };
+}
+
+export function tplMonthlyNotice(input: {
+  merchantName: string;
+  month: string;
+  amount: bigint;
+  count: number;
+  yearTotal: bigint;
+  link: string;
+}): TemplateOutput {
+  const [y, m] = input.month.split('-');
+  const body =
+    `[기브싸인] ${input.merchantName} ${Number(m)}월 후원 안내. ${y}년 ${Number(m)}월 ${input.count}회 ${formatNumber(input.amount)}원, ` +
+    `올해 누적 ${formatNumber(input.yearTotal)}원 후원해 주셨습니다. 감사합니다. 내역·영수증:`;
+  const text = withLink(body, input.link);
+  return { code: MT_TEMPLATE.MONTHLY_NOTICE, text, masked: maskLink(text) };
+}
+
+export function tplAgreementIssued(input: { merchantName: string; title: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName} ${input.title}가 작성되었습니다. 보관용 열람:`, input.link);
+  return { code: MT_TEMPLATE.AGREEMENT_ISSUED, text, masked: maskLink(text) };
+}
+
 export function tplAccountInactive(merchantName: string): TemplateOutput {
   // 해지한 후원자에게 문자만으로 등록 링크를 자동 재발급하지는 않는다(의도된 정책).
   // 대신 실제로 다시 등록할 수 있는 경로를 알려 준다. 예전 문구("이용 상태를 확인하거나
@@ -590,6 +643,48 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '기부금영수증이 발급되면 열람 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
     editable: false,
     defaultBody: '{사회복지기관} 기부금영수증이 발급되었습니다. 열람·출력: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.PLEDGE_LINK]: {
+    label: '정기후원 약정 링크 (문자 \'정기\' 회신)',
+    description: '기관 번호로 "정기" 라고 보내면 정기후원 약정서 작성 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 약정 안내입니다. 금액과 출금일을 정해 약정서를 작성해 주세요: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.VOLUNTEER_LINK]: {
+    label: '자원봉사 신청 링크 (문자 \'봉사\' 회신)',
+    description: '기관 번호로 "봉사" 라고 보내면 자원봉사 신청서 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 자원봉사 신청 안내입니다. 활동 분야와 가능한 시간을 적어 신청해 주세요: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.VOLUNTEER_RECEIVED]: {
+    label: '자원봉사 신청 접수',
+    description: '자원봉사 신청서를 제출하면 접수 안내를 보냅니다.',
+    editable: true,
+    defaultBody: '{사회복지기관} 자원봉사 신청이 접수되었습니다. 담당자가 확인한 뒤 활동 일정을 안내해 드립니다.',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.VOLUNTEER_APPROVED]: {
+    label: '자원봉사 승인·배정 안내',
+    description: '기관이 신청을 승인하면 배정 내용을 보냅니다. 배정 문구는 기관이 적으므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 자원봉사 신청이 승인되었습니다. 안내: (기관 배정 문구)',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.MONTHLY_NOTICE]: {
+    label: '월간 후원 내역 안내',
+    description: '매월 1일 전월 후원 내역·올해 누적과 열람 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 10월 후원 안내. 2026년 10월 1회 10,000원, 올해 누적 100,000원 후원해 주셨습니다. 감사합니다. 내역·영수증: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.AGREEMENT_ISSUED]: {
+    label: '전자 약정서·신청서 발급',
+    description: '정기후원 약정서·자원봉사 신청서가 만들어지면 보관용 열람 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 약정서가 작성되었습니다. 보관용 열람: [보안링크]',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.MERCHANT_NOTICE]: {

@@ -13,6 +13,7 @@ import {
 } from '@/server/services/recurring';
 import { deleteReceiptProfile, rotateReceiptToken, upsertReceiptProfile } from '@/server/services/receipts';
 import { normalizeMerchantCode } from '@/lib/id';
+import { currentAttribution } from '@/server/attribution';
 
 /**
  * 후원자(마이페이지) — 정기후원 · 기부금영수증 액션.
@@ -67,6 +68,7 @@ export async function createRecurringAction(_prev: DonorActionState, f: FormData
   if (!/^\d{1,9}$/.test(amountRaw)) return { ok: false, message: '후원 금액을 숫자로 입력해 주세요.' };
   const day = Number(text(f, 'dayOfMonth'));
   const meta = await requestMeta();
+  const attribution = await currentAttribution();
   try {
     const r = await createRecurringDonation({
       payerId: ctx.payerId,
@@ -77,6 +79,8 @@ export async function createRecurringAction(_prev: DonorActionState, f: FormData
       message: text(f, 'message'),
       anonymous: Boolean(f.get('anonymous')),
       ...meta,
+      source: attribution?.source ?? null,
+      contentItemId: attribution?.contentItemId ?? null,
     });
     if (!r.ok) return { ok: false, message: r.message };
     revalidatePath('/my/recurring');
@@ -98,7 +102,7 @@ export async function updateRecurringAction(_prev: DonorActionState, f: FormData
       dayOfMonth: Number(text(f, 'dayOfMonth')),
       message: text(f, 'message'),
       anonymous: Boolean(f.get('anonymous')),
-    });
+    }, await requestMeta());
     revalidatePath('/my/recurring');
     return { ok: true, message: '정기후원 내용을 바꿨습니다.' };
   } catch (e) {

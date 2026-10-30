@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { PageHeader } from '@/components/layout/console-shell';
@@ -68,6 +69,7 @@ export default async function StudioRecurringPage() {
               <Th>캠페인</Th>
               <Th>누적</Th>
               <Th>최근 실패</Th>
+              <Th>약정서</Th>
             </tr>
           </thead>
           <tbody>
@@ -86,6 +88,7 @@ export default async function StudioRecurringPage() {
                   <Td>{r.campaign?.title ?? <span className="text-ink-300">일반</span>}</Td>
                   <Td className="tabular-nums">{formatWon(r.totalAmount)} · {r.successCount}회</Td>
                   <Td className="text-[12px] text-ink-500"><span className="block max-w-[220px] truncate" title={r.lastFailure ?? ''}>{r.lastFailure ?? '-'}</span></Td>
+                  <Td>{r.agreementDocId ? <Link href={`/studio/agreements/${r.agreementDocId}`} className="text-[12.5px] font-bold text-brand-700">열람</Link> : <span className="text-ink-300">-</span>}</Td>
                 </tr>
               );
             })}

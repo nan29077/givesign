@@ -32,7 +32,7 @@ export async function currentTermsDoc(type: ConsentType, now: Date = new Date())
  * 기부금영수증 정보 수집은 영수증 신청 때, 정기후원 자동 출금은 약정 때 받는다.
  * 가입 화면에 섞어 두면 아직 신청하지도 않은 일에 대한 동의를 받게 된다.
  */
-export const CONTEXTUAL_CONSENT_TYPES: ConsentType[] = ['RECEIPT_ISSUANCE', 'RECURRING_DEBIT'];
+export const CONTEXTUAL_CONSENT_TYPES: ConsentType[] = ['RECEIPT_ISSUANCE', 'RECURRING_DEBIT', 'VOLUNTEER_PRIVACY'];
 
 export async function currentTermsList(now: Date = new Date()) {
   const rows = await prisma.termsVersion.findMany({

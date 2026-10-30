@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cx } from '@/components/ui';
-import { HeartHandshake, Repeat, ReceiptText, UserRound } from 'lucide-react';
+import { HandHeart, HeartHandshake, Repeat, ReceiptText, UserRound } from 'lucide-react';
 
 /**
  * 마이페이지 탭.
@@ -11,7 +11,8 @@ import { HeartHandshake, Repeat, ReceiptText, UserRound } from 'lucide-react';
  */
 const TABS = [
   { href: '/my', label: '후원 내역', icon: HeartHandshake, match: ['/my', '/my/payments'] },
-  { href: '/my/recurring', label: '정기후원', icon: Repeat, match: ['/my/recurring', '/my/recurring/new'] },
+  { href: '/my/recurring', label: '정기후원', icon: Repeat, match: ['/my/recurring', '/my/recurring/new', '/my/agreements'] },
+  { href: '/my/volunteer', label: '봉사', icon: HandHeart, match: ['/my/volunteer', '/my/volunteer/apply'] },
   { href: '/my/receipts', label: '영수증', icon: ReceiptText, match: ['/my/receipts'] },
   { href: '/my/account', label: '내 정보', icon: UserRound, match: ['/my/account', '/my/limits', '/my/blocks', '/my/consents'] },
 ];

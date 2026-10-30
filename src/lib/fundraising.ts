@@ -64,6 +64,26 @@ export const defaultDonationPage: DonationPageInput = {
 /** 캠페인 문자 키워드: 한글·영문·숫자 2~10자. 비교는 normalizeKeyword 기준(대문자·기호 제거). */
 export const CAMPAIGN_CODE_RE = /^[\p{L}\p{N}]{2,10}$/u;
 
+/**
+ * 문자 예약어. 기관 번호로 이 단어를 보내면 후원이 아니라 안내 링크로 답한다.
+ *  - 정기 / 정기후원 → 정기후원 약정 링크
+ *  - 봉사 / 자원봉사 → 자원봉사 신청 링크
+ * 캠페인 키워드로 쓸 수 없다(예약어가 우선).
+ */
+export const RESERVED_MO_KEYWORDS = {
+  PLEDGE: ['정기', '정기후원', '약정'],
+  VOLUNTEER: ['봉사', '자원봉사'],
+} as const;
+export type ReservedMoKind = keyof typeof RESERVED_MO_KEYWORDS;
+
+export function reservedKeywordKind(code: string): ReservedMoKind | null {
+  const c = normalizeCampaignCode(code);
+  for (const [kind, words] of Object.entries(RESERVED_MO_KEYWORDS) as Array<[ReservedMoKind, readonly string[]]>) {
+    if (words.some((w) => normalizeCampaignCode(w) === c)) return kind;
+  }
+  return null;
+}
+
 export function normalizeCampaignCode(raw: string): string {
   return (raw ?? '').normalize('NFKC').replace(/[\s._\-*~/+#]/gu, '').toUpperCase();
 }
@@ -74,7 +94,8 @@ export const campaignSchema = z
       .string()
       .trim()
       .transform(normalizeCampaignCode)
-      .refine((v) => CAMPAIGN_CODE_RE.test(v), '문자 키워드는 한글·영문·숫자 2~10자로 입력해 주세요.'),
+      .refine((v) => CAMPAIGN_CODE_RE.test(v), '문자 키워드는 한글·영문·숫자 2~10자로 입력해 주세요.')
+      .refine((v) => !reservedKeywordKind(v), '정기·정기후원·약정·봉사·자원봉사는 문자 예약어라 캠페인 키워드로 쓸 수 없습니다.'),
     title: z.string().trim().min(1, '캠페인 제목을 입력해 주세요.').max(100),
     summary: z.string().trim().min(1, '한 줄 소개를 입력해 주세요.').max(300),
     story: z.string().trim().max(10000).default(''),

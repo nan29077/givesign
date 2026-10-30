@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import { payerDisplayName } from '@/lib/payer-name';
 import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, sendMtForPayer, setStatus } from './charge-flow';
+import { issueRecurringAgreement } from './agreements';
 import { filterContent } from './content-filter';
 import { resolvePolicy } from './limits';
 import { campaignOpen } from '@/lib/fundraising';
@@ -83,6 +84,9 @@ export interface CreateRecurringInput {
   anonymous?: boolean;
   ip?: string;
   userAgent?: string;
+  /** 유입 경로 (SNS 링크 등) */
+  source?: string | null;
+  contentItemId?: string | null;
 }
 
 export type CreateRecurringResult =
@@ -233,6 +237,8 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
           nextChargeOn: dateCol(firstDate),
           cycleMonth: firstDate.slice(0, 7),
           consentId: consent.id,
+          source: input.source ?? null,
+          contentItemId: input.contentItemId ?? null,
         },
       });
     });
@@ -240,6 +246,11 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
     if (isUniqueViolation(e)) return { ok: false, message: DUP_MESSAGE };
     throw e;
   }
+
+  // 전자 약정서. 만들지 못해도 약정 자체는 동의 기록으로 성립한다(사후 처리 실패가 약정을 되돌리지 않는다).
+  await issueRecurringAgreement(recurring.id, { ip: input.ip, userAgent: input.userAgent }).catch((e) =>
+    logger.error('정기후원 약정서 생성 실패', { recurringId: recurring.id, message: (e as Error).message }),
+  );
 
   await sendMtForPayer(
     payer.id,
@@ -255,6 +266,7 @@ export async function updateRecurringDonation(
   payerId: string,
   id: string,
   patch: { amount?: bigint; dayOfMonth?: number; message?: string; anonymous?: boolean; campaignId?: string | null },
+  meta?: { ip?: string; userAgent?: string },
 ) {
   const row = await prisma.recurringDonation.findFirst({ where: { id, payerId } });
   if (!row) throw new Error('정기후원을 찾을 수 없습니다.');
@@ -274,7 +286,11 @@ export async function updateRecurringDonation(
   const dayChanged = patch.dayOfMonth !== undefined && patch.dayOfMonth !== row.dayOfMonth;
   // 출금일을 바꾸면 지금 기준으로 다시 잡는다. 이미 성공한 주기로는 되돌아가지 않는다.
   const next = dayChanged ? await nextScheduleFor(row.id, patch.dayOfMonth!) : null;
-  return prisma.recurringDonation.update({
+  const termsChanged =
+    (patch.amount !== undefined && patch.amount !== row.amount) ||
+    dayChanged ||
+    (patch.campaignId !== undefined && patch.campaignId !== row.campaignId);
+  const updated = await prisma.recurringDonation.update({
     where: { id },
     data: {
       ...(patch.amount !== undefined ? { amount: patch.amount } : {}),
@@ -285,6 +301,13 @@ export async function updateRecurringDonation(
       ...(next ? { nextChargeOn: dateCol(next), cycleMonth: next.slice(0, 7), failCount: 0 } : {}),
     },
   });
+  // 금액·출금일·지정 캠페인이 바뀌면 약정서 새 버전을 만든다(이전 버전은 보존).
+  if (termsChanged) {
+    await issueRecurringAgreement(updated.id, meta ?? {}).catch((e) =>
+      logger.error('정기후원 약정서(변경) 생성 실패', { recurringId: updated.id, message: (e as Error).message }),
+    );
+  }
+  return updated;
 }
 
 export async function setRecurringStatus(
@@ -623,6 +646,9 @@ async function runOne(
         pointStatus: 'SKIPPED',
         // 캠페인이 끝났으면 기관 일반 후원으로 돌린다.
         campaignId: campaignOk ? r.campaignId : null,
+        // 약정을 만든 유입 경로를 매월 결제 건에도 남긴다(콘텐츠별 전환 집계).
+        source: r.source ?? 'RECURRING',
+        contentItemId: r.contentItemId,
       },
     });
     chargeId = charge.id;

@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { BadgeCheck, CalendarClock, CheckCircle2, Clock3, HeartHandshake, MessageSquareText, Phone, Repeat, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { BadgeCheck, CalendarClock, CheckCircle2, Clock3, HandHeart, HeartHandshake, MessageSquareText, Phone, Repeat, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { prisma } from '@/server/db';
 import { getSessionUser } from '@/server/auth';
 import { doneeVerified } from '@/server/services/receipts';
@@ -16,6 +16,7 @@ import { campaignProgress, campaignStatusLabel, daysLeft } from '@/lib/fundraisi
 import { normalizeMerchantCode } from '@/lib/id';
 import { formatNumber, formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
+import { featureVolunteerEnabled } from '@/lib/env';
 
 import { OrgLogo } from '@/components/brand/org-logo';
 import { DonorShell } from '@/components/public/donor-shell';
@@ -166,6 +167,11 @@ function Landing({
           <MethodButton href={webHref} color={color} icon={<Phone size={17} strokeWidth={1.8} />} label="웹 후원" />
           <MethodButton href={recurringHref} color={color} icon={<Repeat size={17} strokeWidth={1.8} />} label="정기후원" />
         </div>
+        {featureVolunteerEnabled() ? (
+          <Link href={`/my/volunteer/apply?merchant=${org.code}`} className="mt-2 flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-ink-200 bg-white text-[13.5px] font-extrabold text-ink-900 hover:bg-ink-50">
+            <HandHeart size={16} strokeWidth={1.7} /> 자원봉사 신청
+          </Link>
+        ) : null}
         {route ? (
           <p className="mt-3 text-[12.5px] text-ink-500">
             후원 문자 번호 <span className="font-mono font-extrabold" style={{ color }}>{formatMoNumber(route.phoneNumber)}</span>
@@ -279,6 +285,10 @@ function Landing({
               <li>처음이라면 결제수단(내통장결제) 등록 안내가 먼저 옵니다. 문자만으로는 출금되지 않습니다.</li>
             </ol>
             {keyword ? <p className="mt-2 text-[12px] text-ink-500">키워드 없이 보내면 기관 일반 후원으로 접수됩니다.</p> : null}
+            <p className="mt-2 text-[12px] text-ink-500">
+              같은 번호로 <span className="font-mono font-extrabold">{`${prefix}정기`}</span> 를 보내면 정기후원 약정 링크가
+              {featureVolunteerEnabled() ? <>, <span className="font-mono font-extrabold">{`${prefix}봉사`}</span> 를 보내면 자원봉사 신청 링크가</> : null} 바로 옵니다.
+            </p>
           </section>
         ) : null}
 
