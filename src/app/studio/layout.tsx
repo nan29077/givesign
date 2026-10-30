@@ -40,6 +40,8 @@ function buildGroups(pending: {
         { href: '/studio', label: '대시보드', icon: 'dashboard' },
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
         { href: '/studio/supporters', label: '후원자·봉사자', icon: 'supporters' },
+        // 기관 후원 회원(후원페이지 로그인 회원)과 후원자별 상세 분석
+        { href: '/studio/donors', label: '후원자 관리·회원', icon: 'donors' },
         { href: '/studio/recurring', label: '정기후원', icon: 'recurring' },
         ...(volunteer ? [{ href: '/studio/volunteers', label: '자원봉사', icon: 'volunteers' as const, badge: pending.volunteers }] : []),
         { href: '/studio/agreements', label: '약정서·신청서', icon: 'agreements' },

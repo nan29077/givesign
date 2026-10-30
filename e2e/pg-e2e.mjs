@@ -128,11 +128,11 @@ try {
     return true;
   });
 
-  // ══════════════ 6. 주문 · 배송 · 문서 (기본 설정에서는 404) ══════════════
-  await r.step('상품 기능이 꺼져 있으면 /studio/orders 와 /studio/documents 는 열리지 않는다', async () => {
+  // ══════════════ 6. 주문 · 배송 (기본 설정에서는 404) · 문서 (전자문서 업무로 항상 제공) ══════════════
+  await r.step('상품 기능이 꺼져 있으면 /studio/orders 는 열리지 않고 /studio/documents 는 열린다', async () => {
     const res1 = await m.goto(`${BASE}/studio/orders`, { waitUntil: 'domcontentloaded' });
     const res2 = await m.goto(`${BASE}/studio/documents`, { waitUntil: 'domcontentloaded' });
-    if (res1?.status() !== 404 || res2?.status() !== 404) throw new Error(`orders=${res1?.status()} documents=${res2?.status()}`);
+    if (res1?.status() !== 404 || res2?.status() !== 200) throw new Error(`orders=${res1?.status()} documents=${res2?.status()}`);
     return true;
   });
 
