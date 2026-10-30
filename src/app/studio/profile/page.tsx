@@ -10,7 +10,7 @@ import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { formatKst } from '@/lib/datetime';
 import { merchantStatusLabel } from '@/lib/labels';
-import { ProfileAvatar } from '@/components/profile/generated-avatar';
+import { OrgLogo, isCustomLogo } from '@/components/brand/org-logo';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +35,7 @@ export default async function StudioSettingsProfilePage() {
 
       <div className="space-y-5">
         <section>
-          <SectionTitle title="채널 상태" />
+          <SectionTitle title="기관 상태" />
           <Card>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <CardTitle>{merchant.displayName}</CardTitle>
@@ -56,17 +56,11 @@ export default async function StudioSettingsProfilePage() {
           />
           <Card>
             <div className="mb-5 flex items-center gap-3 rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
-              <ProfileAvatar
-                seed={merchant.code}
-                avatarIndex={avatarIndex}
-                name={merchant.displayName}
-                imageUrl={merchant.avatarUrl}
-                className="h-16 w-16"
-              />
+              <OrgLogo code={merchant.code} name={merchant.displayName} logoUrl={merchant.avatarUrl} avatarIndex={avatarIndex} className="h-16 w-16" />
               <div>
-                <p className="text-[14px] font-extrabold text-ink-900">현재 프로필 캐릭터</p>
+                <p className="text-[14px] font-extrabold text-ink-900">{isCustomLogo(merchant.avatarUrl) ? '현재 기관 로고' : '기관 로고 미등록 (기본 캐릭터 표시 중)'}</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-ink-500">
-                  기본 캐릭터는 계정별로 50종 중 하나가 자동 배정되며 모든 화면에 동일하게 표시됩니다.
+                  기관 로고는 기관 콘솔 프로필, 공개 후원페이지 상단·기관 카드·메뉴에 함께 쓰입니다. 등록하기 전에는 기관마다 배정된 기본 캐릭터가 표시됩니다.
                 </p>
               </div>
             </div>
@@ -81,10 +75,10 @@ export default async function StudioSettingsProfilePage() {
               </div>
               <ImageUploadField
                 name="avatarUrl"
-                label="아바타(프로필 캐릭터)"
+                label="기관 로고"
                 aspect="square"
                 defaultValue={merchant.avatarUrl ?? ''}
-                hint="파일을 올리거나 이미지 URL 을 입력하세요. 비워두면 자동 배정된 캐릭터가 표시됩니다."
+                hint="정사각형에 가까운 로고(PNG·JPG, 배경 투명 권장)를 올리세요. 잘리지 않게 원본 비율로 표시합니다. 비워 두면 기본 캐릭터가 표시됩니다."
               />
             </ActionForm>
           </Card>
@@ -132,7 +126,7 @@ export default async function StudioSettingsProfilePage() {
 
         <Notice tone="neutral">
           표시명과 소개는 후원 페이지에 그대로 노출됩니다. 개인 연락처나 계좌번호 등 개인정보는 입력하지 마세요.
-          채널 상태 변경(승인·정지)과 사회복지기관 코드 변경은 통합 관리자를 통해서만 가능합니다.
+          기관 상태 변경(승인·정지)과 기관 코드 변경은 통합 관리자를 통해서만 가능합니다.
         </Notice>
       </div>
     </>

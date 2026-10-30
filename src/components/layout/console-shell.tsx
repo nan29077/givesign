@@ -19,6 +19,7 @@ import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { ProfileAvatar } from '@/components/profile/generated-avatar';
+import { OrgLogo } from '@/components/brand/org-logo';
 import { cx } from '@/components/ui';
 
 /**
@@ -104,7 +105,8 @@ export function ConsoleShell({
 }: {
   title: string;
   groups: NavGroup[];
-  user?: { id: string; name: string; role: string; avatarUrl?: string | null; avatarSeed?: string; avatarIndex?: number | null };
+  /** logo: true 면 기관 로고(미등록 시 기본 캐릭터)를 둥근 사각형으로 보여 준다(기관 콘솔). */
+  user?: { id: string; name: string; role: string; avatarUrl?: string | null; avatarSeed?: string; avatarIndex?: number | null; logo?: boolean };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -211,13 +213,17 @@ export function ConsoleShell({
           <div className="console-account shrink-0 border-t px-3 py-3 lg:rounded-b-[24px]">
             {user ? (
               <div className="console-profile mb-2 flex items-center gap-2.5 rounded-xl px-3 py-2.5">
-                <ProfileAvatar
-                  seed={user.avatarSeed ?? user.id}
-                  avatarIndex={user.avatarIndex}
-                  name={user.name}
-                  imageUrl={user.avatarUrl}
-                  className="h-10 w-10"
-                />
+                {user.logo ? (
+                  <OrgLogo code={user.avatarSeed ?? user.id} name={user.name} logoUrl={user.avatarUrl} avatarIndex={user.avatarIndex} className="h-10 w-10" />
+                ) : (
+                  <ProfileAvatar
+                    seed={user.avatarSeed ?? user.id}
+                    avatarIndex={user.avatarIndex}
+                    name={user.name}
+                    imageUrl={user.avatarUrl}
+                    className="h-10 w-10"
+                  />
+                )}
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] font-bold text-ink-900">{user.name}</span>
                   <span className="block text-[11px] font-semibold text-ink-400">{user.role}</span>

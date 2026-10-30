@@ -63,7 +63,7 @@ export default async function DonationPageSettings() {
             </Field>
             <PresetImagePicker name="heroUrl" label="대표 배너 · 생성형 이미지 5종" value={page.heroUrl || ''} presets={DONATION_BANNERS} />
             <PresetImagePicker name="backgroundUrl" label="좌우 여백 · 생성형 이미지 5종" value={page.backgroundUrl} presets={DONATION_MARGINS} />
-            <ImageUploadField name="logoUrl" label="기관 로고" defaultValue={page.logoUrl ?? ''} aspect="square" hint="공개 후원페이지 왼쪽 상단·기관 소개·오른쪽 메뉴에 표시됩니다. 가로형 로고도 원본 비율로 표시하며, 미등록 시 상단에는 기관명이 표시됩니다." />
+            <ImageUploadField name="logoUrl" label="기관 로고" defaultValue={page.logoUrl ?? ''} aspect="square" hint="후원페이지에만 다른 로고를 쓰고 싶을 때 등록합니다. 비워 두면 기관 정보의 기관 로고(미등록 시 기본 캐릭터)를 씁니다. 상단에는 로고와 기관명이 함께 표시됩니다." />
             <Field label="기관 대표 색상" hint="진행률 막대와 강조 버튼에 쓰입니다.">
               <Input type="color" name="color" defaultValue={page.color} className="h-11 w-24 p-1" />
             </Field>

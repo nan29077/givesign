@@ -145,11 +145,12 @@ export default async function StudioLayout({ children }: { children: React.React
       })}
       user={{
         id: user.id,
-        name: user.name ?? '사회복지기관',
-        role: '사회복지기관',
+        name: user.merchantName ?? user.name ?? '사회복지기관',
+        role: '기관 관리자',
         avatarUrl: user.merchantAvatarUrl,
         avatarSeed: user.merchantCode ?? user.id,
         avatarIndex: user.avatarIndex,
+        logo: true,
       }}
     >
       {children}

@@ -25,6 +25,7 @@ const groups: NavGroup[] = [
     items: [
       { href: '/admin/users', label: '회원관리', icon: 'users' },
       { href: '/admin/payers', label: '후원자', icon: 'payers' },
+      { href: '/admin/donor-members', label: '기관 후원 회원', icon: 'users' },
       { href: '/admin/merchants', label: '사회복지기관 심사', icon: 'merchants' },
       { href: '/admin/codes', label: '사회복지기관 코드', icon: 'codes' },
       { href: '/admin/mo-numbers', label: 'MO 번호', icon: 'numbers' },

@@ -27,6 +27,8 @@ export interface SessionUser {
   /** 사회복지기관 캐릭터를 DB 재생성 후에도 동일하게 유지하는 고정 코드 */
   merchantCode?: string;
   merchantAvatarUrl?: string | null;
+  /** 기관명(기관 콘솔 프로필 표시용) */
+  merchantName?: string;
   /** 사회복지기관 프로필 상태. APPROVED 가 아니면 스튜디오 기능을 쓸 수 없다. */
   merchantStatus?: MerchantStatus;
   adminPermission?: string;
@@ -104,6 +106,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     merchantId: u.merchantProfile?.id,
     merchantCode: u.merchantProfile?.code,
     merchantAvatarUrl: u.merchantProfile?.avatarUrl,
+    merchantName: u.merchantProfile?.displayName,
     merchantStatus: u.merchantProfile?.status,
     adminPermission: u.adminProfile?.permission,
   };

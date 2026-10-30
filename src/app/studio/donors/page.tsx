@@ -36,11 +36,20 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
     _min: { paidAt: true },
   });
   const payerIds = sums.map((s) => s.payerId!).filter(Boolean);
-  const [payers, recurring, profiles] = await Promise.all([
-    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true } }),
+  const [payers, recurring, profiles, members, memberCount] = await Promise.all([
+    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, phoneHash: true } }),
     prisma.recurringDonation.findMany({ where: { merchantId, payerId: { in: payerIds }, status: { in: ['ACTIVE', 'PAUSED', 'SUSPENDED'] } }, select: { payerId: true, status: true, amount: true, dayOfMonth: true } }),
     prisma.payerReceiptProfile.findMany({ where: { payerId: { in: payerIds } }, select: { payerId: true } }),
+    // 이 기관 후원페이지에서 가입한 회원(다른 기관 회원은 보이지 않는다)
+    prisma.donorMember.findMany({
+      where: { merchantId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, name: true, email: true, phoneHash: true, phoneMasked: true, phoneVerifiedAt: true, marketingAgreed: true, createdAt: true, lastLoginAt: true },
+    }),
+    prisma.donorMember.count({ where: { merchantId, status: 'ACTIVE' } }),
   ]);
+  const memberPhones = new Set(members.map((m) => m.phoneHash).filter(Boolean));
   const pm = new Map(payers.map((p) => [p.id, p]));
   const rm = new Map(recurring.map((r) => [r.payerId, r]));
   const receiptReady = new Set(profiles.map((p) => p.payerId));
@@ -52,6 +61,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
     return {
       payerId: s.payerId!,
       name: displayPayerName(p?.displayName ?? ''),
+      member: Boolean(p?.phoneHash && memberPhones.has(p.phoneHash)),
       phoneMasked: p?.phoneMasked ?? '',
       total: s._sum.amount ?? 0n,
       count: s._count._all,
@@ -84,6 +94,9 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
         <StatTile label="90일 이상 후원 없음" value={`${formatNumber(lapsedCount)}명`} sub="정기후원 제외" tone={lapsedCount ? 'warning' : 'neutral'} />
         <StatTile label="영수증 정보 등록" value={`${formatNumber(receiptReady.size)}명`} sub="기부금영수증 발급 가능" />
       </div>
+      <p className="-mt-2 mb-4 text-[12.5px] text-ink-500">
+        후원페이지 회원 <strong className="text-ink-800">{formatNumber(memberCount)}명</strong> · 아래 표의 <Badge tone="brand">회원</Badge> 표시는 휴대폰을 인증해 후원 내역이 연결된 회원입니다.
+      </p>
 
       <Card className="mb-4">
         <form className="grid gap-3 sm:grid-cols-[1fr_180px_180px_auto]" method="get">
@@ -125,6 +138,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
                 <Td>
                   <span className="font-semibold text-ink-900">{r.name}</span>
                   <span className="ml-2 font-mono text-[12px] text-ink-400">{r.phoneMasked}</span>
+                  {r.member ? <Badge tone="brand" className="ml-2">회원</Badge> : null}
                   {r.lapsed ? <Badge tone="warning" className="ml-2">휴면</Badge> : null}
                 </Td>
                 <Td className="font-semibold tabular-nums text-ink-900">{formatWon(r.total)}</Td>
@@ -149,6 +163,41 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
           </tbody>
         </Table>
       )}
+
+      <section className="mt-8">
+        <h2 className="mb-1 text-[17px] font-black text-ink-900">후원페이지 회원</h2>
+        <p className="mb-3 text-[12.5px] text-ink-500">
+          우리 기관 후원페이지에서 가입한 회원입니다(최근 50명). 다른 기관 회원과 따로 관리되며, 이메일은 일부만 표시합니다.
+        </p>
+        {members.length === 0 ? (
+          <EmptyState title="아직 가입한 회원이 없습니다" description="후원페이지 오른쪽 메뉴(모바일은 상단)의 로그인에서 회원 가입을 받을 수 있습니다." />
+        ) : (
+          <Table>
+            <thead>
+              <tr><Th>이름</Th><Th>이메일</Th><Th>휴대폰 인증</Th><Th>소식 수신</Th><Th>가입</Th><Th>최근 로그인</Th></tr>
+            </thead>
+            <tbody>
+              {members.map((m) => (
+                <tr key={m.id}>
+                  <Td className="font-semibold text-ink-900">{m.name}</Td>
+                  <Td className="font-mono text-[12px] text-ink-500">{maskEmail(m.email)}</Td>
+                  <Td>{m.phoneVerifiedAt ? <span className="font-mono text-[12px] text-ink-700">{m.phoneMasked}</span> : <span className="text-ink-300">미인증</span>}</Td>
+                  <Td>{m.marketingAgreed ? <Badge tone="success">동의</Badge> : <span className="text-ink-300">-</span>}</Td>
+                  <Td className="whitespace-nowrap text-[12px] text-ink-500">{formatKst(m.createdAt, false).slice(0, 10)}</Td>
+                  <Td className="whitespace-nowrap text-[12px] text-ink-500">{m.lastLoginAt ? formatKst(m.lastLoginAt, false) : '-'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </section>
     </>
   );
+}
+
+/** 기관 화면용 이메일 마스킹: ab***@example.com */
+function maskEmail(email: string) {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 2)}${'*'.repeat(Math.max(3, local.length - 2))}@${domain}`;
 }

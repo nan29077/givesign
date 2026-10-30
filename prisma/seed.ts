@@ -122,11 +122,12 @@ async function main() {
         channelName: `${c.name}`, status: 'APPROVED',
         approvedAt: new Date(),
         description: '문자 한 통으로 이웃의 일상에 따뜻한 마음을 전합니다.',
-        avatarUrl: '/assets/givesign/mascot.png',
+        // 기관 로고는 기관이 직접 올린다. 비워 두면 기본 캐릭터가 표시된다.
+        avatarUrl: null,
       },
       // 과거 시드에서는 25개 캐릭터가 합쳐진 스프라이트 전체를 저장해 잘못 보였다.
       // 테스트 계정은 URL을 비우고 userId 기반 자동 캐릭터를 사용한다.
-      update: { userId: user.id, status: 'APPROVED', avatarUrl: '/assets/givesign/mascot.png' },
+      update: { userId: user.id, status: 'APPROVED' },
     });
 
     // 공익법인 지정 확인(관리자 확인)이 생기기 전에 시드된 데모 기관도 영수증 발급을 시연할 수 있게 채운다.

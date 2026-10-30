@@ -679,6 +679,7 @@ model MerchantProfile {
   recurringDonations RecurringDonation[]
   receipts           DonationReceipt[]
   receiptExports     ReceiptExport[]
+  donorMembers       DonorMember[]
 
   @@index([status])
   @@map("merchant_profile")
@@ -2457,4 +2458,69 @@ model ReceiptExport {
 
   @@index([merchantId, taxYear, createdAt])
   @@map("receipt_export")
+}
+
+
+enum DonorMemberStatus {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+
+  @@map("donor_member_status")
+}
+
+/// 기관 후원페이지(/donate/[code]) 전용 후원자 회원.
+/// 기관마다 독립된 회원이다. 같은 이메일로 여러 기관에 따로 가입할 수 있고, 한 기관의 회원은 그 기관에서만 로그인된다.
+/// 관리자·기관 담당자·기존 통합 후원자 계정(app_user)과는 별개다.
+model DonorMember {
+  id              String            @id
+  merchantId      String            @map("merchant_id")
+  /// 소문자로 정규화한 이메일. 기관 안에서만 유일하다.
+  email           String
+  passwordHash    String            @map("password_hash")
+  name            String
+  status          DonorMemberStatus @default(ACTIVE)
+  /// 휴대폰 인증으로 연결한 번호(해시·암호화·마스킹 3분리). 인증 전에는 비어 있다.
+  phoneHash       String?           @map("phone_hash")
+  phoneEnc        String?           @map("phone_enc")
+  phoneMasked     String?           @map("phone_masked")
+  phoneVerifiedAt DateTime?         @map("phone_verified_at") @db.Timestamptz(3)
+  marketingAgreed Boolean           @default(false) @map("marketing_agreed")
+  termsAgreedAt   DateTime          @map("terms_agreed_at") @db.Timestamptz(3)
+  /// 50종 기본 캐릭터 번호
+  avatarIndex     Int               @default(dbgenerated("(floor((random() * (50)::double precision)))::integer")) @map("avatar_index")
+  lastLoginAt     DateTime?         @map("last_login_at") @db.Timestamptz(3)
+  /// 관리자 메모(정지 사유 등). 회원에게 보이지 않는다.
+  adminNote       String?           @map("admin_note")
+  withdrawnAt     DateTime?         @map("withdrawn_at") @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id])
+  sessions DonorSession[]
+
+  @@unique([merchantId, email])
+  @@unique([merchantId, phoneHash])
+  @@index([merchantId, status, createdAt])
+  @@index([email])
+  @@map("donor_member")
+}
+
+/// 기관 후원 회원 세션. 쿠키는 기관 코드별로 따로 두고(givesign_donor_<코드>), 세션에도 기관을 기록해 교차 사용을 막는다.
+model DonorSession {
+  id         String    @id
+  memberId   String    @map("member_id")
+  merchantId String    @map("merchant_id")
+  tokenHash  String    @unique @map("token_hash")
+  ip         String?
+  userAgent  String?   @map("user_agent")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  member DonorMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([expiresAt])
+  @@map("donor_session")
 }
