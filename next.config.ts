@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   distDir: '.givesign-next',
   agentRules: false,
+  // 내장 DB와 함께 실행하는 로컬 Windows 빌드의 동시 워커 수를 제한한다.
+  experimental: { cpus: 2 },
   /**
    * 개발 모드 좌측 하단 "N Issue" 배지 비활성화.
    *

@@ -10,7 +10,7 @@ import { Card, LinkButton, Notice } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: '기브싸인 — 게시물 하나가 한 해의 후원이 되기까지',
+  title: { absolute: '기브싸인 | 작은 나눔이, 자라나는 희망으로' },
   description:
     '사회복지기관 전용 문자(MO) 후원 서비스. 캠페인 숏폼과 이미지를 자동으로 만들어 SNS 로 알리고, 문자 한 통으로 후원·정기 약정·자원봉사 신청을 받고, 약정서·월간 안내·기부금영수증까지 이어서 보냅니다.',
 };

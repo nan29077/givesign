@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
 import './globals.css';
 
-const shareTitle = '기브싸인 | 문자 한 통으로 이어지는 따뜻한 나눔';
-const shareDescription = '사회복지기관 전용 MO 번호와 후원페이지, 캠페인을 연결하는 문자후원 플랫폼 기브싸인입니다.';
+const shareTitle = '기브싸인 | 작은 나눔이, 자라나는 희망으로';
+const shareDescription = '후원과 사람을 잇고, 기관의 일을 가볍게. 문자후원·모금 캠페인·기관 전자문서를 기브싸인에서 함께 운영하세요.';
 
 function isLocalUrl(value: string | undefined) {
   if (!value) return true;
@@ -40,7 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   const metadataBase = new URL(siteUrl);
-  const shareImage = new URL('/assets/givesign-og-v3.png', metadataBase).toString();
+  const shareImage = new URL('/assets/givesign-share-v9.png', metadataBase).toString();
 
   return {
     metadataBase,

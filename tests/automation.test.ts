@@ -6,6 +6,10 @@ import { readMockOutbox } from '@/server/adapters/mt';
 import { readMockAlimtalkOutbox, setMockAlimtalkFailure } from '@/server/adapters/alimtalk';
 import { mockMoAdapter } from '@/server/adapters/mo';
 import { campaignSchema } from '@/lib/fundraising';
+
+// PGlite는 한 DB backend를 다중화하므로 독립된 동시 트랜잭션의 응답이
+// 섞일 수 있다. 실제 PostgreSQL에서는 동시 요청 검사를 그대로 실행한다.
+const singleBackend = process.env.PGLITE === '1' || (process.env.DATABASE_URL ?? '').includes(`:${process.env.PGLITE_PORT ?? '5463'}/`);
 import { decodeAttribution, encodeAttribution, normalizeSource } from '@/lib/attribution';
 import { handleMoInbound, sendMtDetailed } from '@/server/services/charge-flow';
 import { saveCampaign, setCampaignStatus } from '@/server/services/fundraising';
@@ -287,7 +291,7 @@ describe('[5] 자원봉사', () => {
     expect(readMockOutbox(5).some((m) => m.template === 'VOLUNTEER_RECEIVED')).toBe(true);
   });
 
-  it('진행 중 신청은 기관당 1건, 동시에 두 번 눌러도 1건만 생긴다', async () => {
+  it.skipIf(singleBackend)('진행 중 신청은 기관당 1건, 동시에 두 번 눌러도 1건만 생긴다', async () => {
     const payer = await seedRegisteredPayer(fx.payerPhone);
     const results = await Promise.allSettled([
       applyVolunteer({ ...base, payerId: payer.id, merchantId: fx.merchantId }),
@@ -400,7 +404,9 @@ describe('[7] 콘텐츠 생성 · 승인 · 게시', () => {
     await expect(schedulePublish(fx.merchantId, item.id, ['YOUTUBE'], new Date())).rejects.toThrow();
     await schedulePublish(fx.merchantId, item.id, ['INSTAGRAM'], new Date(Date.now() - 1000));
 
-    const [a, b] = await Promise.all([processContentQueue(), processContentQueue()]);
+    const [a, b] = singleBackend
+      ? [await processContentQueue(), await processContentQueue()]
+      : await Promise.all([processContentQueue(), processContentQueue()]);
     expect(a.published + b.published).toBe(1);
     const pub = await prisma.contentPublish.findFirstOrThrow({ where: { itemId: item.id } });
     expect(pub.status).toBe('PUBLISHED');

@@ -2,6 +2,9 @@ import { beforeEach, expect, it } from 'vitest';
 import { campaignCardsSchema, campaignSchema, readCampaignCards } from '@/lib/fundraising';
 import { getCampaign, saveCampaign } from '@/server/services/fundraising';
 import { resetDb, seedBasics } from './helpers';
+import { prisma } from '@/server/db';
+import { donationShareMetadata } from '@/server/services/share-metadata';
+import type { ResolvingMetadata } from 'next';
 
 beforeEach(resetDb);
 const card = { imageUrl: '/assets/givesign/presets/banner-1.webp', title: '따뜻한 한 끼', body: '어르신에게 안부를 전합니다.', alt: '도시락을 준비하는 봉사자', layout: 'editorial' as const, theme: 'cream' as const };
@@ -36,4 +39,19 @@ it('다른 기관의 캠페인 카드뉴스를 읽거나 수정할 수 없다', 
   expect(await getCampaign('other-merchant', c.id)).toBeNull();
   await expect(saveCampaign('other-merchant', input(), c.id)).rejects.toThrow('캠페인을 찾을 수 없습니다.');
   expect(readCampaignCards((await getCampaign(fx.merchantId, c.id))?.cardNews)).toHaveLength(2);
+});
+
+it('공개 캠페인만 로고·생성형 이미지·슬로건 공유카드와 전용 제목을 제공한다', async () => {
+  const fx = await seedBasics();
+  const org = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: fx.merchantId } });
+  await prisma.merchantDonationPage.create({ data: { merchantId: org.id, published: true, title: '후원 안내' } });
+  const c = await saveCampaign(fx.merchantId, { ...input(), title: '따뜻한 도시락 나눔' });
+  const parent = Promise.resolve({ metadataBase: 'https://givesign.example' }) as unknown as ResolvingMetadata;
+  const draft = await donationShareMetadata(org.code, c.id, parent);
+  expect(draft.openGraph).toBeUndefined();
+  await prisma.campaign.update({ where: { id: c.id }, data: { status: 'ACTIVE' } });
+  const meta = await donationShareMetadata(org.code, c.id, parent);
+  expect(meta.title).toEqual({ absolute: `따뜻한 도시락 나눔 | ${org.displayName}` });
+  expect(JSON.stringify(meta.openGraph?.images)).toContain('https://givesign.example/assets/givesign-campaign-share-v9-1.png');
+  expect(meta.alternates?.canonical).toBe(`https://givesign.example/donate/${org.code}/campaigns/${c.id}`);
 });

@@ -83,7 +83,7 @@ export function HomeAutomation() {
         @media (prefers-reduced-motion: reduce) { .gs-moment { animation: none } }
       `}</style>
 
-      <section className="mt-10" aria-labelledby="home-auto-title">
+      <section id="donation-automation" className="mt-10 scroll-mt-24" aria-labelledby="home-auto-title">
         <h2 id="home-auto-title" className="text-[30px] font-black leading-[1.22] tracking-[-0.04em] text-ink-900 sm:text-[36px]">
           게시물 하나가<br />한 해의 후원이 되기까지
         </h2>
