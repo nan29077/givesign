@@ -13,6 +13,7 @@ import {
   logoutDonorMember,
   requestDonorPhoneOtp,
   signupDonorMember,
+  testLoginDonor,
   withdrawDonorMember,
 } from '@/server/services/donor-members';
 import { logger } from '@/lib/logger';
@@ -141,4 +142,19 @@ export async function donorWithdrawAction(_prev: DonorAuthState, f: FormData): P
   await withdrawDonorMember(member.id);
   await logoutDonorMember(org);
   redirect(`/donate/${org.code}?withdrawn=1`);
+}
+
+/** 기관 후원자 테스트 로그인(APP_ENV=local 전용). 서비스에서도 한 번 더 막는다. */
+export async function donorTestLoginAction(_prev: DonorAuthState, f: FormData): Promise<DonorAuthState> {
+  const code = s(f, 'code');
+  const next = safeNext(code, s(f, 'next'));
+  try {
+    const org = await findDonationOrg(code);
+    if (!org) return { ok: false, message: '후원페이지를 찾을 수 없습니다.' };
+    await testLoginDonor(org);
+  } catch (e) {
+    return { ok: false, message: publicMessage(e, '테스트 로그인에 실패했습니다.') };
+  }
+  revalidatePath(`/donate/${code}`);
+  redirect(next);
 }

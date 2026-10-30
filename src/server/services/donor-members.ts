@@ -183,7 +183,96 @@ export async function withdrawDonorMember(memberId: string) {
       },
     }),
     prisma.donorSession.updateMany({ where: { memberId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    prisma.donorSocialAccount.deleteMany({ where: { memberId } }),
   ]);
+}
+
+// ---------------------------------------------------------------- 소셜 간편 로그인(카카오·네이버)
+
+export type DonorSocialProvider = 'kakao' | 'naver';
+
+/** 사업자 사용자 식별자는 원문 대신 기관·사업자별 해시로만 저장한다. */
+function socialUserHash(merchantId: string, provider: string, providerUserId: string) {
+  return hmac(`donor-social:${merchantId}:${provider}:${providerUserId}`, env.crypto.sessionSecret);
+}
+
+/**
+ * 소셜 프로필로 이 기관 후원 회원 로그인(없으면 가입).
+ * 같은 사람이라도 기관마다 따로 연결된다. 실제 프로필은 OAuth 콜백에서만 얻는다(API 키 연결 전에는 호출되지 않는다).
+ * 같은 이메일의 기존 회원이 있으면 자동으로 합치지 않는다(사업자 이메일 검증 여부를 알 수 없어 계정 탈취 위험).
+ */
+export async function loginDonorWithSocial(
+  org: { id: string; code: string },
+  profile: { provider: DonorSocialProvider; providerUserId: string; email?: string; name?: string },
+) {
+  if (!profile.providerUserId) throw new DonorMemberError('간편 로그인 정보를 받지 못했습니다. 다시 시도해 주세요.');
+  const hash = socialUserHash(org.id, profile.provider, profile.providerUserId);
+  const linked = await prisma.donorSocialAccount.findUnique({
+    where: { merchantId_provider_providerUserHash: { merchantId: org.id, provider: profile.provider, providerUserHash: hash } },
+    include: { member: { select: { id: true, status: true } } },
+  });
+  if (linked) {
+    if (linked.member.status === 'SUSPENDED') throw new DonorMemberError('이용이 정지된 회원입니다. 기관 또는 고객센터로 문의해 주세요.');
+    if (linked.member.status !== 'ACTIVE') throw new DonorMemberError('탈퇴한 회원입니다. 다시 가입해 주세요.');
+    await prisma.donorSocialAccount.update({ where: { id: linked.id }, data: { lastLoginAt: new Date() } });
+    await issueSession(linked.member.id, org);
+    return { memberId: linked.member.id, created: false };
+  }
+  const label = profile.provider === 'kakao' ? '카카오' : '네이버';
+  const email = profile.email ? normalizeEmail(profile.email) : `${profile.provider}+${hash.slice(0, 16)}@social.givesign.local`;
+  const taken = await prisma.donorMember.findUnique({ where: { merchantId_email: { merchantId: org.id, email } }, select: { id: true } });
+  if (taken) throw new DonorMemberError(`이 기관에 같은 이메일로 가입한 회원이 있습니다. 이메일로 로그인해 주세요. (${label} 계정은 자동으로 합치지 않습니다)`);
+  const id = newId();
+  await prisma.$transaction([
+    prisma.donorMember.create({
+      data: {
+        id,
+        merchantId: org.id,
+        email,
+        name: (profile.name?.trim() || `${label} 회원`).slice(0, 20),
+        // 간편 로그인 회원은 비밀번호 로그인을 쓰지 않는다(무작위 값의 해시라 어떤 비밀번호와도 맞지 않는다).
+        passwordHash: await bcrypt.hash(generateToken(24), 10),
+        termsAgreedAt: new Date(),
+      },
+    }),
+    prisma.donorSocialAccount.create({ data: { id: newId(), memberId: id, merchantId: org.id, provider: profile.provider, providerUserHash: hash, lastLoginAt: new Date() } }),
+  ]);
+  await issueSession(id, org);
+  return { memberId: id, created: true };
+}
+
+// ---------------------------------------------------------------- 테스트 로그인(APP_ENV=local 전용)
+
+export const TEST_DONOR_EMAIL = 'test-donor@givesign.kr';
+const TEST_DONOR_PHONE = '01012345678';
+
+/**
+ * 기관 후원자 테스트 로그인. 이 기관의 테스트 회원을 만들거나 찾아 바로 로그인한다.
+ * 시드 후원자 번호(010-1234-5678)를 이 기관에서 아무도 인증하지 않았다면 연결해 두어 마이페이지에 후원 내역이 보이게 한다.
+ */
+export async function testLoginDonor(org: { id: string; code: string }) {
+  if (!isLocal) throw new DonorMemberError('이 환경에서는 테스트 로그인을 사용할 수 없습니다. (APP_ENV=local 전용)');
+  let member = await prisma.donorMember.findUnique({ where: { merchantId_email: { merchantId: org.id, email: TEST_DONOR_EMAIL } } });
+  if (!member) {
+    member = await prisma.donorMember.create({
+      data: { id: newId(), merchantId: org.id, email: TEST_DONOR_EMAIL, name: '테스트 후원자', passwordHash: await bcrypt.hash('givesign1234!', 10), termsAgreedAt: new Date() },
+    });
+  }
+  if (member.status !== 'ACTIVE') {
+    member = await prisma.donorMember.update({ where: { id: member.id }, data: { status: 'ACTIVE', adminNote: null } });
+  }
+  if (!member.phoneHash) {
+    const ph = phoneHash(TEST_DONOR_PHONE);
+    const taken = await prisma.donorMember.findFirst({ where: { merchantId: org.id, phoneHash: ph }, select: { id: true } });
+    if (!taken) {
+      await prisma.donorMember.update({
+        where: { id: member.id },
+        data: { phoneHash: ph, phoneEnc: encrypt(TEST_DONOR_PHONE), phoneMasked: maskPhone(TEST_DONOR_PHONE), phoneVerifiedAt: new Date() },
+      });
+    }
+  }
+  await issueSession(member.id, org);
+  return member.id;
 }
 
 // ---------------------------------------------------------------- 휴대폰 인증(후원 내역 연결)

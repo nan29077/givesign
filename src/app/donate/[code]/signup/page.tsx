@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { DonorShell } from '@/components/public/donor-shell';
-import { DonorSignupForm } from '@/components/public/donor-auth-forms';
+import { DonorSignupForm, DonorSocialButtons } from '@/components/public/donor-auth-forms';
+import { socialProviderStatus } from '@/server/adapters/social';
 import { OrgLogo } from '@/components/brand/org-logo';
 import { loadDonorContext, safeDonorNext } from '../_shell';
 
@@ -24,6 +25,9 @@ export default async function DonorSignupPage({ params, searchParams }: { params
           <OrgLogo code={ctx.org.code} name={ctx.org.displayName} logoUrl={ctx.shellOrg.logoUrl} className="mx-auto h-16 w-16" />
           <h1 className="mt-4 text-[20px] font-black tracking-[-0.02em] text-ink-900">{ctx.org.displayName} 후원 회원 가입</h1>
           <p className="mt-1.5 text-[12.5px] text-ink-500">이 기관 후원페이지 전용 회원입니다.</p>
+        </div>
+        <div className="mt-6">
+          <DonorSocialButtons code={ctx.org.code} ready={{ kakao: socialProviderStatus('kakao').ready, naver: socialProviderStatus('naver').ready }} />
         </div>
         <div className="mt-6">
           <DonorSignupForm code={ctx.org.code} next={next} color={ctx.color} orgName={ctx.org.displayName} />

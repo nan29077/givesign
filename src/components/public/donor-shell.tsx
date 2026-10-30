@@ -87,7 +87,7 @@ export function DonorShell({
         </div>
 
         {/* 오른쪽 메뉴 (넓은 화면) */}
-        <nav aria-label="기관 후원 메뉴" className="sticky top-6 hidden w-[104px] shrink-0 flex-col items-stretch rounded-[28px] bg-white/95 p-3 shadow-[0_14px_40px_rgba(48,65,45,0.12)] backdrop-blur lg:flex">
+        <nav aria-label="기관 후원 메뉴" className="sticky top-[50vh] hidden w-[104px] -translate-y-1/2 shrink-0 flex-col items-stretch rounded-[28px] bg-white/95 p-3 shadow-[0_14px_40px_rgba(48,65,45,0.12)] backdrop-blur lg:flex">
           <Link href={base} className="mx-auto mb-3 mt-1" aria-label={`${org.displayName} 후원 홈`}>
             <OrgLogo code={org.code} name={org.displayName} logoUrl={org.logoUrl} className="h-14 w-14" />
           </Link>

@@ -26,6 +26,7 @@ import {
   getDonorMember,
   loginDonorMember,
   logoutDonorMember,
+  loginDonorWithSocial,
   setDonorMemberStatus,
   signupDonorMember,
   withdrawDonorMember,
@@ -130,5 +131,25 @@ describe('기관별 후원 회원', () => {
     const ph = phoneHash('01099998888');
     await prisma.donorMember.update({ where: { id: a }, data: { phoneHash: ph } });
     await expect(prisma.donorMember.update({ where: { id: b }, data: { phoneHash: ph } })).rejects.toThrow();
+  });
+
+  it('[7] 소셜 간편 로그인은 기관마다 따로 연결되고, 같은 이메일의 기존 회원과 자동으로 합치지 않는다', async () => {
+    const a1 = await loginDonorWithSocial(orgA, { provider: 'kakao', providerUserId: 'k-1', email: 'Soc@Test.kr', name: '소셜' });
+    expect(a1.created).toBe(true);
+    const a2 = await loginDonorWithSocial(orgA, { provider: 'kakao', providerUserId: 'k-1' });
+    expect(a2).toEqual({ memberId: a1.memberId, created: false });
+    const b1 = await loginDonorWithSocial(orgB, { provider: 'kakao', providerUserId: 'k-1', email: 'soc@test.kr' });
+    expect(b1.created).toBe(true);
+    expect(b1.memberId).not.toBe(a1.memberId);
+    const acc = await prisma.donorSocialAccount.findFirstOrThrow({ where: { memberId: a1.memberId } });
+    expect(acc.providerUserHash).not.toContain('k-1');
+    // 비밀번호 로그인은 되지 않는다.
+    await expect(loginDonorMember(orgA, 'soc@test.kr', '')).rejects.toBeInstanceOf(DonorMemberError);
+
+    await signupDonorMember(orgA, { email: 'mail@test.kr', name: '메일', password: 'pass-mmmm', marketingAgreed: false });
+    await expect(loginDonorWithSocial(orgA, { provider: 'naver', providerUserId: 'n-1', email: 'mail@test.kr' })).rejects.toThrow(/같은 이메일/);
+
+    await withdrawDonorMember(a1.memberId);
+    expect(await prisma.donorSocialAccount.count({ where: { memberId: a1.memberId } })).toBe(0);
   });
 });

@@ -3,13 +3,14 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { FlaskConical, Loader2, MessageCircle } from 'lucide-react';
 import { Checkbox, Field, Input } from '@/components/ui';
 import {
   donorLoginAction,
   donorPhoneConfirmAction,
   donorPhoneRequestAction,
   donorSignupAction,
+  donorTestLoginAction,
   donorWithdrawAction,
   type DonorAuthState,
   type DonorPhoneState,
@@ -148,6 +149,53 @@ export function DonorWithdrawForm({ code }: { code: string }) {
           회원 탈퇴
         </button>
       </div>
+      <ErrorLine message={state.ok ? undefined : state.message} />
+    </form>
+  );
+}
+
+/**
+ * 카카오·네이버 간편 로그인 버튼. 이 기관 후원 회원으로만 로그인된다.
+ * API 키 연결 전에는 누르면 로그인 화면으로 돌아와 "연동 준비 중" 안내가 나온다.
+ */
+export function DonorSocialButtons({ code, ready }: { code: string; ready: { kakao: boolean; naver: boolean } }) {
+  const base = `/donate/${code}/social`;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3 text-[11.5px] font-semibold text-ink-400">
+        <span className="h-px flex-1 bg-ink-100" />
+        간편 로그인
+        <span className="h-px flex-1 bg-ink-100" />
+      </div>
+      <a href={`${base}/kakao`} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#FEE500] text-[14.5px] font-extrabold text-[#191600]">
+        <MessageCircle size={18} strokeWidth={1.7} fill="currentColor" />
+        카카오로 시작하기
+      </a>
+      <a href={`${base}/naver`} className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#03C75A] text-[14.5px] font-extrabold text-white">
+        <span className="grid h-[18px] w-[18px] place-items-center rounded-[4px] bg-white text-[12px] font-black leading-none text-[#03C75A]">N</span>
+        네이버로 시작하기
+      </a>
+      {!ready.kakao || !ready.naver ? (
+        <p className="text-center text-[11px] text-ink-400">
+          {[!ready.kakao && '카카오', !ready.naver && '네이버'].filter(Boolean).join('·')} 간편 로그인은 API 연결 전입니다(연동 준비 중).
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** 기관 후원자 테스트 로그인(APP_ENV=local 에서만 그린다). */
+export function DonorTestLoginButton({ code, next }: { code: string; next: string }) {
+  const [state, action, pending] = React.useActionState<DonorAuthState, FormData>(donorTestLoginAction, { ok: false });
+  return (
+    <form action={action} className="rounded-2xl border border-warning-500/30 bg-warning-50 p-3">
+      <input type="hidden" name="code" value={code} />
+      <input type="hidden" name="next" value={next} />
+      <button type="submit" disabled={pending} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-ink-900 text-[14px] font-extrabold text-white disabled:opacity-60">
+        {pending ? <Loader2 size={16} strokeWidth={1.7} className="animate-spin" /> : <FlaskConical size={16} strokeWidth={1.7} />}
+        기관 후원자 테스트 로그인
+      </button>
+      <p className="mt-1.5 text-center text-[11px] text-ink-500">개발·검수 환경 전용. 이 기관의 테스트 후원 회원으로 바로 들어갑니다.</p>
       <ErrorLine message={state.ok ? undefined : state.message} />
     </form>
   );

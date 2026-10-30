@@ -2504,6 +2504,7 @@ model DonorMember {
 
   merchant MerchantProfile @relation(fields: [merchantId], references: [id])
   sessions DonorSession[]
+  socials  DonorSocialAccount[]
 
   @@unique([merchantId, email])
   @@unique([merchantId, phoneHash])
@@ -2847,4 +2848,23 @@ model EDocEvent {
 
   @@index([envelopeId, createdAt])
   @@map("edoc_event")
+}
+
+/// 기관 후원 회원의 소셜 간편 로그인 연결(카카오·네이버). 기관마다 따로 연결한다.
+/// 사업자 사용자 식별자는 원문을 두지 않고 해시만 저장한다.
+model DonorSocialAccount {
+  id               String    @id
+  memberId         String    @map("member_id")
+  merchantId       String    @map("merchant_id")
+  /// kakao | naver
+  provider         String
+  providerUserHash String    @map("provider_user_hash")
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  member DonorMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, provider, providerUserHash])
+  @@unique([memberId, provider])
+  @@map("donor_social_account")
 }

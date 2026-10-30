@@ -258,7 +258,12 @@ function Landing({
         {!campaign ? <TextSection title="우리 기관의 이야기" body={page.intro || '기관 소개를 준비하고 있습니다.'} /> : null}
 
         {page.thanks ? (
-          <blockquote className="rounded-[24px] border-l-4 bg-white p-5 text-[14px] leading-7 text-ink-700 shadow-[0_2px_10px_rgba(23,22,26,0.04)]" style={{ borderColor: color }}>{page.thanks}</blockquote>
+          <blockquote className="flex items-start gap-3 rounded-[24px] border border-ink-100 bg-white p-5 text-[14px] leading-7 text-ink-700 shadow-[0_2px_10px_rgba(23,22,26,0.04)]">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full" style={{ backgroundColor: `color-mix(in srgb, ${color} 12%, white)`, color }}>
+              <HeartHandshake size={18} strokeWidth={1.7} />
+            </span>
+            <span className="min-w-0 pt-0.5">{page.thanks}</span>
+          </blockquote>
         ) : null}
 
         {route ? (
