@@ -52,6 +52,6 @@ it('공개 캠페인만 로고·생성형 이미지·슬로건 공유카드와 �
   await prisma.campaign.update({ where: { id: c.id }, data: { status: 'ACTIVE' } });
   const meta = await donationShareMetadata(org.code, c.id, parent);
   expect(meta.title).toEqual({ absolute: `따뜻한 도시락 나눔 | ${org.displayName}` });
-  expect(JSON.stringify(meta.openGraph?.images)).toContain('https://givesign.example/assets/givesign-campaign-share-v9-1.png');
+  expect(JSON.stringify(meta.openGraph?.images)).toContain('https://givesign.example/assets/givesign-campaign-share-v10-1.png');
   expect(meta.alternates?.canonical).toBe(`https://givesign.example/donate/${org.code}/campaigns/${c.id}`);
 });

@@ -40,7 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 
   const metadataBase = new URL(siteUrl);
-  const shareImage = new URL('/assets/givesign-share-v9.png', metadataBase).toString();
+  const shareImage = new URL('/assets/givesign-share-v10.png', metadataBase).toString();
 
   return {
     metadataBase,

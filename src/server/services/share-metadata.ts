@@ -8,7 +8,7 @@ function campaignShareImage(text: string) {
     : /김장|식사|급식|도시락|한 끼|먹거리/.test(text) ? 1
     : /어르신|노인|홀몸|안부|돌봄/.test(text) ? 3
     : /장애|자립|동행/.test(text) ? 5 : 4;
-  return `/assets/givesign-campaign-share-v9-${index}.png`;
+  return `/assets/givesign-campaign-share-v10-${index}.png`;
 }
 
 export async function donationShareMetadata(code: string, campaignId: string | undefined, parent: ResolvingMetadata): Promise<Metadata> {
@@ -26,7 +26,7 @@ export async function donationShareMetadata(code: string, campaignId: string | u
   const url = new URL(path, base).toString();
   const title = campaign ? `${campaign.title} | ${org.displayName}` : `${org.displayName} 후원 | 기브싸인`;
   const description = campaign?.summary || org.donationPage.subtitle || '작은 나눔이, 자라나는 희망으로. 기브싸인에서 이웃의 내일을 함께 응원해 주세요.';
-  const image = new URL(campaign ? campaignShareImage(`${campaign.title} ${campaign.summary} ${campaign.beneficiary || ''}`) : '/assets/givesign-share-v9.png', base).toString();
+  const image = new URL(campaign ? campaignShareImage(`${campaign.title} ${campaign.summary} ${campaign.beneficiary || ''}`) : '/assets/givesign-share-v10.png', base).toString();
   return {
     title: { absolute: title }, description, alternates: { canonical: url },
     openGraph: { title, description, url, siteName: '기브싸인 GiveSign', type: 'website', locale: 'ko_KR', images: [{ url: image, width: 1200, height: 630, alt: '기브싸인 로고와 나눔의 메시지를 담은 캠페인 공유카드' }] },
