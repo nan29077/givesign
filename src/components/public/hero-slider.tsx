@@ -7,10 +7,10 @@ import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cx } from '@/components/ui';
 
 const slides = [
- { image: '/assets/givesign/donation-automation-banner-v1.webp', mascotOverlay: false, eyebrow: 'GIVESIGN AUTOMATION · 후원 자동화', title: '반복되는 후원 업무는 가볍게,\n이웃에게 전하는 마음은 더 깊게', description: '후원 접수부터 정기 약정·월간 안내·기부금영수증까지. 담당자의 확인과 승인으로 이어지는 후원 운영을 만나보세요.', href: '/#donation-automation', cta: '후원 자동화 알아보기' },
- { image: '/assets/givesign/presets/banner-2.webp', mascotOverlay: false, eyebrow: 'GIVESIGN DOCUMENTS · 기관 전자문서', title: '후원약정부터 봉사 신청까지,\n종이 대신 간편한 전자문서', description: '기관 서식 작성·서명 요청·제출 확인·보관까지. 업무량에 맞는 충전형·정액형으로 이용하세요.', href: '/electronic-documents', cta: '기관 전자문서 알아보기' },
- { image: '/assets/givesign/hero.png', mascotOverlay: false, eyebrow: 'GIVESIGN · 함께 만드는 내일', title: '문자 한 통에 담긴 마음,\n이웃의 희망이 됩니다', description: '사회복지기관 전용 MO 번호로 시작하는 문자후원. 작은 나눔이 더 따뜻한 일상을 만듭니다.', href: '/how-it-works', cta: '문자후원 알아보기' },
- { image: '/assets/givesign/banner.png', mascotOverlay: false, eyebrow: '함께 나누는 일상', title: '우리 기관의 이야기를\n후원자와 나누세요', description: '기관 후원페이지와 캠페인을 만들고, 후원 내역과 정산을 한곳에서 관리하세요.', href: '/business', cta: '기관 도입 안내' },
+ { image: '/assets/givesign/donation-automation-banner-v1.webp', mobileFocus: '100% 50%', mascotOverlay: false, eyebrow: 'GIVESIGN AUTOMATION · 후원 자동화', title: '반복되는 후원 업무는 가볍게,\n이웃에게 전하는 마음은 더 깊게', description: '후원 접수부터 정기 약정·월간 안내·기부금영수증까지. 담당자의 확인과 승인으로 이어지는 후원 운영을 만나보세요.', href: '/#donation-automation', cta: '후원 자동화 알아보기' },
+ { image: '/assets/givesign/presets/banner-2.webp', mobileFocus: '100% 50%', mascotOverlay: false, eyebrow: 'GIVESIGN DOCUMENTS · 기관 전자문서', title: '후원약정부터 봉사 신청까지,\n종이 대신 간편한 전자문서', description: '기관 서식 작성·서명 요청·제출 확인·보관까지. 업무량에 맞는 충전형·정액형으로 이용하세요.', href: '/electronic-documents', cta: '기관 전자문서 알아보기' },
+ { image: '/assets/givesign/hero.png', mobileFocus: '92% 50%', mascotOverlay: false, eyebrow: 'GIVESIGN · 함께 만드는 내일', title: '문자 한 통에 담긴 마음,\n이웃의 희망이 됩니다', description: '사회복지기관 전용 MO 번호로 시작하는 문자후원. 작은 나눔이 더 따뜻한 일상을 만듭니다.', href: '/how-it-works', cta: '문자후원 알아보기' },
+ { image: '/assets/givesign/banner.png', mobileFocus: '80% 50%', mascotOverlay: false, eyebrow: '함께 나누는 일상', title: '우리 기관의 이야기를\n후원자와 나누세요', description: '기관 후원페이지와 캠페인을 만들고, 후원 내역과 정산을 한곳에서 관리하세요.', href: '/business', cta: '기관 도입 안내' },
 ];
 
 export function HeroSlider() {
@@ -37,9 +37,10 @@ export function HeroSlider() {
       aria-label="기브싸인 주요 서비스"
     >
       {/* 이미지 영역.
-          모바일: 원본 비율(3:2)에 맞춰 이미지가 잘리지 않게 보여주고, 텍스트는 이미지 아래에 배치한다.
-          PC(sm+): 기존처럼 와이드 비율 + 좌측 텍스트 오버레이. */}
-      <div className="relative aspect-[3/2] sm:aspect-[16/11]">
+          원본은 모두 왼쪽 35~45% 를 PC 텍스트 자리로 비워 둔 와이드 이미지다.
+          모바일: 4:3 으로 꽉 채우고 슬라이드별 mobileFocus(인물 쪽)를 기준으로 잘라 빈 배경을 덜어낸다. 텍스트는 이미지 아래.
+          PC(sm+): 와이드 비율 + 가운데 기준 + 좌측 텍스트 오버레이(기존 그대로). */}
+      <div className="relative aspect-[4/3] sm:aspect-[16/11]">
         {slides.map((slide, index) => (
           <div
             key={slide.image}
@@ -49,7 +50,15 @@ export function HeroSlider() {
             )}
             aria-hidden={current !== index}
           >
-            <Image src={slide.image} alt="" fill priority={index === 0} sizes="(min-width: 768px) 640px, 100vw" className="object-cover" />
+            <Image
+              src={slide.image}
+              alt=""
+              fill
+              priority={index === 0}
+              sizes="(min-width: 768px) 640px, 100vw"
+              style={{ '--hero-focus': slide.mobileFocus } as React.CSSProperties}
+              className="object-cover object-[var(--hero-focus)] sm:object-center"
+            />
             {slide.mascotOverlay ? (
               <Image
                 src="/assets/givesign-mascot-v1.png"
