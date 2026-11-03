@@ -305,9 +305,20 @@ a {
     background: #f6f2e8;
   }
 
+  /* 여백 이미지는 본문을 방해하지 않도록 살짝 흐리게 둔다.
+     blur 가장자리가 비치지 않게 약간 확대하고, 옅은 종이색 막을 한 겹 덮는다. */
   .public-mascot-scene .public-margin-backdrop {
     opacity: 0.94;
     object-position: center center;
+    filter: blur(4px) saturate(0.92);
+    transform: scale(1.04);
+  }
+
+  .public-mascot-scene::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(246, 242, 232, 0.18);
   }
 
   .console-corner-mascot {

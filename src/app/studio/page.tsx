@@ -5,6 +5,7 @@ import {
   CircleCheck,
   ChevronRight,
   Info,
+  ExternalLink,
 } from 'lucide-react';
 import { Badge, Card, EmptyState, LinkButton } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
@@ -49,6 +50,7 @@ export default async function StudioDashboardPage() {
     summary,
     moNumber,
     recent,
+    orgCode,
   ] = await Promise.all([
     prisma.charge.aggregate({
       where: { merchantId, receivedAt: { gte: todayStart }, status: { in: PAID_STATUSES } },
@@ -104,6 +106,7 @@ export default async function StudioDashboardPage() {
         payer: { select: { phoneMasked: true } },
       },
     }),
+    prisma.merchantProfile.findUnique({ where: { id: merchantId }, select: { code: true } }).then((m) => m?.code ?? null),
   ]);
 
   // 사이드바 배지와 같은 집계다(요청 단위 캐시라 이 호출은 쿼리를 새로 돌리지 않는다).
@@ -143,9 +146,16 @@ export default async function StudioDashboardPage() {
         title="대시보드"
         description="오늘 들어온 문자후원과 모금 현황, 연동 상태를 한눈에 확인합니다. (KST 기준)"
         action={
-          <LinkButton href="/studio/charges" variant="secondary" size="sm">
-            후원 내역 전체 보기
-          </LinkButton>
+          <span className="flex flex-wrap items-center gap-2">
+            <LinkButton href="/studio/charges" variant="secondary" size="sm">
+              후원 내역 전체 보기
+            </LinkButton>
+            {orgCode ? (
+              <LinkButton href={`/donate/${orgCode}`} target="_blank" rel="noopener" variant="primary" size="sm">
+                후원페이지 바로가기 <ExternalLink size={16} strokeWidth={1.7} />
+              </LinkButton>
+            ) : null}
+          </span>
         }
       />
 
