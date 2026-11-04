@@ -193,4 +193,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `assets/fonts/*.ttf` 는 위치표를 긴 형식 + 글자 데이터 짝수 길이로 저장해 두었다. fontkit 의 부분집합 생성이 짧은 위치표에서 홀수 길이 글자를 깨뜨리기 때문이다. 글꼴을 바꾸면 같은 조건으로 다시 저장한다.
 - **등록 화면에서 바로 미리보기·편집한다.** 파일을 올리면 같은 폼 안에 편집기(`DocumentFileEditorField` → `PdfFormEditor`)가 열리고, 편집 기록은 hidden `pdfLayoutJson` 으로 서식 등록·저장 때 함께 저장된다(`applyPdf`). 같은 기록이면 결과를 다시 만들지 않는다. 넓은 화면 편집 `/studio/documents/[id]/edit` 는 기록만 따로 저장한다.
 - 서식 행이 생기기 전 미리보기·등록은 업로드 응답의 서명 토큰(`signBasePdf`, 기관·파일·24시간)으로 이 기관이 올린 바탕 PDF 인지 확인한다. 바탕 PDF 주소만으로는 미리보기·등록할 수 없다.
+- **브라우저에서는 pdf.js 호환 빌드(`pdfjs-dist/legacy/build/*`)만 쓴다**(`src/components/pdf/pdfjs.ts`). 기본 빌드는 최신 브라우저 기능(`Map.getOrInsertComputed`)을 보완 없이 써서, 최신이 아닌 브라우저에서 미리보기가 안 보인다(2026-11-04 장애). `e2e/pdf-form-edit.mjs` 는 그 기능을 끈 브라우저(`--js-flags=--no-js-upsert`)로 돈다.
 - API: 미리보기 `POST /api/studio/pdf-form/preview`({templateId} 또는 {basePdfUrl, token} + layout), 글꼴 올리기 `POST /api/studio/pdf-form/font`. 화면 흐름 확인 `node e2e/pdf-form-edit.mjs`.

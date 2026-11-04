@@ -7,7 +7,7 @@ import {
   Undo2, Upload, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { Card, CardTitle, cx } from '@/components/ui';
-import { openPdf } from '@/components/pdf/pdfjs';
+import { openPdf, pdfOpenErrorMessage } from '@/components/pdf/pdfjs';
 import {
   MAX_EDIT_TEXT, MAX_PDF_EDITS, displayFontName, matrixFontSize, pdfFontTierLabel, predictFontTier, stripSubsetTag,
   type PdfEdit, type PdfFontInfo, type PdfFontTier, type PdfLayout, type PdfMatrix,
@@ -200,8 +200,8 @@ export function PdfFormEditor({
           if (cancelled) return;
         }
         if (!cancelled) setPages(out);
-      } catch {
-        if (!cancelled) setLoadError('원본 PDF 를 열지 못했습니다. 파일이 손상되었는지 확인하거나 다시 올려 주세요.');
+      } catch (err) {
+        if (!cancelled) setLoadError(pdfOpenErrorMessage(err));
       }
     })();
     return () => {
@@ -540,9 +540,17 @@ export function PdfFormEditor({
   // ── 그리기 ─────────────────────────────────────────────────────────────
   if (loadError) {
     return (
-      <p className="flex items-center gap-2 rounded-xl bg-danger-50 px-3 py-3 text-[13px] text-danger-500">
-        <TriangleAlert size={16} strokeWidth={1.7} /> {loadError}
-      </p>
+      <div className="rounded-xl bg-danger-50 px-3 py-3 text-[13px] leading-relaxed text-danger-500">
+        <p className="flex items-start gap-2">
+          <TriangleAlert size={16} strokeWidth={1.7} className="mt-0.5 shrink-0" /> {loadError}
+        </p>
+        <a
+          href={`${basePdfUrl}?name=${encodeURIComponent(`${downloadName}.pdf`)}`}
+          className="mt-1.5 inline-block pl-6 text-[12px] font-bold text-ink-700 underline"
+        >
+          올린 서식 내려받아 확인하기
+        </a>
+      </div>
     );
   }
 

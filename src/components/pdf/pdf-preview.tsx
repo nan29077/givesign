@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { FileDown, Loader2 } from 'lucide-react';
-import { openPdf } from '@/components/pdf/pdfjs';
+import { openPdf, pdfOpenErrorMessage } from '@/components/pdf/pdfjs';
 
 /**
  * 서식 PDF 를 화면 폭에 맞춰 쪽마다 그림으로 보여 준다(후원자·서명자 화면).
@@ -19,6 +19,7 @@ export function PdfPreview({
 }) {
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const [state, setState] = React.useState<'loading' | 'ready' | 'error'>('loading');
+  const [reason, setReason] = React.useState('');
   const [count, setCount] = React.useState(0);
 
   React.useEffect(() => {
@@ -52,8 +53,11 @@ export function PdfPreview({
           await page.render({ canvas, canvasContext: ctx, viewport: vp, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
         }
         if (!cancelled) setState('ready');
-      } catch {
-        if (!cancelled) setState('error');
+      } catch (err) {
+        if (!cancelled) {
+          setReason(pdfOpenErrorMessage(err));
+          setState('error');
+        }
       }
     })();
     return () => {
@@ -69,7 +73,7 @@ export function PdfPreview({
         </p>
       ) : null}
       {state === 'error' ? (
-        <p className="py-3 text-[12.5px] text-ink-500">화면에 서식을 그리지 못했습니다. 아래에서 내려받아 확인해 주세요.</p>
+        <p className="py-3 text-[12.5px] text-ink-500">{reason} 아래에서 내려받아 확인할 수도 있습니다.</p>
       ) : null}
       <div ref={wrapRef} className="space-y-2" />
       {count > maxPages ? <p className="mt-2 text-[11.5px] text-ink-400">앞 {maxPages}쪽만 보여 줍니다. 전체는 내려받아 확인해 주세요.</p> : null}

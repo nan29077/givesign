@@ -20,7 +20,9 @@ const shot = async (page, name) => {
   if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, name), fullPage: false });
 };
 
-const browser = await launch();
+// 최신 브라우저에만 있는 기능(Map.getOrInsertComputed)을 끈 상태로 돈다. pdf.js 기본 빌드는 이 기능이
+// 없으면 미리보기를 못 그린다(2026-11-04 실제 장애). 호환 빌드를 쓰는지 여기서 늘 확인한다.
+const browser = await launch({ args: ['--js-flags=--no-js-upsert'] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -28,6 +30,7 @@ const previewDone = () =>
   page.waitForResponse((r) => r.url().includes('/api/studio/pdf-form/preview') && r.status() === 200, { timeout: 30_000 });
 
 try {
+  assert.equal(await page.evaluate(() => typeof Map.prototype.getOrInsertComputed), 'undefined');
   await loginMerchant(page);
 
   // 1. 올리면 바로 미리보기 편집기
