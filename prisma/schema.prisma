@@ -916,6 +916,21 @@ model DocumentTemplate {
   presetKey    String?              @map("preset_key")
   /// 자필 서명을 받을지. 약정서·계약서는 켜 두는 것이 기본이다.
   requireSignature Boolean          @default(true) @map("require_signature")
+
+  /// ── 원본 서식 편집 (FILE 서식) ─────────────────────────────────────────
+  /// 올린 파일을 편집의 바탕으로 맞춘 PDF(/api/media/...). PDF 는 원본 그대로, 그림·워드·한글은 변환본.
+  /// 바뀌지 않는다. 편집 기록(pdfLayout)은 언제나 이 PDF 위에 덧입힌다.
+  basePdfUrl       String?          @map("base_pdf_url")
+  basePdfHash      String?          @map("base_pdf_hash")
+  /// 바탕 PDF 를 만든 방법: none(원본 PDF) · image · office
+  baseConvertedFrom String?         @map("base_converted_from")
+  pdfPageCount     Int?             @map("pdf_page_count")
+  /// 편집 기록 JSON (`@/lib/pdf-form` PdfLayout). 원본 위 덮개·새 글자·대신 쓸 글꼴.
+  pdfLayout        Json?            @map("pdf_layout")
+  /// 편집 기록을 반영한 결과 PDF. 후원자·서명자는 이 파일을 본다. 편집이 없으면 null(바탕 PDF 를 그대로 쓴다).
+  renderedPdfUrl   String?          @map("rendered_pdf_url")
+  renderedPdfHash  String?          @map("rendered_pdf_hash")
+  pdfEditedAt      DateTime?        @map("pdf_edited_at") @db.Timestamptz(3)
   active       Boolean              @default(true)
   archivedAt   DateTime?            @map("archived_at") @db.Timestamptz(3)
   createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)

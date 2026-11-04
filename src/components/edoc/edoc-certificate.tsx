@@ -67,6 +67,9 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
         <h2 className="flex items-center gap-1.5 text-[13.5px] font-black"><ShieldCheck size={16} strokeWidth={1.7} /> 서명 확인서</h2>
         <dl className="mt-2 space-y-1 text-[11px]">
           <div><dt className="inline font-bold text-ink-600">서식 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.snapshotHash}</dd></div>
+          {d.snapshot.pdfHash ? (
+            <div><dt className="inline font-bold text-ink-600">서식 PDF 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.snapshot.pdfHash}</dd></div>
+          ) : null}
           {d.documentHash ? <div><dt className="inline font-bold text-ink-600">완료본 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.documentHash}</dd></div> : null}
           {d.lastEventHash ? <div><dt className="inline font-bold text-ink-600">감사추적 끝값 </dt><dd className="inline break-all font-mono text-ink-500">{d.lastEventHash}</dd></div> : null}
           <div><dt className="inline font-bold text-ink-600">해시 연결 </dt><dd className="inline">{d.chainOk ? '정상' : '불일치 — 기관에 문의하세요'}</dd></div>

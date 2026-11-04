@@ -2,6 +2,7 @@ import { requireMerchant } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
 import { putObject, newObjectName } from '@/server/uploads';
+import { prepareBasePdf } from '@/server/services/pdf-form';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,10 @@ export const dynamic = 'force-dynamic';
  *  - 사회복지기관 로그인 필수 + 동일 출처(CSRF) 검사
  *  - 형식 화이트리스트 — 확장자·MIME 이 아니라 파일 시그니처(매직바이트)로 판정
  *  - 용량 제한 10MB
+ *
+ * 원본 편집: 올린 파일로 편집 바탕 PDF 를 함께 만든다(`prepareBasePdf`). PDF 는 그대로,
+ * PNG·JPG 는 한 쪽 PDF 로, 워드·한글은 서버에 LibreOffice 가 있을 때만 변환한다.
+ * 바탕 PDF 를 만들지 못해도 업로드 자체는 성공이다(내려받기 서식으로는 쓸 수 있다).
  */
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -33,6 +38,10 @@ function sniff(buf: Buffer, fileName: string): { ext: string } | null {
 
   // PDF: %PDF
   if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return { ext: 'pdf' };
+
+  // 스캔본 그림: PNG · JPG
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { ext: 'png' };
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: 'jpg' };
 
   // ZIP 컨테이너: docx · hwpx
   if (buf[0] === 0x50 && buf[1] === 0x4b && (buf[2] === 0x03 || buf[2] === 0x05 || buf[2] === 0x07)) {
@@ -87,7 +96,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         ok: false,
-        message: '지원하지 않는 형식입니다. PDF · DOCX · DOC · HWP · HWPX 파일만 올릴 수 있습니다.',
+        message: '지원하지 않는 형식입니다. PDF · DOCX · DOC · HWP · HWPX · PNG · JPG 파일만 올릴 수 있습니다.',
       },
       { status: 400 },
     );
@@ -99,5 +108,17 @@ export async function POST(req: Request) {
 
   // 후원자가 내려받을 때 보여 줄 이름. 경로 구분자는 지운다.
   const displayName = file.name.replace(/[\\/]/g, '').slice(0, 120) || `문서서식.${kind.ext}`;
-  return Response.json({ ok: true, url, name: displayName });
+
+  // 원본 위에서 고칠 수 있게 바탕 PDF 를 만든다. 실패해도 업로드는 그대로 둔다.
+  const base = await prepareBasePdf(new Uint8Array(buf), kind.ext, url).catch(() => ({
+    ok: false as const,
+    message: '원본 편집용 PDF 를 만들지 못했습니다. PDF 로 저장해 다시 올리면 원본 위에서 고칠 수 있습니다.',
+  }));
+  return Response.json({
+    ok: true,
+    url,
+    name: displayName,
+    base: base.ok ? base.info : null,
+    editMessage: base.ok ? null : base.message,
+  });
 }

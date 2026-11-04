@@ -88,7 +88,7 @@ export const fieldTypeLabel: Record<DocumentFieldType, { text: string; hint: str
 
 export const documentTemplateTypeLabel: Record<DocumentTemplateType, { text: string; hint: string }> = {
   EDITOR: { text: '직접 작성', hint: '본문과 빈칸을 콘솔에서 직접 만든다. 후원자는 화면에서 채운다.' },
-  FILE: { text: '파일 업로드', hint: 'PDF·워드 서식을 올린다. 후원자는 내려받아 작성한다.' },
+  FILE: { text: '파일 업로드', hint: '쓰던 서식(PDF·한글·워드)을 그대로 올리고, 원본 위에서 원래 글꼴·크기로 고친다.' },
   PRESET: { text: '기본 서식', hint: '기브싸인이 준비한 서식에서 고른다. 내용은 그대로 손볼 수 있다.' },
 };
 
@@ -631,6 +631,8 @@ export interface DocumentContext {
   body: string | null;
   fileUrl: string | null;
   fileName: string | null;
+  /** 파일 서식의 화면 표시용 PDF (원본 위 수정이 반영된 것, 없으면 올린 원본 PDF) */
+  pdfUrl: string | null;
   fields: DocumentField[];
   requireSignature: boolean;
   status: DocumentSubmissionStatus;
@@ -690,6 +692,10 @@ export async function loadDocumentContext(
       body: template.body,
       fileUrl: template.fileUrl,
       fileName: template.fileName,
+      pdfUrl:
+        template.templateType === 'FILE'
+          ? (template.renderedPdfUrl ?? template.basePdfUrl ?? null)
+          : null,
       fields,
       requireSignature: template.requireSignature,
       documentHash: snapshot.sha256,

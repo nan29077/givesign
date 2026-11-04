@@ -174,6 +174,7 @@ function Body({ ctx, token }: { ctx: DocumentContext; token: string }) {
             templateType={ctx.templateType}
             fileUrl={ctx.fileUrl}
             fileName={ctx.fileName}
+            pdfUrl={ctx.pdfUrl}
             requireSignature={ctx.requireSignature}
             fields={ctx.fields.map((f) => ({
               id: f.id,

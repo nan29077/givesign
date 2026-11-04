@@ -182,3 +182,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 요금제는 `EDocPlan` 버전으로 두고 `effectiveFrom` 으로 적용한다(지난 요금제는 고치지 않음). 충전·정액은 기관 신청 → 관리자가 입금 확인 체크 후 승인. 정액은 자동 갱신하지 않는다. 이용 잔액은 후원금·정산과 별개다.
 - 기부금영수증은 전자서명 문서로 만들지 않는다. 영수증 대장(`/studio/receipts`)에서만 발급한다.
 - 상세 범위와 테스트 환경 제한: docs/UPGRADE_20261030.md.
+
+## 문서 서식 원본 편집 (파일 업로드 서식)
+
+- 기관이 올린 서식(PDF·한글·워드·PNG/JPG 스캔본)은 업로드 때 편집 바탕 PDF(`basePdfUrl`)를 함께 만든다. PDF 는 원본 그대로, 그림은 한 쪽 PDF, 한글·워드는 `SOFFICE_PATH`(LibreOffice)가 있을 때만 변환한다. 없으면 PDF 로 저장해 올리도록 안내하고 내려받기 서식으로만 쓴다.
+- **원본 PDF 는 고치지 않는다.** 수정은 `pdfLayout`(`@/lib/pdf-form` PdfLayout) 기록으로만 두고, 서버가 원본 위에 덮개 + 새 글자를 그려 결과 PDF(`renderedPdfUrl`)를 **새 파일로** 남긴다. 이전 결과 파일을 덮어쓰거나 지우지 않는다(발송된 서명 요청 스냅샷 `pdfUrl`/`pdfHash` 가 가리킨다).
+- 글꼴은 ① 원본 글꼴 객체 재사용(ToUnicode 역매핑) ② 기관이 올린 같은 이름 글꼴 ③ 원본에 통째로 든 글꼴 ④ PDF 표준 글꼴 ⑤ 같은 계열·굵기 대체 글꼴(`assets/fonts`, Noto CJK KR 파생, OFL) 순으로 고른다. **글자 크기·색·방향은 항상 원본에서 읽은 값**이다. 대체 글꼴을 쓴 수정은 화면에 원인 글자와 함께 표시한다.
+- 덮은 자리의 원래 글자는 내용 스트림에서도 지운다(`pdf-form/strip.ts`) — 복사·검색에 옛 값(약정 금액 등)이 남지 않게. 해석할 수 없는 쪽은 덮기만 하고 결과에 그 쪽을 알린다.
+- 기관이 올린 글꼴(TTF·OTF)은 공개 주소로 서빙하지 않는다(`/api/media` 허용 확장자에 없음). 서버 렌더링에서만 읽는다.
+- `assets/fonts/*.ttf` 는 위치표를 긴 형식 + 글자 데이터 짝수 길이로 저장해 두었다. fontkit 의 부분집합 생성이 짧은 위치표에서 홀수 길이 글자를 깨뜨리기 때문이다. 글꼴을 바꾸면 같은 조건으로 다시 저장한다.
+- 편집 화면 `/studio/documents/[id]/edit`, 미리보기 `POST /api/studio/documents/[id]/pdf-preview`, 글꼴 올리기 `POST /api/studio/documents/[id]/pdf-font`. 화면 흐름 확인 `node e2e/pdf-form-edit.mjs`.

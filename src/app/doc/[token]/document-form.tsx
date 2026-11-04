@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { Download, Eraser, FileText } from 'lucide-react';
 import { Button, Card, CardTitle, Notice, cx } from '@/components/ui';
 import { submitDocumentAction, type DocumentSubmitState } from '@/app/actions/document-submit';
@@ -28,6 +29,7 @@ export function DocumentForm({
   templateType,
   fileUrl,
   fileName,
+  pdfUrl,
   requireSignature,
   fields,
 }: {
@@ -35,6 +37,8 @@ export function DocumentForm({
   templateType: string;
   fileUrl: string | null;
   fileName: string | null;
+  /** 원본 위 수정이 반영된 서식 PDF. 있으면 화면에 쪽마다 보여 준다. */
+  pdfUrl?: string | null;
   requireSignature: boolean;
   fields: FormField[];
 }) {
@@ -52,7 +56,15 @@ export function DocumentForm({
     <form action={formAction} className="space-y-3">
       <input type="hidden" name="token" value={token} />
 
-      {templateType === 'FILE' && fileUrl ? (
+      {templateType === 'FILE' && pdfUrl ? (
+        <Card>
+          <CardTitle>서식</CardTitle>
+          <p className="mb-3 mt-0.5 text-[12.5px] leading-relaxed text-ink-500">
+            사회복지기관이 보낸 서식입니다. 내용을 확인하고 아래 항목을 채워 제출해 주세요.
+          </p>
+          <PdfPreview url={pdfUrl} downloadName={`${(fileName ?? '문서서식').replace(/\.[a-z0-9]+$/i, '')}.pdf`} />
+        </Card>
+      ) : templateType === 'FILE' && fileUrl ? (
         <Card>
           <CardTitle>서식 내려받기</CardTitle>
           <p className="mb-3 mt-0.5 text-[12.5px] leading-relaxed text-ink-500">

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ChevronLeft, FileText } from 'lucide-react';
-import { Badge, Card, CardTitle, DataRow, Notice } from '@/components/ui';
+import { ChevronLeft, FileDown, FilePen, FileText } from 'lucide-react';
+import { Badge, Card, CardTitle, DataRow, LinkButton, Notice } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
 import { InlineActionForm } from '@/components/studio/action-form';
 import { DocumentTemplateForm } from '@/components/studio/document-template-form';
@@ -18,6 +18,7 @@ import {
 } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
+import { parsePdfLayout } from '@/lib/pdf-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,6 +86,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
       ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="min-w-0">
+            {template.templateType === 'FILE' ? <PdfEditCard template={template} /> : null}
             <DocumentTemplateForm
               action={updateDocumentTemplateAction}
               templateType={template.templateType}
@@ -127,7 +129,9 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
                   <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-800">
                     {template.fileName ?? '서식 파일'}
                   </span>
-                  <span className="shrink-0 text-[11px] font-bold text-ink-400">내려받기</span>
+                  <span className="shrink-0 text-[11px] font-bold text-ink-400">
+                    {template.renderedPdfUrl ? '고친 서식' : template.basePdfUrl ? '원본 서식' : '내려받기'}
+                  </span>
                 </div>
               ) : null}
 
@@ -207,5 +211,62 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
         </div>
       )}
     </>
+  );
+}
+
+/** 파일 서식: 원본 위에서 고치기 진입과 현재 상태. */
+function PdfEditCard({
+  template,
+}: {
+  template: {
+    id: string;
+    name: string;
+    basePdfUrl: string | null;
+    renderedPdfUrl: string | null;
+    pdfLayout: unknown;
+    pdfEditedAt: Date | null;
+    pdfPageCount: number | null;
+  };
+}) {
+  if (!template.basePdfUrl) {
+    return (
+      <div className="mb-4">
+        <Notice tone="neutral" title="원본 위에서 고치려면 PDF 가 필요합니다">
+          지금 파일은 내려받기 서식으로만 쓰입니다. 한글은 [파일 → PDF로 저장하기], 워드는 [다른 이름으로 저장 → PDF] 로
+          저장해 아래 서식 파일을 다시 올리면 원래 글꼴·크기 그대로 화면에서 고칠 수 있습니다.
+        </Notice>
+      </div>
+    );
+  }
+  const edits = parsePdfLayout(template.pdfLayout)?.edits.length ?? 0;
+  return (
+    <Card className="mb-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-700">
+          <FilePen size={19} strokeWidth={1.7} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <CardTitle>원본 위에서 고치기</CardTitle>
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-500">
+            {edits > 0
+              ? `수정 ${edits}곳 반영됨${template.pdfEditedAt ? ` · ${formatKst(template.pdfEditedAt)}` : ''}. 후원자·서명자는 고친 서식을 받습니다.`
+              : `올린 원본(${template.pdfPageCount ?? '?'}쪽)을 그대로 쓰고 있습니다. 글자를 누르면 원래 글꼴·크기로 고칠 수 있습니다.`}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {template.renderedPdfUrl ? (
+            <a
+              href={`${template.renderedPdfUrl}?name=${encodeURIComponent(`${template.name}.pdf`)}`}
+              className="inline-flex items-center gap-1 text-[12px] font-bold text-ink-500 hover:text-ink-900"
+            >
+              <FileDown size={15} strokeWidth={1.7} /> 고친 서식
+            </a>
+          ) : null}
+          <LinkButton href={`/studio/documents/${template.id}/edit`} size="sm">
+            {edits > 0 ? '이어서 고치기' : '원본 위에서 고치기'}
+          </LinkButton>
+        </div>
+      </div>
+    </Card>
   );
 }

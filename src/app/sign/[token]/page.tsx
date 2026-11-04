@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { CircleX, FileText, Hourglass, Paperclip } from 'lucide-react';
 import { Card, Notice } from '@/components/ui';
 import { OrgLogo } from '@/components/brand/org-logo';
@@ -95,7 +96,11 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
       <Card>
         <p className="mb-3 flex items-center gap-1.5 text-[12.5px] font-bold text-ink-500"><FileText size={16} strokeWidth={1.7} /> {snapshot.name}</p>
         {snapshot.body ? <div className="whitespace-pre-wrap rounded-2xl bg-ink-50 p-4 text-[13.5px] leading-[1.85] text-ink-800">{snapshot.body}</div> : null}
-        {snapshot.fileUrl ? (
+        {snapshot.pdfUrl ? (
+          <div className="mt-3">
+            <PdfPreview url={snapshot.pdfUrl} downloadName={`${snapshot.name}.pdf`} />
+          </div>
+        ) : snapshot.fileUrl ? (
           <a href={snapshot.fileUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-bold text-brand-700 underline">
             <Paperclip size={16} strokeWidth={1.7} /> {snapshot.fileName ?? '첨부 서식'} 열기
           </a>

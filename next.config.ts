@@ -40,6 +40,14 @@ const nextConfig: NextConfig = {
   ...(process.env.NEXT_OUTPUT === 'standalone' ? { output: 'standalone' as const } : {}),
 
   /**
+   * 문서 서식 원본 편집의 대체 한글 글꼴(assets/fonts)은 코드가 import 하지 않고 실행 중에 읽는다.
+   * standalone 출력은 import 로 추적되는 파일만 싣기 때문에 명시해서 함께 싣는다.
+   */
+  outputFileTracingIncludes: {
+    '/**/*': ['./assets/fonts/**/*'],
+  },
+
+  /**
    * 보안 응답 헤더.
    *
    * Next.js 는 이 헤더들을 기본으로 붙이지 않는다. 그래서 예전에는 관리자·스튜디오 화면을

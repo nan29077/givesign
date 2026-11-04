@@ -16,6 +16,9 @@ import {
 import { Prisma } from '@/generated/prisma/client';
 import type { DocumentTemplateType } from '@/generated/prisma/enums';
 import type { StudioActionState } from '@/app/actions/studio';
+import {
+  MEDIA_PDF_RE, saveTemplateLayout, verifyBasePdf, type SaveLayoutResult,
+} from '@/server/services/pdf-form';
 
 /**
  * 문서 상품 — 사회복지기관 관리자 서버 액션.
@@ -106,6 +109,9 @@ interface ParsedTemplate {
   presetKey: string | null;
   requireSignature: boolean;
   active: boolean;
+  /** FILE 서식의 편집 바탕 PDF 주소(브라우저가 보낸 값). 저장 전에 서버가 다시 확인한다. */
+  basePdfUrl: string | null;
+  baseConvertedFrom: string | null;
 }
 
 function parseTemplateForm(
@@ -126,6 +132,8 @@ function parseTemplateForm(
   let presetKey: string | null = null;
   let fileUrl: string | null = null;
   let fileName: string | null = null;
+  let basePdfUrl: string | null = null;
+  let baseConvertedFrom: string | null = null;
 
   if (templateType === 'PRESET') {
     presetKey = text(formData, 'presetKey');
@@ -148,6 +156,10 @@ function parseTemplateForm(
       return { ok: false, message: '서식 파일(PDF·워드)을 올려 주세요.' };
     }
     fileName = text(formData, 'fileName').slice(0, 120) || '문서서식';
+    const base = text(formData, 'basePdfUrl');
+    basePdfUrl = MEDIA_PDF_RE.test(base) ? base : null;
+    const from = text(formData, 'baseConvertedFrom');
+    baseConvertedFrom = ['none', 'image', 'office'].includes(from) ? from : null;
   }
 
   if (fields.length > MAX_DOCUMENT_FIELDS) {
@@ -177,8 +189,23 @@ function parseTemplateForm(
       requireSignature: checked(formData, 'requireSignature'),
       // 체크박스는 해제하면 FormData 에 담기지 않는다. 짝이 되는 hidden 으로 구분한다.
       active: formData.has('activePresent') ? checked(formData, 'active') : true,
+      basePdfUrl,
+      baseConvertedFrom,
     },
   };
+}
+
+/**
+ * 편집 바탕 PDF 를 DB 값으로 바꾼다. 해시·쪽수는 저장소의 파일을 서버가 직접 읽어 정한다.
+ * 확인할 수 없는 주소면 바탕 PDF 없이(내려받기 서식으로만) 저장한다.
+ */
+async function baseFields(basePdfUrl: string | null, convertedFrom: string | null) {
+  if (!basePdfUrl) {
+    return { basePdfUrl: null, basePdfHash: null, baseConvertedFrom: null, pdfPageCount: null };
+  }
+  const v = await verifyBasePdf(basePdfUrl);
+  if (!v) return { basePdfUrl: null, basePdfHash: null, baseConvertedFrom: null, pdfPageCount: null };
+  return { basePdfUrl, basePdfHash: v.hash, baseConvertedFrom: convertedFrom ?? 'none', pdfPageCount: v.pageCount };
 }
 
 export async function createDocumentTemplateAction(
@@ -201,11 +228,21 @@ export async function createDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
+    const { basePdfUrl, baseConvertedFrom, ...data } = parsed.data;
+    const base = await baseFields(basePdfUrl, baseConvertedFrom);
     const created = await prisma.documentTemplate.create({
-      data: { id: newId(), merchantId, ...parsed.data },
+      data: { id: newId(), merchantId, ...data, ...base },
       select: { id: true, name: true },
     });
     revalidateDocuments();
+    if (base.basePdfUrl) {
+      // 원본을 고칠 수 있는 서식이면 바로 편집기로 보낸다.
+      return {
+        ok: true,
+        message: `${created.name} 서식을 등록했습니다. 올린 원본 위에서 바로 고칠 수 있습니다.`,
+        redirectTo: `/studio/documents/${created.id}/edit`,
+      };
+    }
     return {
       ok: true,
       message: `${created.name} 서식을 등록했습니다. 이제 후원 항목 관리에서 문서 상품에 연결할 수 있습니다.`,
@@ -224,7 +261,7 @@ export async function updateDocumentTemplateAction(
 
     const current = await prisma.documentTemplate.findFirst({
       where: { id, merchantId, archivedAt: null },
-      select: { id: true, templateType: true },
+      select: { id: true, templateType: true, basePdfUrl: true, pdfLayout: true },
     });
     if (!current) return { ok: false, message: '서식을 찾을 수 없습니다.' };
 
@@ -240,8 +277,21 @@ export async function updateDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
-    const { templateType: _t, ...rest } = parsed.data;
-    await prisma.documentTemplate.update({ where: { id }, data: rest });
+    const { templateType: _t, basePdfUrl, baseConvertedFrom, ...rest } = parsed.data;
+    let baseUpdate = {};
+    let baseReset = false;
+    if (current.templateType === 'FILE' && basePdfUrl !== current.basePdfUrl) {
+      // 원본 파일을 바꾸면 이전 원본 위에 적은 수정 기록은 자리가 맞지 않는다. 새 원본에서 다시 고친다.
+      baseReset = !!current.pdfLayout;
+      baseUpdate = {
+        ...(await baseFields(basePdfUrl, baseConvertedFrom)),
+        pdfLayout: Prisma.DbNull,
+        renderedPdfUrl: null,
+        renderedPdfHash: null,
+        pdfEditedAt: null,
+      };
+    }
+    await prisma.documentTemplate.update({ where: { id }, data: { ...rest, ...baseUpdate } });
 
     // 이미 제출된 문서는 그대로 남는다(저장 당시 값을 근거로 남겨야 한다).
     const submitted = await prisma.documentSubmission.count({
@@ -251,9 +301,10 @@ export async function updateDocumentTemplateAction(
     return {
       ok: true,
       message:
-        submitted > 0
+        (submitted > 0
           ? `서식을 저장했습니다. 이미 제출된 ${submitted}건은 제출 당시 내용 그대로 남습니다.`
-          : '서식을 저장했습니다.',
+          : '서식을 저장했습니다.') +
+        (baseReset ? ' 원본 파일이 바뀌어 원본 위 수정 내용을 비웠습니다. 새 원본에서 다시 고쳐 주세요.' : ''),
     };
   });
 }
@@ -520,5 +571,59 @@ export async function revealDocumentSubmissionAction(
   } catch (e) {
     logger.error('문서 제출 원문 열람 실패', { submissionId, message: (e as Error).message });
     return { ok: false, message: '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.' };
+  }
+}
+
+// ===========================================================================
+// 원본 위에서 고치기 (FILE 서식)
+// ===========================================================================
+
+export type SavePdfLayoutState = SaveLayoutResult | { ok: false; message: string };
+
+/**
+ * 원본 편집 저장. 편집기(클라이언트)가 직접 부른다.
+ * 결과 PDF 는 새 파일로 남고, 이미 발송된 서명 요청은 발송 당시 파일을 그대로 가리킨다.
+ */
+export async function saveDocumentPdfLayoutAction(templateId: string, layoutJson: string): Promise<SavePdfLayoutState> {
+  let merchantId: string;
+  let userId: string;
+  try {
+    const user = await requireMerchant();
+    merchantId = user.merchantId;
+    userId = user.id;
+  } catch (e) {
+    return { ok: false, message: (e as Error).message || '사회복지기관 권한이 필요합니다.' };
+  }
+  if (typeof layoutJson !== 'string' || layoutJson.length > 512 * 1024) {
+    return { ok: false, message: '편집 내용이 너무 큽니다.' };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(layoutJson);
+  } catch {
+    return { ok: false, message: '편집 내용 형식이 올바르지 않습니다.' };
+  }
+
+  try {
+    const res = await saveTemplateLayout(merchantId, templateId, raw);
+    if (!res.ok) return res;
+    await writeAudit({
+      adminUserId: userId,
+      action: 'DOCUMENT_TEMPLATE_PDF_EDIT',
+      targetType: 'document_template',
+      targetId: templateId,
+      after: {
+        by: 'merchant', merchantId, userId,
+        edits: res.edits,
+        renderedPdfUrl: res.renderedPdfUrl,
+        fallback: res.report.filter((r) => r.tier === 'FALLBACK').length,
+      },
+    }).catch((err) => logger.warn('[documents] 원본 편집 감사로그 실패', { err: String(err) }));
+    revalidateDocuments(templateId);
+    revalidatePath(`/studio/documents/${templateId}/edit`);
+    return res;
+  } catch (err) {
+    logger.error('[documents] 원본 편집 저장 실패', { templateId, err: err instanceof Error ? err.message : String(err) });
+    return { ok: false, message: '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
   }
 }

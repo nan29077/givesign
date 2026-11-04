@@ -112,6 +112,12 @@ export interface EDocSnapshot {
   fields: DocumentField[];
   fileUrl: string | null;
   fileName: string | null;
+  /**
+   * 파일 서식의 표시용 PDF(원본 위 수정 반영본)와 그 SHA-256. 발송 시점 값으로 고정된다.
+   * 결과 PDF 는 저장할 때마다 새 파일로 남으므로 이 주소의 내용은 바뀌지 않는다. (이전 봉투에는 없다)
+   */
+  pdfUrl?: string | null;
+  pdfHash?: string | null;
   requireSignature: boolean;
 }
 
@@ -315,6 +321,8 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
     fields: parseDocumentFields(template.fields),
     fileUrl: template.fileUrl,
     fileName: template.fileName,
+    pdfUrl: template.templateType === 'FILE' ? (template.renderedPdfUrl ?? template.basePdfUrl) : null,
+    pdfHash: template.templateType === 'FILE' ? (template.renderedPdfUrl ? template.renderedPdfHash : template.basePdfHash) : null,
     requireSignature: true,
   };
   const snapshotJson = JSON.stringify(snapshot);

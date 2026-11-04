@@ -128,7 +128,7 @@ export function DocumentTemplateForm({
         <Section
           step={2}
           title="서식 파일"
-          description="후원자는 작성 화면에서 이 파일을 내려받아 작성합니다."
+          description="기관이 가지고 있던 서식(PDF·한글·워드·스캔본)을 그대로 올립니다. 저장한 뒤 원본 위에서 직접 고칠 수 있습니다."
         >
           <DocumentFileField
             name="fileUrl"
@@ -136,7 +136,9 @@ export function DocumentTemplateForm({
             label="서식 파일"
             defaultValue={template?.fileUrl ?? ''}
             defaultFileName={template?.fileName ?? ''}
-            hint="후원자가 내려받는 원본 서식입니다. 개인정보가 미리 채워진 파일을 올리지 마세요."
+            defaultBasePdfUrl={template?.basePdfUrl ?? ''}
+            defaultConvertedFrom={template?.baseConvertedFrom ?? ''}
+            hint="기관이 쓰던 서식을 그대로 올리세요. 올린 뒤 원본 위에서 글자를 고치면 원래 글꼴·크기로 들어갑니다. 개인정보가 미리 채워진 파일은 올리지 마세요."
           />
           <Field
             label="작성 안내"
