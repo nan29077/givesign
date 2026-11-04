@@ -1,7 +1,6 @@
 import { requireMerchant } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
-import { prisma } from '@/server/db';
 import { newObjectName, putObject } from '@/server/uploads';
 import { stripSubsetTag } from '@/lib/pdf-form';
 import fontkit from '@pdf-lib/fontkit';
@@ -14,9 +13,10 @@ export const dynamic = 'force-dynamic';
  *
  * 원본 PDF 에는 보통 문서에 쓰인 글자만 들어 있어(부분집합), 새 글자가 원본에 없으면 대체 글꼴로
  * 그릴 수밖에 없다. 기관이 그 글꼴 파일(예: 함초롬바탕 TTF)을 올리면 같은 글꼴로 그린다.
+ * 서식 등록 전에도 쓸 수 있도록 서식과 묶지 않는다(저장 이름만 돌려주고 편집 기록 fonts[] 에 담긴다).
  *
  * 글꼴은 서버 안에서만 쓰고 공개 주소로 내보내지 않는다(글꼴 라이선스). 결과 PDF 에는 쓰인 글자만
- * 부분집합으로 들어간다. 저장 이름만 돌려주고, 편집기가 편집 기록(fonts[])에 넣어 저장한다.
+ * 부분집합으로 들어간다.
  */
 const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -28,20 +28,13 @@ function sniffFont(buf: Buffer): 'ttf' | 'otf' | null {
   return null;
 }
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request) {
   if (!isSameOrigin(req)) return Response.json({ ok: false, message: '허용되지 않은 요청입니다.' }, { status: 403 });
   const merchant = await requireMerchant().catch(() => null);
   if (!merchant) return Response.json({ ok: false, message: '사회복지기관 로그인이 필요합니다.' }, { status: 401 });
 
   const limit = await consumeRateLimit('pdf-font', merchant.merchantId, 20, 600);
   if (!limit.ok) return Response.json({ ok: false, message: '글꼴 업로드가 너무 잦습니다.' }, { status: 429 });
-
-  const { id } = await params;
-  const template = await prisma.documentTemplate.findFirst({
-    where: { id, merchantId: merchant.merchantId, archivedAt: null, templateType: 'FILE' },
-    select: { id: true },
-  });
-  if (!template) return Response.json({ ok: false, message: '서식을 찾을 수 없습니다.' }, { status: 404 });
 
   const form = await req.formData().catch(() => null);
   const file = form?.get('file');
@@ -59,7 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
   try {
-    const font = fontkit.create(buf) as unknown as { familyName?: string; numGlyphs?: number };
+    const font = fontkit.create(buf) as unknown as { numGlyphs?: number };
     if (!font.numGlyphs) throw new Error('empty');
   } catch {
     return Response.json({ ok: false, message: '글꼴 파일을 읽을 수 없습니다.' }, { status: 400 });

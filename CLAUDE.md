@@ -191,4 +191,6 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 덮은 자리의 원래 글자는 내용 스트림에서도 지운다(`pdf-form/strip.ts`) — 복사·검색에 옛 값(약정 금액 등)이 남지 않게. 해석할 수 없는 쪽은 덮기만 하고 결과에 그 쪽을 알린다.
 - 기관이 올린 글꼴(TTF·OTF)은 공개 주소로 서빙하지 않는다(`/api/media` 허용 확장자에 없음). 서버 렌더링에서만 읽는다.
 - `assets/fonts/*.ttf` 는 위치표를 긴 형식 + 글자 데이터 짝수 길이로 저장해 두었다. fontkit 의 부분집합 생성이 짧은 위치표에서 홀수 길이 글자를 깨뜨리기 때문이다. 글꼴을 바꾸면 같은 조건으로 다시 저장한다.
-- 편집 화면 `/studio/documents/[id]/edit`, 미리보기 `POST /api/studio/documents/[id]/pdf-preview`, 글꼴 올리기 `POST /api/studio/documents/[id]/pdf-font`. 화면 흐름 확인 `node e2e/pdf-form-edit.mjs`.
+- **등록 화면에서 바로 미리보기·편집한다.** 파일을 올리면 같은 폼 안에 편집기(`DocumentFileEditorField` → `PdfFormEditor`)가 열리고, 편집 기록은 hidden `pdfLayoutJson` 으로 서식 등록·저장 때 함께 저장된다(`applyPdf`). 같은 기록이면 결과를 다시 만들지 않는다. 넓은 화면 편집 `/studio/documents/[id]/edit` 는 기록만 따로 저장한다.
+- 서식 행이 생기기 전 미리보기·등록은 업로드 응답의 서명 토큰(`signBasePdf`, 기관·파일·24시간)으로 이 기관이 올린 바탕 PDF 인지 확인한다. 바탕 PDF 주소만으로는 미리보기·등록할 수 없다.
+- API: 미리보기 `POST /api/studio/pdf-form/preview`({templateId} 또는 {basePdfUrl, token} + layout), 글꼴 올리기 `POST /api/studio/pdf-form/font`. 화면 흐름 확인 `node e2e/pdf-form-edit.mjs`.

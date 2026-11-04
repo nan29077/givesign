@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 import { Notice } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
-import { PdfFormEditor } from '@/components/studio/pdf-form-editor';
+import { PdfFormEditorPage } from '@/components/studio/pdf-form-editor-page';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { fontInfoForBase, readMediaPdf, templateLayout } from '@/server/services/pdf-form';
@@ -78,7 +78,7 @@ export default async function EditDocumentPdfPage({ params }: { params: Promise<
           저장소에서 원본 파일을 읽지 못했습니다. 서식 화면에서 파일을 다시 올려 주세요.
         </Notice>
       ) : (
-        <PdfFormEditor
+        <PdfFormEditorPage
           templateId={template.id}
           templateName={template.name}
           basePdfUrl={template.basePdfUrl}

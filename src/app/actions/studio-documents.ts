@@ -17,8 +17,10 @@ import { Prisma } from '@/generated/prisma/client';
 import type { DocumentTemplateType } from '@/generated/prisma/enums';
 import type { StudioActionState } from '@/app/actions/studio';
 import {
-  MEDIA_PDF_RE, saveTemplateLayout, verifyBasePdf, type SaveLayoutResult,
+  MEDIA_PDF_RE, layoutProblem, renderAndStore, saveTemplateLayout, verifyBasePdf, verifyBasePdfToken,
+  type SaveLayoutResult,
 } from '@/server/services/pdf-form';
+import { parsePdfLayout, type PdfLayout } from '@/lib/pdf-form';
 
 /**
  * 문서 상품 — 사회복지기관 관리자 서버 액션.
@@ -112,6 +114,10 @@ interface ParsedTemplate {
   /** FILE 서식의 편집 바탕 PDF 주소(브라우저가 보낸 값). 저장 전에 서버가 다시 확인한다. */
   basePdfUrl: string | null;
   baseConvertedFrom: string | null;
+  /** 업로드 응답의 서명 토큰(이 기관이 올린 바탕 PDF 인지 확인) */
+  baseToken: string;
+  /** 원본 위 편집 기록. null 이면 폼에 편집기가 없었다(기존 기록 유지). */
+  pdfLayout: PdfLayout | null;
 }
 
 function parseTemplateForm(
@@ -134,6 +140,7 @@ function parseTemplateForm(
   let fileName: string | null = null;
   let basePdfUrl: string | null = null;
   let baseConvertedFrom: string | null = null;
+  let pdfLayout: PdfLayout | null = null;
 
   if (templateType === 'PRESET') {
     presetKey = text(formData, 'presetKey');
@@ -160,6 +167,13 @@ function parseTemplateForm(
     basePdfUrl = MEDIA_PDF_RE.test(base) ? base : null;
     const from = text(formData, 'baseConvertedFrom');
     baseConvertedFrom = ['none', 'image', 'office'].includes(from) ? from : null;
+    // 편집기의 기록은 길 수 있어 text() 의 길이 제한을 거치지 않고 읽는다.
+    const rawLayout = formData.get('pdfLayoutJson');
+    if (typeof rawLayout === 'string' && rawLayout.trim()) {
+      if (rawLayout.length > 512 * 1024) return { ok: false, message: '원본 위 수정 내용이 너무 큽니다.' };
+      pdfLayout = parsePdfLayout(rawLayout);
+      if (!pdfLayout) return { ok: false, message: '원본 위 수정 내용을 읽지 못했습니다. 화면을 새로 고쳐 주세요.' };
+    }
   }
 
   if (fields.length > MAX_DOCUMENT_FIELDS) {
@@ -191,28 +205,135 @@ function parseTemplateForm(
       active: formData.has('activePresent') ? checked(formData, 'active') : true,
       basePdfUrl,
       baseConvertedFrom,
+      baseToken: text(formData, 'baseToken'),
+      pdfLayout,
     },
   };
 }
 
 /**
- * 편집 바탕 PDF 를 DB 값으로 바꾼다. 해시·쪽수는 저장소의 파일을 서버가 직접 읽어 정한다.
- * 확인할 수 없는 주소면 바탕 PDF 없이(내려받기 서식으로만) 저장한다.
+ * 파일 서식의 바탕 PDF·원본 위 편집을 DB 값으로 만든다.
+ *
+ *  - 바탕 PDF 가 바뀌면(새로 올림) 업로드 서명 토큰으로 이 기관이 올린 파일인지 확인하고,
+ *    해시·쪽수는 저장소의 파일을 서버가 직접 읽어 정한다(브라우저 값은 믿지 않는다).
+ *  - 편집 기록이 함께 왔으면 결과 PDF 를 새 파일로 만든다. 저장된 기록과 같으면 다시 만들지 않는다.
+ *  - 바탕이 바뀌었는데 편집 기록이 없으면 이전 기록은 자리가 맞지 않으므로 비운다.
  */
-async function baseFields(basePdfUrl: string | null, convertedFrom: string | null) {
-  if (!basePdfUrl) {
-    return { basePdfUrl: null, basePdfHash: null, baseConvertedFrom: null, pdfPageCount: null };
+type PdfApply =
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      data: Record<string, unknown>;
+      summary: { edits: number; fallback: number; stripped: number; coverOnlyPages: number[] } | null;
+      cleared: boolean;
+    };
+
+async function applyPdf(
+  merchantId: string,
+  current: { basePdfUrl: string | null; pdfLayout: unknown } | null,
+  parsed: ParsedTemplate,
+): Promise<PdfApply> {
+  const none = { ok: true as const, data: {}, summary: null, cleared: false };
+  if (parsed.templateType !== 'FILE') return none;
+
+  const url = parsed.basePdfUrl;
+  const baseChanged = url !== (current?.basePdfUrl ?? null);
+  const data: Record<string, unknown> = {};
+  let pageCount: number | null = null;
+
+  if (baseChanged) {
+    if (!url) {
+      return {
+        ok: true,
+        data: {
+          basePdfUrl: null, basePdfHash: null, baseConvertedFrom: null, pdfPageCount: null,
+          pdfLayout: Prisma.DbNull, renderedPdfUrl: null, renderedPdfHash: null, pdfEditedAt: null,
+        },
+        summary: null,
+        cleared: !!current?.pdfLayout,
+      };
+    }
+    if (!verifyBasePdfToken(merchantId, url, parsed.baseToken)) {
+      return { ok: false, message: '올린 서식 파일을 확인하지 못했습니다. 파일을 다시 올려 주세요.' };
+    }
+    const v = await verifyBasePdf(url);
+    if (!v) return { ok: false, message: '올린 서식 파일을 읽지 못했습니다. 파일을 다시 올려 주세요.' };
+    Object.assign(data, {
+      basePdfUrl: url,
+      basePdfHash: v.hash,
+      baseConvertedFrom: parsed.baseConvertedFrom ?? 'none',
+      pdfPageCount: v.pageCount,
+    });
+    pageCount = v.pageCount;
+  } else if (url) {
+    pageCount = (await verifyBasePdf(url))?.pageCount ?? null;
   }
-  const v = await verifyBasePdf(basePdfUrl);
-  if (!v) return { basePdfUrl: null, basePdfHash: null, baseConvertedFrom: null, pdfPageCount: null };
-  return { basePdfUrl, basePdfHash: v.hash, baseConvertedFrom: convertedFrom ?? 'none', pdfPageCount: v.pageCount };
+
+  const layout = parsed.pdfLayout;
+  if (!url || (!layout && !baseChanged)) return { ok: true, data, summary: null, cleared: false };
+  if (!layout) {
+    // 새 파일을 올렸는데 편집 기록이 없으면 이전 기록을 비운다.
+    Object.assign(data, { pdfLayout: Prisma.DbNull, renderedPdfUrl: null, renderedPdfHash: null, pdfEditedAt: null });
+    return { ok: true, data, summary: null, cleared: !!current?.pdfLayout };
+  }
+  const problem = layoutProblem(layout, pageCount);
+  if (problem) return { ok: false, message: problem };
+  if (!baseChanged && JSON.stringify(parsePdfLayout(current?.pdfLayout) ?? null) === JSON.stringify(layout)) {
+    return { ok: true, data, summary: null, cleared: false };
+  }
+  const rendered = await renderAndStore(url, layout);
+  if (!rendered.ok) return rendered;
+  Object.assign(data, {
+    pdfLayout: layout as unknown as Prisma.InputJsonValue,
+    renderedPdfUrl: rendered.file?.url ?? null,
+    renderedPdfHash: rendered.file?.hash ?? null,
+    pdfEditedAt: new Date(),
+  });
+  return {
+    ok: true,
+    data,
+    cleared: false,
+    summary: {
+      edits: layout.edits.length,
+      fallback: rendered.file?.report.filter((r) => r.tier === 'FALLBACK').length ?? 0,
+      stripped: rendered.file?.stripped ?? 0,
+      coverOnlyPages: rendered.file?.coverOnlyPages ?? [],
+    },
+  };
+}
+
+function pdfSummaryText(summary: { edits: number; fallback: number } | null): string {
+  if (!summary) return '';
+  if (summary.edits === 0) return ' 원본 서식 그대로 씁니다.';
+  return (
+    ` 원본 위 수정 ${summary.edits}곳을 반영했습니다.` +
+    (summary.fallback ? ` (${summary.fallback}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴로 넣었습니다)` : '')
+  );
+}
+
+async function auditPdfEdit(userId: string, merchantId: string, templateId: string, summary: { edits: number; fallback: number } | null) {
+  if (!summary) return;
+  await writeAudit({
+    adminUserId: userId,
+    action: 'DOCUMENT_TEMPLATE_PDF_EDIT',
+    targetType: 'document_template',
+    targetId: templateId,
+    after: { by: 'merchant', merchantId, userId, edits: summary.edits, fallback: summary.fallback },
+  }).catch((err) => logger.warn('[documents] 원본 편집 감사로그 실패', { err: String(err) }));
+}
+
+function templateData(parsed: ParsedTemplate) {
+  const {
+    basePdfUrl: _b, baseConvertedFrom: _c, baseToken: _t, pdfLayout: _l, templateType: _y, ...rest
+  } = parsed;
+  return rest;
 }
 
 export async function createDocumentTemplateAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const parsed = parseTemplateForm(formData);
     if (!parsed.ok) return { ok: false, message: parsed.message };
 
@@ -228,24 +349,18 @@ export async function createDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
-    const { basePdfUrl, baseConvertedFrom, ...data } = parsed.data;
-    const base = await baseFields(basePdfUrl, baseConvertedFrom);
+    const pdf = await applyPdf(merchantId, null, parsed.data);
+    if (!pdf.ok) return { ok: false, message: pdf.message };
+
     const created = await prisma.documentTemplate.create({
-      data: { id: newId(), merchantId, ...data, ...base },
+      data: { id: newId(), merchantId, templateType: parsed.data.templateType, ...templateData(parsed.data), ...pdf.data },
       select: { id: true, name: true },
     });
+    await auditPdfEdit(userId, merchantId, created.id, pdf.summary);
     revalidateDocuments();
-    if (base.basePdfUrl) {
-      // 원본을 고칠 수 있는 서식이면 바로 편집기로 보낸다.
-      return {
-        ok: true,
-        message: `${created.name} 서식을 등록했습니다. 올린 원본 위에서 바로 고칠 수 있습니다.`,
-        redirectTo: `/studio/documents/${created.id}/edit`,
-      };
-    }
     return {
       ok: true,
-      message: `${created.name} 서식을 등록했습니다. 이제 후원 항목 관리에서 문서 상품에 연결할 수 있습니다.`,
+      message: `${created.name} 서식을 등록했습니다.${pdfSummaryText(pdf.summary)} 이제 후원 항목 관리·서명 요청에서 쓸 수 있습니다.`,
       redirectTo: `/studio/documents/${created.id}`,
     };
   });
@@ -255,7 +370,7 @@ export async function updateDocumentTemplateAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const id = text(formData, 'templateId');
     if (!id) return { ok: false, message: '서식을 찾을 수 없습니다.' };
 
@@ -277,34 +392,26 @@ export async function updateDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
-    const { templateType: _t, basePdfUrl, baseConvertedFrom, ...rest } = parsed.data;
-    let baseUpdate = {};
-    let baseReset = false;
-    if (current.templateType === 'FILE' && basePdfUrl !== current.basePdfUrl) {
-      // 원본 파일을 바꾸면 이전 원본 위에 적은 수정 기록은 자리가 맞지 않는다. 새 원본에서 다시 고친다.
-      baseReset = !!current.pdfLayout;
-      baseUpdate = {
-        ...(await baseFields(basePdfUrl, baseConvertedFrom)),
-        pdfLayout: Prisma.DbNull,
-        renderedPdfUrl: null,
-        renderedPdfHash: null,
-        pdfEditedAt: null,
-      };
-    }
-    await prisma.documentTemplate.update({ where: { id }, data: { ...rest, ...baseUpdate } });
+    const pdf = await applyPdf(merchantId, current, parsed.data);
+    if (!pdf.ok) return { ok: false, message: pdf.message };
+
+    await prisma.documentTemplate.update({ where: { id }, data: { ...templateData(parsed.data), ...pdf.data } });
+    await auditPdfEdit(userId, merchantId, id, pdf.summary);
 
     // 이미 제출된 문서는 그대로 남는다(저장 당시 값을 근거로 남겨야 한다).
     const submitted = await prisma.documentSubmission.count({
       where: { templateId: id, status: { in: ['SUBMITTED', 'REVIEWED'] } },
     });
     revalidateDocuments(id);
+    revalidatePath(`/studio/documents/${id}/edit`);
     return {
       ok: true,
       message:
         (submitted > 0
           ? `서식을 저장했습니다. 이미 제출된 ${submitted}건은 제출 당시 내용 그대로 남습니다.`
           : '서식을 저장했습니다.') +
-        (baseReset ? ' 원본 파일이 바뀌어 원본 위 수정 내용을 비웠습니다. 새 원본에서 다시 고쳐 주세요.' : ''),
+        pdfSummaryText(pdf.summary) +
+        (pdf.cleared ? ' 원본 파일이 바뀌어 이전 원본 위 수정 내용을 비웠습니다.' : ''),
     };
   });
 }

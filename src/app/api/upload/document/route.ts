@@ -2,7 +2,8 @@ import { requireMerchant } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
 import { putObject, newObjectName } from '@/server/uploads';
-import { prepareBasePdf } from '@/server/services/pdf-form';
+import { emptyPdfLayout } from '@/lib/pdf-form';
+import { fontInfoForBase, prepareBasePdf, signBasePdf } from '@/server/services/pdf-form';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -114,11 +115,15 @@ export async function POST(req: Request) {
     ok: false as const,
     message: '원본 편집용 PDF 를 만들지 못했습니다. PDF 로 저장해 다시 올리면 원본 위에서 고칠 수 있습니다.',
   }));
+  // 등록 화면에서 바로 미리보기·편집을 하려면 글꼴 정보와 "이 기관이 올린 파일" 토큰이 필요하다.
+  const fonts = base.ok ? await fontInfoForBase(base.pdf, emptyPdfLayout()).catch(() => []) : [];
   return Response.json({
     ok: true,
     url,
     name: displayName,
-    base: base.ok ? base.info : null,
+    base: base.ok
+      ? { ...base.info, token: signBasePdf(merchant.merchantId, base.info.basePdfUrl), fonts }
+      : null,
     editMessage: base.ok ? null : base.message,
   });
 }

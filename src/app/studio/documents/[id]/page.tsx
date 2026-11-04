@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ChevronLeft, FileDown, FilePen, FileText } from 'lucide-react';
-import { Badge, Card, CardTitle, DataRow, LinkButton, Notice } from '@/components/ui';
+import { ChevronLeft, FileDown, FileText } from 'lucide-react';
+import { Badge, Card, CardTitle, DataRow, Notice, cx } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
 import { InlineActionForm } from '@/components/studio/action-form';
 import { DocumentTemplateForm } from '@/components/studio/document-template-form';
@@ -18,7 +18,9 @@ import {
 } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
-import { parsePdfLayout } from '@/lib/pdf-form';
+import type { PdfFontInfo } from '@/lib/pdf-form';
+import { fontInfoForBase, readMediaPdf, templateLayout } from '@/server/services/pdf-form';
+import type { ExistingPdfForm } from '@/components/studio/document-file-editor-field';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +51,25 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
   if (!template) notFound();
 
   const fields = parseDocumentFields(template.fields);
+  const isFile = template.templateType === 'FILE';
+
+  // 파일 서식: 서식 화면 안에서 바로 원본 미리보기·편집을 하도록 저장된 원본·기록·글꼴 정보를 넘긴다.
+  let pdfEditor: ExistingPdfForm | null = null;
+  if (isFile && !template.archivedAt) {
+    const layout = templateLayout(template.pdfLayout);
+    let fonts: PdfFontInfo[] = [];
+    const base = template.basePdfUrl ? await readMediaPdf(template.basePdfUrl) : null;
+    if (base) fonts = await fontInfoForBase(base, layout).catch(() => []);
+    pdfEditor = {
+      templateId: template.id,
+      basePdfUrl: base ? template.basePdfUrl : null,
+      renderedPdfUrl: template.renderedPdfUrl,
+      convertedFrom: template.baseConvertedFrom,
+      pageCount: template.pdfPageCount,
+      layout,
+      fonts,
+    };
+  }
   const countOf = (status: string) => counts.find((c) => c.status === status)?._count._all ?? 0;
 
   return (
@@ -84,15 +105,16 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
           </Card>
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        // 파일 서식은 원본 미리보기·편집이 넓어야 해서 한 줄로 두고, 현황은 아래로 내린다.
+        <div className={cx('grid gap-4', isFile ? '' : 'xl:grid-cols-[minmax(0,1fr)_340px]')}>
           <div className="min-w-0">
-            {template.templateType === 'FILE' ? <PdfEditCard template={template} /> : null}
             <DocumentTemplateForm
               action={updateDocumentTemplateAction}
               templateType={template.templateType}
               template={template}
               fields={fields}
               submitLabel="서식 저장"
+              pdfEditor={pdfEditor}
             />
 
             <Card className="mt-4">
@@ -116,7 +138,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
           </div>
 
           {/* ── 미리보기 · 현황 ─────────────────────────────────── */}
-          <aside className="min-w-0 space-y-3 xl:sticky xl:top-20 xl:self-start">
+          <aside className={cx('min-w-0 space-y-3', isFile ? 'grid gap-3 md:grid-cols-2 md:space-y-0 xl:grid-cols-3' : 'xl:sticky xl:top-20 xl:self-start')}>
             <Card>
               <CardTitle>후원자에게 보이는 모습</CardTitle>
               <p className="mb-3 mt-0.5 text-[11.5px] leading-relaxed text-ink-400">
@@ -129,9 +151,17 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
                   <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-800">
                     {template.fileName ?? '서식 파일'}
                   </span>
-                  <span className="shrink-0 text-[11px] font-bold text-ink-400">
-                    {template.renderedPdfUrl ? '고친 서식' : template.basePdfUrl ? '원본 서식' : '내려받기'}
-                  </span>
+                  {template.renderedPdfUrl || template.basePdfUrl ? (
+                    <a
+                      href={`${template.renderedPdfUrl ?? template.basePdfUrl}?name=${encodeURIComponent(`${template.name}.pdf`)}`}
+                      className="flex shrink-0 items-center gap-1 text-[11px] font-bold text-brand-700 hover:underline"
+                    >
+                      <FileDown size={13} strokeWidth={1.7} />
+                      {template.renderedPdfUrl ? '고친 서식' : '원본 서식'}
+                    </a>
+                  ) : (
+                    <span className="shrink-0 text-[11px] font-bold text-ink-400">내려받기</span>
+                  )}
                 </div>
               ) : null}
 
@@ -211,62 +241,5 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
         </div>
       )}
     </>
-  );
-}
-
-/** 파일 서식: 원본 위에서 고치기 진입과 현재 상태. */
-function PdfEditCard({
-  template,
-}: {
-  template: {
-    id: string;
-    name: string;
-    basePdfUrl: string | null;
-    renderedPdfUrl: string | null;
-    pdfLayout: unknown;
-    pdfEditedAt: Date | null;
-    pdfPageCount: number | null;
-  };
-}) {
-  if (!template.basePdfUrl) {
-    return (
-      <div className="mb-4">
-        <Notice tone="neutral" title="원본 위에서 고치려면 PDF 가 필요합니다">
-          지금 파일은 내려받기 서식으로만 쓰입니다. 한글은 [파일 → PDF로 저장하기], 워드는 [다른 이름으로 저장 → PDF] 로
-          저장해 아래 서식 파일을 다시 올리면 원래 글꼴·크기 그대로 화면에서 고칠 수 있습니다.
-        </Notice>
-      </div>
-    );
-  }
-  const edits = parsePdfLayout(template.pdfLayout)?.edits.length ?? 0;
-  return (
-    <Card className="mb-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-700">
-          <FilePen size={19} strokeWidth={1.7} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <CardTitle>원본 위에서 고치기</CardTitle>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-500">
-            {edits > 0
-              ? `수정 ${edits}곳 반영됨${template.pdfEditedAt ? ` · ${formatKst(template.pdfEditedAt)}` : ''}. 후원자·서명자는 고친 서식을 받습니다.`
-              : `올린 원본(${template.pdfPageCount ?? '?'}쪽)을 그대로 쓰고 있습니다. 글자를 누르면 원래 글꼴·크기로 고칠 수 있습니다.`}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {template.renderedPdfUrl ? (
-            <a
-              href={`${template.renderedPdfUrl}?name=${encodeURIComponent(`${template.name}.pdf`)}`}
-              className="inline-flex items-center gap-1 text-[12px] font-bold text-ink-500 hover:text-ink-900"
-            >
-              <FileDown size={15} strokeWidth={1.7} /> 고친 서식
-            </a>
-          ) : null}
-          <LinkButton href={`/studio/documents/${template.id}/edit`} size="sm">
-            {edits > 0 ? '이어서 고치기' : '원본 위에서 고치기'}
-          </LinkButton>
-        </div>
-      </div>
-    </Card>
   );
 }

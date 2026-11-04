@@ -14,7 +14,9 @@ import { groupTextRuns, rectToCover, sampleColors, coverPolygon, type PdfTextRun
 import { renderPdfLayout } from '@/server/services/pdf-form/render';
 import { parseToUnicode } from '@/server/services/pdf-form/fonts';
 import { toBasePdf } from '@/server/services/pdf-form/convert';
-import { saveTemplateLayout, previewTemplateLayout, effectivePdf } from '@/server/services/pdf-form';
+import {
+  saveTemplateLayout, previewTemplateLayout, effectivePdf, previewLayout, signBasePdf, verifyBasePdfToken,
+} from '@/server/services/pdf-form';
 import { createEnvelope, readSnapshot } from '@/server/services/edoc';
 import { ensureWallet } from '@/server/services/edoc-billing';
 import { resetDb, seedBasics, type Fixture } from './helpers';
@@ -349,5 +351,32 @@ describe('서식에 저장', () => {
     expect(again.pdfUrl).toBe(t1.renderedPdfUrl);
     const t2 = await prisma.documentTemplate.findUniqueOrThrow({ where: { id: templateId } });
     expect(t2.renderedPdfUrl).not.toBe(t1.renderedPdfUrl);
+  });
+
+  it('등록 전 미리보기: 이 기관이 올린 파일(서명 토큰)만 미리볼 수 있다', async () => {
+    const token = signBasePdf(fx.merchantId, baseUrl);
+    const ok = await previewLayout(fx.merchantId, { basePdfUrl: baseUrl, token }, emptyPdfLayout());
+    expect(ok.ok).toBe(true);
+    // 다른 기관이 같은 파일 주소·토큰을 써도 안 된다.
+    const other = await previewLayout('other-merchant', { basePdfUrl: baseUrl, token }, emptyPdfLayout());
+    expect(other.ok).toBe(false);
+    // 토큰을 다른 파일 주소에 붙여도 안 된다.
+    const otherUrl = '/api/media/' + 'b'.repeat(32) + '.pdf';
+    const swapped = await previewLayout(fx.merchantId, { basePdfUrl: otherUrl, token }, emptyPdfLayout());
+    expect(swapped.ok).toBe(false);
+  });
+});
+
+describe('업로드 서명 토큰', () => {
+  it('기관·파일·만료를 함께 확인한다', () => {
+    const url = '/api/media/' + 'c'.repeat(32) + '.pdf';
+    const now = Date.now();
+    const token = signBasePdf('m1', url, now);
+    expect(verifyBasePdfToken('m1', url, token, now)).toBe(true);
+    expect(verifyBasePdfToken('m2', url, token, now)).toBe(false);
+    expect(verifyBasePdfToken('m1', url.replace('c', 'd'), token, now)).toBe(false);
+    expect(verifyBasePdfToken('m1', url, token, now + 25 * 60 * 60 * 1000)).toBe(false);
+    expect(verifyBasePdfToken('m1', url, 'garbage', now)).toBe(false);
+    expect(verifyBasePdfToken('m1', url, token.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')), now)).toBe(false);
   });
 });

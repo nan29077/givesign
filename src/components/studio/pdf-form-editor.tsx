@@ -3,10 +3,10 @@
 import * as React from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist';
 import {
-  CircleCheck, Eraser, FileDown, Info, Loader2, MousePointerClick, Redo2, RotateCcw, Save, TriangleAlert, Type, Undo2,
-  Upload, X,
+  Eraser, Eye, Info, Loader2, Maximize2, MousePointerClick, Redo2, RotateCcw, ScanEye, Smartphone, TriangleAlert, Type,
+  Undo2, Upload, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
-import { Button, Card, CardTitle, cx } from '@/components/ui';
+import { Card, CardTitle, cx } from '@/components/ui';
 import { openPdf } from '@/components/pdf/pdfjs';
 import {
   MAX_EDIT_TEXT, MAX_PDF_EDITS, displayFontName, matrixFontSize, pdfFontTierLabel, predictFontTier, stripSubsetTag,
@@ -15,28 +15,32 @@ import {
 import {
   coverPolygon, groupTextRuns, rectToCover, sampleColors, styleOptions, type PdfTextRun, type TextStyleOption,
 } from '@/lib/pdf-form-runs';
-import { saveDocumentPdfLayoutAction } from '@/app/actions/studio-documents';
 
 /**
- * 올린 서식 원본 위에서 직접 고치는 편집기.
+ * 올린 서식 원본 위에서 직접 고치는 편집기 (미리보기 겸용).
  *
- * ── 화면 구성 ───────────────────────────────────────────────────────────
- *  - 보이는 그림은 항상 서버가 만든 "실제 결과 PDF" 다(고칠 때마다 다시 받아 그린다).
- *    브라우저는 원본 글꼴을 온전히 쓸 수 없어서, 입력 중에만 비슷한 글꼴로 보여 주고
- *    확정하면 서버 결과로 바꿔 그린다. 그래서 화면에서 본 것이 후원자가 받는 것과 같다.
- *  - 글자 위치·글꼴·크기는 원본 PDF 에서 읽는다. 글자색과 바탕색은 원본 그림에서 읽는다.
+ * 편집 내용(layout)은 부모가 쥔다. 서식 등록 폼에서는 폼 저장 때 함께 보내고,
+ * 넓은 화면 편집(/studio/documents/[id]/edit)에서는 따로 저장한다.
+ *
+ * ── 화면 ────────────────────────────────────────────────────────────────
+ *  - 편집: 보이는 그림은 항상 서버가 만든 "실제 결과 PDF" 다(고칠 때마다 다시 받아 그린다).
+ *    입력 중에만 브라우저 글꼴로 비슷하게 보여 주고, 확정하면 서버 결과로 바꿔 그린다.
+ *  - 원본 비교: 누르고 있는 동안 고치기 전 원본을 보여 준다.
+ *  - 후원자 화면: 휴대폰 폭에서 후원자·서명자가 받는 모습 그대로 보여 준다.
  *
  * ── 할 수 있는 것 ──────────────────────────────────────────────────────
  *  - 글자 고치기: 원래 글자를 누르면 그 자리에서 고친다. 원래 글꼴·크기·색·방향 그대로.
- *  - 새 글 넣기: 빈자리를 누르면 가장 가까운 글자의 모양(글꼴·크기·색)으로 넣는다. 모양은 바꿀 수 있다.
- *  - 지우기: 글자를 누르거나, 끌어서 영역을 덮는다(바탕색으로).
+ *  - 새 글 넣기: 빈자리를 누르면 가장 가까운 글자의 모양으로 넣는다. 넣은 글은 끌어서 옮길 수 있다.
+ *  - 지우기: 글자를 누르거나, 끌어서 영역을 덮는다(바탕색으로). 원래 글자는 파일에서도 지운다.
  */
 
+export type PdfEditorSource = { templateId: string } | { basePdfUrl: string; token: string };
+
 type Mode = 'edit' | 'add' | 'erase';
+type View = 'edit' | 'phone';
 
 interface PageState {
   pageNo: number;
-  /** PDF 단위(pt) 크기 — 회전 반영 */
   widthPt: number;
   heightPt: number;
   runs: PdfTextRun[];
@@ -58,6 +62,7 @@ interface ReportItem {
 const SANS_STACK = '"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo","Nanum Gothic",sans-serif';
 const SERIF_STACK = '"Noto Serif KR","Batang","AppleMyungjo","Nanum Myeongjo",serif';
 const SAMPLE_SCALE = 2;
+const ZOOMS = [0.6, 0.75, 1, 1.25, 1.5, 2];
 
 function rid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -75,45 +80,67 @@ function boxOf(vp: PageViewport, poly: Array<[number, number]>) {
   return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) };
 }
 
+/** 넣은 글의 대략적인 폭(화면 상자용). 실제 폭은 서버 결과 그림이 정확하다. */
+function approxAddWidth(e: PdfEdit) {
+  const size = matrixFontSize(e.matrix);
+  let units = 0;
+  for (const ch of Array.from(e.text)) units += /[ᄀ-ᇿ㄰-㆏가-힣一-鿿]/.test(ch) ? 1 : 0.55;
+  return Math.max(size, units * size);
+}
+
 export function PdfFormEditor({
-  templateId,
-  templateName,
+  source,
   basePdfUrl,
-  renderedPdfUrl,
-  initialLayout,
+  initialResultUrl,
   fonts,
   convertedFrom,
+  layout,
+  onLayoutChange,
+  variant = 'page',
+  toolbarEnd,
+  downloadName,
 }: {
-  templateId: string;
-  templateName: string;
+  source: PdfEditorSource;
   basePdfUrl: string;
-  renderedPdfUrl: string | null;
-  initialLayout: PdfLayout;
+  /** 저장된 결과 PDF. layout 이 저장된 것과 같을 때 첫 화면으로 쓴다. 없으면 미리보기를 만든다. */
+  initialResultUrl: string | null;
   fonts: PdfFontInfo[];
   convertedFrom: string | null;
+  layout: PdfLayout;
+  onLayoutChange: (next: PdfLayout) => void;
+  variant?: 'page' | 'embedded';
+  /** 도구 막대 오른쪽 끝(저장 버튼 등) */
+  toolbarEnd?: React.ReactNode;
+  downloadName: string;
 }) {
-  const [layout, setLayout] = React.useState<PdfLayout>(initialLayout);
   const [past, setPast] = React.useState<PdfLayout[]>([]);
   const [future, setFuture] = React.useState<PdfLayout[]>([]);
-  const [savedJson, setSavedJson] = React.useState(() => JSON.stringify(initialLayout));
-  const dirty = JSON.stringify(layout) !== savedJson;
 
   const [mode, setMode] = React.useState<Mode>('edit');
+  const [view, setView] = React.useState<View>('edit');
   const [pages, setPages] = React.useState<PageState[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [baseDoc, setBaseDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [resultDoc, setResultDoc] = React.useState<PDFDocumentProxy | null>(null);
+  const [showOriginal, setShowOriginal] = React.useState(false);
   const [report, setReport] = React.useState<Map<string, ReportItem>>(new Map());
   const [coverOnly, setCoverOnly] = React.useState<number[]>([]);
+  const [stripped, setStripped] = React.useState<number | null>(null);
   const [previewing, setPreviewing] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
-  const [notice, setNotice] = React.useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
   const [active, setActive] = React.useState<Active | null>(null);
   const [draft, setDraft] = React.useState('');
-  const [scale, setScale] = React.useState(1.2);
+  const [fit, setFit] = React.useState(1.2);
+  const [zoom, setZoom] = React.useState(1);
   const [uploadingFont, setUploadingFont] = React.useState<string | null>(null);
+  const scale = fit * zoom;
 
   const wrapRef = React.useRef<HTMLDivElement>(null);
-  const baseDocRef = React.useRef<PDFDocumentProxy | null>(null);
+  // 실행 취소·글꼴 올리기 등 비동기 처리에서 최신 기록을 읽기 위한 참조.
+  const layoutRef = React.useRef(layout);
+  React.useLayoutEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
 
   // ── 글꼴 정보: 올린 글꼴은 편집 기록 기준으로 바로 반영한다 ─────────────
   const fontByName = React.useMemo(() => {
@@ -136,12 +163,13 @@ export function PdfFormEditor({
 
   // ── 원본 읽기: 글자 묶음·색 읽기용 그림 ────────────────────────────────
   React.useEffect(() => {
+    // 바탕 PDF 가 바뀌면 부모가 key 로 새로 그리므로 여기서 상태를 비울 필요가 없다.
     let cancelled = false;
     (async () => {
       try {
         const doc = await openPdf(basePdfUrl);
         if (cancelled) return;
-        baseDocRef.current = doc;
+        setBaseDoc(doc);
         const out: PageState[] = [];
         for (let n = 1; n <= doc.numPages; n++) {
           const page = await doc.getPage(n);
@@ -165,9 +193,11 @@ export function PdfFormEditor({
               return key;
             }
           };
-          const items = text.items.filter((it): it is typeof it & { str: string; transform: number[]; width: number; fontName: string } => 'str' in it);
+          const items = text.items.filter(
+            (it): it is typeof it & { str: string; transform: number[]; width: number; fontName: string } => 'str' in it,
+          );
           out.push({ pageNo: n, widthPt: vp1.width, heightPt: vp1.height, runs: groupTextRuns(n, items, nameOf), sample });
-          page.cleanup();
+          if (cancelled) return;
         }
         if (!cancelled) setPages(out);
       } catch {
@@ -179,128 +209,120 @@ export function PdfFormEditor({
     };
   }, [basePdfUrl]);
 
-  // ── 처음 보이는 결과: 저장된 결과 PDF(없으면 원본) ───────────────────────
-  React.useEffect(() => {
-    let cancelled = false;
-    openPdf(renderedPdfUrl ?? basePdfUrl)
-      .then((d) => {
-        if (!cancelled) setResultDoc(d);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [renderedPdfUrl, basePdfUrl]);
-
   // ── 화면 폭에 맞춰 배율 ────────────────────────────────────────────────
   React.useEffect(() => {
     const el = wrapRef.current;
     if (!el || pages.length === 0) return;
     const maxW = Math.max(...pages.map((p) => p.widthPt));
-    const fit = () => setScale(Math.max(0.5, Math.min(1.8, (el.clientWidth - 2) / maxW)));
-    fit();
-    const ro = new ResizeObserver(fit);
+    const doFit = () => setFit(Math.max(0.4, Math.min(1.8, (el.clientWidth - 8) / maxW)));
+    doFit();
+    const ro = new ResizeObserver(doFit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [pages]);
+  }, [pages, view]);
 
-  // ── 고칠 때마다 실제 결과를 다시 받는다 (0.5초 모아서) ───────────────────
+  // ── 실제 결과 받기 (고칠 때마다, 0.45초 모아서) ───────────────────────────
   const layoutJson = JSON.stringify(layout);
-  const firstPreview = React.useRef(true);
+  const sourceJson = JSON.stringify(source);
+  const firstRun = React.useRef(true);
   React.useEffect(() => {
-    if (firstPreview.current) {
-      firstPreview.current = false;
-      // 저장된 결과가 이미 있으면 첫 화면은 그것으로 충분하다. 판정표만 받는다.
-      if (layout.edits.length === 0) return;
+    const isFirst = firstRun.current;
+    firstRun.current = false;
+    // 첫 화면: 고친 곳이 없으면 원본, 저장된 결과가 있으면 그 파일을 그대로 쓴다.
+    if (isFirst && (layout.edits.length === 0 || initialResultUrl)) {
+      let cancelled = false;
+      openPdf(layout.edits.length ? initialResultUrl! : basePdfUrl)
+        .then((d) => !cancelled && setResultDoc(d))
+        .catch(() => undefined);
+      if (layout.edits.length === 0) return () => { cancelled = true; };
+      // 저장된 결과를 보여 주면서도 글꼴 판정표는 받아 둔다(아래로 이어서 미리보기 요청).
+    }
+    if (layout.edits.length === 0) {
+      let cancelled = false;
+      openPdf(basePdfUrl)
+        .then((d) => {
+          if (cancelled) return;
+          setReport(new Map());
+          setCoverOnly([]);
+          setStripped(null);
+          setResultDoc(d);
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
     }
     const ctrl = new AbortController();
     const timer = setTimeout(async () => {
       setPreviewing(true);
       try {
-        const res = await fetch(`/api/studio/documents/${templateId}/pdf-preview`, {
+        const res = await fetch('/api/studio/pdf-form/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: layoutJson,
+          body: JSON.stringify({ ...source, layout }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
           const data = (await res.json().catch(() => null)) as { message?: string } | null;
-          setNotice({ tone: 'error', text: data?.message ?? '미리보기를 만들지 못했습니다.' });
+          setNotice(data?.message ?? '미리보기를 만들지 못했습니다.');
           return;
         }
         const header = res.headers.get('x-render-report');
         if (header) {
-          const parsed = JSON.parse(decodeURIComponent(header)) as { report: ReportItem[]; coverOnlyPages: number[] };
+          const parsed = JSON.parse(decodeURIComponent(header)) as { report: ReportItem[]; coverOnlyPages: number[]; stripped: number };
           setReport(new Map(parsed.report.map((r) => [r.id, r])));
           setCoverOnly(parsed.coverOnlyPages ?? []);
+          setStripped(parsed.stripped ?? null);
         }
         const bytes = new Uint8Array(await res.arrayBuffer());
+        if (isFirst && initialResultUrl) return; // 첫 화면은 저장된 결과 그대로
         const doc = await openPdf(bytes);
+        setNotice(null);
         setResultDoc((prev) => {
-          void prev?.loadingTask.destroy();
+          if (prev && prev !== baseDoc) void prev.loadingTask.destroy();
           return doc;
         });
       } catch (err) {
-        if ((err as Error).name !== 'AbortError') setNotice({ tone: 'error', text: '미리보기를 만들지 못했습니다.' });
+        if ((err as Error).name !== 'AbortError') setNotice('미리보기를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.');
       } finally {
         setPreviewing(false);
       }
-    }, 500);
+    }, isFirst ? 0 : 450);
     return () => {
       clearTimeout(timer);
       ctrl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutJson, templateId]);
-
-  // ── 저장하지 않고 나가려 하면 묻는다 ───────────────────────────────────
-  React.useEffect(() => {
-    if (!dirty) return;
-    const h = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('beforeunload', h);
-    return () => window.removeEventListener('beforeunload', h);
-  }, [dirty]);
+  }, [layoutJson, sourceJson, basePdfUrl]);
 
   // ── 편집 기록 다루기 ───────────────────────────────────────────────────
-  const commit = React.useCallback((next: PdfLayout) => {
-    setLayout((prev) => {
-      setPast((p) => [...p.slice(-49), prev]);
+  const commit = React.useCallback(
+    (next: PdfLayout) => {
+      setPast((p) => [...p.slice(-79), layoutRef.current]);
       setFuture([]);
-      return next;
-    });
-  }, []);
-
+      onLayoutChange(next);
+    },
+    [onLayoutChange],
+  );
   const undo = React.useCallback(() => {
-    setPast((p) => {
-      if (p.length === 0) return p;
-      const prev = p[p.length - 1];
-      setLayout((cur) => {
-        setFuture((f) => [cur, ...f]);
-        return prev;
-      });
-      return p.slice(0, -1);
-    });
+    if (past.length === 0) return;
     setActive(null);
-  }, []);
+    setFuture([layoutRef.current, ...future]);
+    setPast(past.slice(0, -1));
+    onLayoutChange(past[past.length - 1]);
+  }, [past, future, onLayoutChange]);
   const redo = React.useCallback(() => {
-    setFuture((f) => {
-      if (f.length === 0) return f;
-      const next = f[0];
-      setLayout((cur) => {
-        setPast((p) => [...p, cur]);
-        return next;
-      });
-      return f.slice(1);
-    });
+    if (future.length === 0) return;
     setActive(null);
-  }, []);
+    setPast([...past, layoutRef.current]);
+    setFuture(future.slice(1));
+    onLayoutChange(future[0]);
+  }, [past, future, onLayoutChange]);
 
   React.useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -312,14 +334,15 @@ export function PdfFormEditor({
   }, [undo, redo]);
 
   const upsertEdit = (edit: PdfEdit) => {
-    const exists = layout.edits.some((e) => e.id === edit.id);
-    if (!exists && layout.edits.length >= MAX_PDF_EDITS) {
-      setNotice({ tone: 'error', text: `수정은 ${MAX_PDF_EDITS}곳까지 할 수 있습니다.` });
+    const cur = layoutRef.current;
+    const exists = cur.edits.some((e) => e.id === edit.id);
+    if (!exists && cur.edits.length >= MAX_PDF_EDITS) {
+      setNotice(`수정은 ${MAX_PDF_EDITS}곳까지 할 수 있습니다.`);
       return;
     }
-    commit({ ...layout, edits: exists ? layout.edits.map((e) => (e.id === edit.id ? edit : e)) : [...layout.edits, edit] });
+    commit({ ...cur, edits: exists ? cur.edits.map((e) => (e.id === edit.id ? edit : e)) : [...cur.edits, edit] });
   };
-  const removeEdit = (id: string) => commit({ ...layout, edits: layout.edits.filter((e) => e.id !== id) });
+  const removeEdit = (id: string) => commit({ ...layoutRef.current, edits: layoutRef.current.edits.filter((e) => e.id !== id) });
 
   /** 원본 그림에서 그 자리의 바탕·글자색을 읽는다. */
   const colorsAt = (pageNo: number, poly: Array<[number, number]>) => {
@@ -336,8 +359,7 @@ export function PdfFormEditor({
     const existing = editForRun(run);
     if (mode === 'erase') {
       if (existing) return;
-      const poly = coverPolygon(run);
-      const { cover, color } = colorsAt(run.page, poly);
+      const { cover, color } = colorsAt(run.page, coverPolygon(run));
       upsertEdit({
         id: run.id, page: run.page, kind: 'erase', matrix: run.matrix, width: run.width, text: '',
         font: { baseFont: run.baseFont, serif: run.serif, bold: run.bold }, color, cover, original: run.text,
@@ -358,14 +380,14 @@ export function PdfFormEditor({
     let best: PdfTextRun | null = null;
     let bestD = Infinity;
     for (const r of runs) {
-      const d = Math.hypot(r.matrix[4] - x, r.matrix[5] - y);
+      // 같은 줄 높이를 더 중요하게 본다(표 안 빈칸은 옆 칸 글자 모양을 따르는 것이 자연스럽다).
+      const d = Math.hypot((r.matrix[4] - x) * 0.5, (r.matrix[5] - y) * 1.5);
       if (d < bestD) {
         bestD = d;
         best = r;
       }
     }
-    const pool = best ? [best] : allRuns.slice(0, 1);
-    const r = pool[0] ?? null;
+    const r = best ?? allRuns[0] ?? null;
     if (!r) return { run: null, style: null };
     const key = `${r.baseFont}|${Math.round(r.size * 10) / 10}`;
     return { run: r, style: styles.find((s) => s.key === key) ?? null };
@@ -374,11 +396,14 @@ export function PdfFormEditor({
   const onPageClick = (pageNo: number, vp: PageViewport, e: React.MouseEvent<HTMLDivElement>) => {
     if (mode !== 'add') return;
     if ((e.target as HTMLElement).closest('[data-editor-ui]')) return;
+    if (active) {
+      finish(true);
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const [x, y] = vp.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
     const { run, style } = nearestStyle(pageNo, x, y);
     const size = style?.size ?? 11;
-    // 누른 곳이 글자 한가운데쯤이 되도록 기준선을 조금 내린다.
     const matrix: PdfMatrix = [size, 0, 0, size, x, y - size * 0.35];
     const color: [number, number, number] = run ? colorsAt(run.page, coverPolygon(run)).color : [0, 0, 0];
     setActive({ kind: 'new', page: pageNo, matrix, style, color });
@@ -402,34 +427,39 @@ export function PdfFormEditor({
     const y = e.clientY - rect.top;
     setDragBox({ page: d.page, left: Math.min(d.x0, x), top: Math.min(d.y0, y), w: Math.abs(x - d.x0), h: Math.abs(y - d.y0) });
   };
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onPointerUp = () => {
     const d = dragRef.current;
     dragRef.current = null;
     const box = dragBox;
     setDragBox(null);
     if (!d || !box || box.w < 4 || box.h < 4) return;
-    void e;
     const [x0, y0] = d.vp.convertToPdfPoint(box.left, box.top);
     const [x1, y1] = d.vp.convertToPdfPoint(box.left + box.w, box.top + box.h);
     const { matrix, width } = rectToCover(x0, y0, x1, y1);
-    const poly = coverPolygon({ matrix, width });
-    const { cover, color } = colorsAt(d.page, poly);
+    const { cover, color } = colorsAt(d.page, coverPolygon({ matrix, width }));
     upsertEdit({
       id: rid('area'), page: d.page, kind: 'erase', matrix, width, text: '',
       font: { baseFont: '', serif: false, bold: false }, color, cover, original: '(영역)',
     });
   };
 
+  /** 넣은 글 옮기기(화면 px 만큼) */
+  const moveEdit = (edit: PdfEdit, vp: PageViewport, dx: number, dy: number) => {
+    const [ax, ay] = vp.convertToPdfPoint(0, 0);
+    const [bx, by] = vp.convertToPdfPoint(dx, dy);
+    const m = edit.matrix;
+    upsertEdit({ ...edit, matrix: [m[0], m[1], m[2], m[3], m[4] + (bx - ax), m[5] + (by - ay)] });
+  };
+
   // ── 입력 확정 ──────────────────────────────────────────────────────────
-  const finish = (apply: boolean) => {
+  function finish(apply: boolean) {
     if (!active) return;
     const text = draft.replace(/[\r\n\t]+/g, ' ').slice(0, MAX_EDIT_TEXT);
     if (apply) {
       if (active.kind === 'run') {
         const r = active.run;
         if (text !== r.text) {
-          const poly = coverPolygon(r);
-          const { cover, color } = colorsAt(r.page, poly);
+          const { cover, color } = colorsAt(r.page, coverPolygon(r));
           upsertEdit({
             id: r.id, page: r.page, kind: text.trim() ? 'replace' : 'erase', matrix: r.matrix, width: r.width, text,
             font: { baseFont: r.baseFont, serif: r.serif, bold: r.bold }, color, cover, original: r.text,
@@ -439,7 +469,7 @@ export function PdfFormEditor({
         const e = active.edit;
         if (e.kind === 'add' && !text.trim()) removeEdit(e.id);
         else if (e.kind !== 'add' && text === e.original) removeEdit(e.id);
-        else upsertEdit({ ...e, kind: e.kind === 'add' ? 'add' : text.trim() ? 'replace' : 'erase', text });
+        else if (text !== e.text || e.kind === 'erase') upsertEdit({ ...e, kind: e.kind === 'add' ? 'add' : text.trim() ? 'replace' : 'erase', text });
       } else if (active.kind === 'new' && text.trim()) {
         const st = active.style;
         upsertEdit({
@@ -451,53 +481,25 @@ export function PdfFormEditor({
     }
     setActive(null);
     setDraft('');
-  };
+  }
 
   /** 새 글의 모양을 문서에 쓰인 다른 모양으로 바꾼다. */
-  const changeNewStyle = (key: string) => {
-    if (!active || active.kind !== 'new') return;
-    const st = styles.find((s) => s.key === key) ?? null;
-    const size = st?.size ?? matrixFontSize(active.matrix);
-    const m = active.matrix;
-    setActive({ ...active, style: st, matrix: [size, 0, 0, size, m[4], m[5]] });
-  };
-  const changeAddEditStyle = (edit: PdfEdit, key: string) => {
+  const changeStyle = (key: string) => {
+    if (!active) return;
     const st = styles.find((s) => s.key === key);
     if (!st) return;
-    const m = edit.matrix;
-    const next: PdfEdit = { ...edit, font: { baseFont: st.baseFont, serif: st.serif, bold: st.bold }, matrix: [st.size, 0, 0, st.size, m[4], m[5]] };
-    upsertEdit(next);
-    setActive({ kind: 'edit', edit: next });
-  };
-
-  // ── 저장 ───────────────────────────────────────────────────────────────
-  const save = async () => {
-    if (active) finish(true);
-    setSaving(true);
-    setNotice(null);
-    try {
-      const res = await saveDocumentPdfLayoutAction(templateId, JSON.stringify(layout));
-      if (!res.ok) {
-        setNotice({ tone: 'error', text: res.message });
-        return;
-      }
-      setSavedJson(JSON.stringify(layout));
-      setReport(new Map(res.report.map((r) => [r.id, r])));
-      setCoverOnly(res.coverOnlyPages);
-      const fallback = res.report.filter((r) => r.tier === 'FALLBACK').length;
-      setNotice({
-        tone: 'ok',
-        text:
-          res.edits === 0
-            ? '원본 그대로 쓰도록 저장했습니다.'
-            : `저장했습니다. 수정 ${res.edits}곳` +
-              (res.stripped ? ` · 덮은 자리의 원래 글자 ${res.stripped}자를 지웠습니다` : '') +
-              (fallback ? ` · ${fallback}곳은 원본 글꼴에 없는 글자가 있어 대체 글꼴을 썼습니다.` : ' · 모두 원본 글꼴로 들어갔습니다.'),
-      });
-    } catch {
-      setNotice({ tone: 'error', text: '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.' });
-    } finally {
-      setSaving(false);
+    if (active.kind === 'new') {
+      const m = active.matrix;
+      setActive({ ...active, style: st, matrix: [st.size, 0, 0, st.size, m[4], m[5]] });
+    } else if (active.kind === 'edit' && active.edit.kind === 'add') {
+      const m = active.edit.matrix;
+      const next: PdfEdit = {
+        ...active.edit,
+        font: { baseFont: st.baseFont, serif: st.serif, bold: st.bold },
+        matrix: [st.size, 0, 0, st.size, m[4], m[5]],
+      };
+      upsertEdit(next);
+      setActive({ kind: 'edit', edit: next });
     }
   };
 
@@ -507,17 +509,17 @@ export function PdfFormEditor({
       const fd = new FormData();
       fd.append('file', file);
       fd.append('match', stripSubsetTag(font.baseFont));
-      const res = await fetch(`/api/studio/documents/${templateId}/pdf-font`, { method: 'POST', body: fd });
+      const res = await fetch('/api/studio/pdf-form/font', { method: 'POST', body: fd });
       const data = (await res.json()) as { ok: boolean; message?: string; font?: { match: string; url: string; name: string } };
       if (!data.ok || !data.font) {
-        setNotice({ tone: 'error', text: data.message ?? '글꼴을 올리지 못했습니다.' });
+        setNotice(data.message ?? '글꼴을 올리지 못했습니다.');
         return;
       }
       const f = data.font;
-      commit({ ...layout, fonts: [...layout.fonts.filter((x) => x.match.toLowerCase() !== f.match.toLowerCase()), f] });
-      setNotice({ tone: 'ok', text: `${f.name} 을(를) ${displayFontName(font.baseFont)} 대신 쓰도록 올렸습니다. 저장하면 반영됩니다.` });
+      const cur = layoutRef.current;
+      commit({ ...cur, fonts: [...cur.fonts.filter((x) => x.match.toLowerCase() !== f.match.toLowerCase()), f] });
     } catch {
-      setNotice({ tone: 'error', text: '글꼴을 올리지 못했습니다.' });
+      setNotice('글꼴을 올리지 못했습니다.');
     } finally {
       setUploadingFont(null);
     }
@@ -531,183 +533,246 @@ export function PdfFormEditor({
     return { tier: p.tier, missing: p.missing, predicted: true };
   };
 
+  const scrollToPage = (n: number) => {
+    document.getElementById(`pdf-edit-page-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   // ── 그리기 ─────────────────────────────────────────────────────────────
   if (loadError) {
     return (
-      <Card>
-        <p className="flex items-center gap-2 text-[13px] text-danger-500">
-          <TriangleAlert size={16} strokeWidth={1.7} /> {loadError}
-        </p>
-      </Card>
+      <p className="flex items-center gap-2 rounded-xl bg-danger-50 px-3 py-3 text-[13px] text-danger-500">
+        <TriangleAlert size={16} strokeWidth={1.7} /> {loadError}
+      </p>
     );
   }
 
-  const activeFont = active
+  const activeFontName = active
     ? active.kind === 'run'
-      ? fontInfo(active.run.baseFont)
+      ? active.run.baseFont
       : active.kind === 'edit'
-        ? fontInfo(active.edit.font.baseFont)
-        : active.style
-          ? fontInfo(active.style.baseFont)
-          : undefined
-    : undefined;
-  const activePrediction = active ? predictFontTier(draft, activeFont) : null;
+        ? active.edit.font.baseFont
+        : (active.style?.baseFont ?? '')
+    : '';
+  const activeSize = active
+    ? active.kind === 'run'
+      ? active.run.size
+      : matrixFontSize(active.kind === 'edit' ? active.edit.matrix : active.matrix)
+    : 0;
+  const activePrediction = active ? predictFontTier(draft, fontInfo(activeFontName)) : null;
+  const activeStyleKey = active && activeFontName ? `${activeFontName}|${Math.round(activeSize * 10) / 10}` : '';
+  const canPickStyle = active?.kind === 'new' || (active?.kind === 'edit' && active.edit.kind === 'add');
+  const fallbackCount = layout.edits.filter((e) => tierOf(e).tier === 'FALLBACK').length;
+  const displayDoc = showOriginal ? baseDoc : resultDoc;
+
+  const sticky = variant === 'page' ? 'top-14' : 'top-2';
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_288px]">
       <div className="min-w-0">
         {/* 도구 막대 */}
-        <div className="sticky top-14 z-20 mb-3 flex flex-wrap items-center gap-1.5 rounded-2xl border border-ink-100 bg-white/95 p-1.5 shadow-sm backdrop-blur">
-          {(
-            [
-              { key: 'edit', label: '글자 고치기', icon: MousePointerClick },
-              { key: 'add', label: '새 글 넣기', icon: Type },
-              { key: 'erase', label: '지우기', icon: Eraser },
-            ] as const
-          ).map((m) => (
-            <button
-              key={m.key}
-              type="button"
-              onClick={() => {
-                finish(true);
-                setMode(m.key);
-              }}
-              className={cx(
-                'flex h-9 items-center gap-1.5 rounded-xl px-3 text-[12.5px] font-bold',
-                mode === m.key ? 'bg-brand-700 text-white' : 'text-ink-700 hover:bg-ink-50',
-              )}
-            >
-              <m.icon size={16} strokeWidth={1.7} />
-              {m.label}
-            </button>
-          ))}
-          <span className="mx-1 h-6 w-px bg-ink-100" />
-          <button type="button" onClick={undo} disabled={past.length === 0} className="grid h-9 w-9 place-items-center rounded-xl text-ink-700 hover:bg-ink-50 disabled:opacity-40" title="되돌리기 (Ctrl+Z)">
-            <Undo2 size={16} strokeWidth={1.7} />
-          </button>
-          <button type="button" onClick={redo} disabled={future.length === 0} className="grid h-9 w-9 place-items-center rounded-xl text-ink-700 hover:bg-ink-50 disabled:opacity-40" title="다시 하기 (Ctrl+Shift+Z)">
-            <Redo2 size={16} strokeWidth={1.7} />
-          </button>
-          <span className="ml-auto flex items-center gap-2 pr-1 text-[11.5px] text-ink-400">
+        <div className={cx('sticky z-20 mb-3 flex flex-wrap items-center gap-1 rounded-2xl border border-ink-100 bg-white/95 p-1.5 shadow-sm backdrop-blur', sticky)}>
+          <div className="flex items-center rounded-xl bg-ink-50 p-0.5">
+            {(
+              [
+                { key: 'edit', label: '편집', icon: MousePointerClick },
+                { key: 'phone', label: '후원자 화면', icon: Smartphone },
+              ] as const
+            ).map((v) => (
+              <button
+                key={v.key}
+                type="button"
+                onClick={() => {
+                  finish(true);
+                  setView(v.key);
+                }}
+                className={cx(
+                  'flex h-8 items-center gap-1 rounded-lg px-2.5 text-[12px] font-bold',
+                  view === v.key ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-900',
+                )}
+              >
+                <v.icon size={15} strokeWidth={1.7} />
+                {v.label}
+              </button>
+            ))}
+          </div>
+          {view === 'edit' ? (
+            <>
+              <span className="mx-1 h-6 w-px bg-ink-100" />
+              {(
+                [
+                  { key: 'edit', label: '글자 고치기', icon: Type },
+                  { key: 'add', label: '새 글 넣기', icon: Type },
+                  { key: 'erase', label: '지우기', icon: Eraser },
+                ] as const
+              ).map((m, i) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => {
+                    finish(true);
+                    setMode(m.key);
+                  }}
+                  className={cx(
+                    'flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-[12.5px] font-bold',
+                    mode === m.key ? 'bg-brand-700 text-white' : 'text-ink-700 hover:bg-ink-50',
+                  )}
+                  title={i === 0 ? '원래 글자를 눌러 고칩니다' : i === 1 ? '빈자리를 눌러 글을 넣습니다' : '글자를 누르거나 끌어서 덮습니다'}
+                >
+                  <m.icon size={16} strokeWidth={1.7} />
+                  {m.label}
+                </button>
+              ))}
+              <span className="mx-1 h-6 w-px bg-ink-100" />
+              <IconButton onClick={undo} disabled={past.length === 0} title="되돌리기 (Ctrl+Z)"><Undo2 size={16} strokeWidth={1.7} /></IconButton>
+              <IconButton onClick={redo} disabled={future.length === 0} title="다시 하기 (Ctrl+Shift+Z)"><Redo2 size={16} strokeWidth={1.7} /></IconButton>
+              <span className="mx-1 h-6 w-px bg-ink-100" />
+              <IconButton onClick={() => setZoom((z) => ZOOMS[Math.max(0, ZOOMS.indexOf(z) - 1)] ?? z)} disabled={zoom <= ZOOMS[0]} title="축소"><ZoomOut size={16} strokeWidth={1.7} /></IconButton>
+              <button type="button" onClick={() => setZoom(1)} className="h-9 min-w-12 rounded-xl px-1.5 text-[11.5px] font-bold text-ink-500 hover:bg-ink-50" title="화면 폭에 맞추기">
+                {zoom === 1 ? '맞춤' : `${Math.round(zoom * 100)}%`}
+              </button>
+              <IconButton onClick={() => setZoom((z) => ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(z) + 1)] ?? z)} disabled={zoom >= ZOOMS[ZOOMS.length - 1]} title="확대"><ZoomIn size={16} strokeWidth={1.7} /></IconButton>
+              <button
+                type="button"
+                onPointerDown={() => setShowOriginal(true)}
+                onPointerUp={() => setShowOriginal(false)}
+                onPointerLeave={() => setShowOriginal(false)}
+                onKeyDown={(e) => e.key === ' ' && setShowOriginal(true)}
+                onKeyUp={() => setShowOriginal(false)}
+                disabled={layout.edits.length === 0}
+                className={cx(
+                  'ml-1 flex h-9 items-center gap-1 rounded-xl px-2.5 text-[12px] font-bold disabled:opacity-40',
+                  showOriginal ? 'bg-ink-900 text-white' : 'text-ink-700 hover:bg-ink-50',
+                )}
+                title="누르고 있는 동안 고치기 전 원본을 보여 줍니다"
+              >
+                <ScanEye size={16} strokeWidth={1.7} /> 원본과 비교
+              </button>
+            </>
+          ) : null}
+          <span className="ml-auto flex items-center gap-2 pl-1 text-[11.5px] text-ink-400">
             {previewing ? (
               <>
-                <Loader2 size={14} className="animate-spin" /> 실제 결과 그리는 중
+                <Loader2 size={14} className="animate-spin" /> 결과 그리는 중
               </>
-            ) : dirty ? (
-              '저장하지 않은 수정이 있습니다'
-            ) : (
-              '저장됨'
-            )}
+            ) : null}
+            {toolbarEnd}
           </span>
-          <Button type="button" size="sm" onClick={save} disabled={saving || !dirty}>
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} strokeWidth={1.7} />}
-            <span className="ml-1">저장</span>
-          </Button>
         </div>
 
-        <p className="mb-2 text-[12px] leading-relaxed text-ink-500">
-          {mode === 'edit'
-            ? '고칠 글자를 누르세요. 원래 글꼴·크기·색 그대로 그 자리에 들어갑니다. Enter 로 확정, Esc 로 취소합니다.'
-            : mode === 'add'
-              ? '글을 넣을 자리를 누르세요. 가장 가까운 글자와 같은 글꼴·크기로 들어가고, 모양은 바꿀 수 있습니다.'
-              : '지울 글자를 누르거나, 끌어서 영역을 덮으세요. 바탕색으로 덮고 원래 글자는 파일에서도 지웁니다.'}
-        </p>
+        {view === 'edit' ? (
+          <p className="mb-2 text-[12px] leading-relaxed text-ink-500">
+            {showOriginal
+              ? '고치기 전 원본입니다. 손을 떼면 고친 결과로 돌아갑니다.'
+              : mode === 'edit'
+                ? '고칠 글자를 누르세요. 원래 글꼴·크기·색 그대로 그 자리에 들어갑니다. Enter 확정 · Esc 취소. 넣은 글은 끌어서 옮길 수 있습니다.'
+                : mode === 'add'
+                  ? '글을 넣을 자리를 누르세요. 가장 가까운 글자와 같은 글꼴·크기로 들어가고, 모양은 바꿀 수 있습니다.'
+                  : '지울 글자를 누르거나, 끌어서 영역을 덮으세요. 바탕색으로 덮고 원래 글자는 파일에서도 지웁니다.'}
+          </p>
+        ) : null}
 
         {notice ? (
-          <div
-            className={cx(
-              'mb-3 flex items-start gap-2 rounded-xl px-3 py-2.5 text-[12.5px] leading-relaxed',
-              notice.tone === 'ok' ? 'bg-brand-50 text-brand-900' : 'bg-danger-50 text-danger-500',
-            )}
-          >
-            {notice.tone === 'ok' ? <CircleCheck size={16} strokeWidth={1.7} className="mt-0.5 shrink-0" /> : <TriangleAlert size={16} strokeWidth={1.7} className="mt-0.5 shrink-0" />}
-            <span className="flex-1">{notice.text}</span>
+          <div className="mb-3 flex items-start gap-2 rounded-xl bg-danger-50 px-3 py-2.5 text-[12.5px] leading-relaxed text-danger-500">
+            <TriangleAlert size={16} strokeWidth={1.7} className="mt-0.5 shrink-0" />
+            <span className="flex-1">{notice}</span>
             <button type="button" onClick={() => setNotice(null)} className="shrink-0 opacity-60 hover:opacity-100" aria-label="닫기">
               <X size={14} />
             </button>
           </div>
         ) : null}
 
-        {convertedFrom === 'image' ? (
+        {convertedFrom === 'image' && view === 'edit' ? (
           <p className="mb-3 rounded-xl bg-ink-50 px-3 py-2 text-[12px] text-ink-700">
             스캔 그림으로 만든 서식이라 원래 글자를 글자로 고칠 수 없습니다. [지우기] 로 영역을 덮고 [새 글 넣기] 로 써 주세요.
           </p>
         ) : null}
 
-        <div ref={wrapRef} className="space-y-4">
+        <div ref={wrapRef} className={cx('rounded-2xl bg-ink-50/70 p-2 sm:p-4', variant === 'embedded' ? 'max-h-[78vh] overflow-auto' : '')}>
           {pages.length === 0 ? (
-            <div className="flex h-60 items-center justify-center rounded-2xl border border-ink-100 bg-white text-[13px] text-ink-400">
+            <div className="flex h-60 items-center justify-center text-[13px] text-ink-400">
               <Loader2 size={16} className="mr-2 animate-spin" /> 원본을 읽는 중입니다
             </div>
+          ) : view === 'phone' ? (
+            <PhonePreview doc={resultDoc} pages={pages.length} />
           ) : (
-            pages.map((p) => (
-              <PageView
-                key={p.pageNo}
-                page={p}
-                scale={scale}
-                doc={resultDoc}
-                mode={mode}
-                edits={layout.edits.filter((e) => e.page === p.pageNo)}
-                active={active}
-                draft={draft}
-                setDraft={setDraft}
-                finish={finish}
-                onRun={openRun}
-                onEdit={(e) => {
-                  if (mode === 'erase') return;
-                  setActive({ kind: 'edit', edit: e });
-                  setDraft(e.text);
-                }}
-                onClick={onPageClick}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                dragBox={dragBox?.page === p.pageNo ? dragBox : null}
-                hint={
-                  activePrediction && active ? (
-                    <EditHint
-                      prediction={activePrediction}
-                      fontName={
-                        active.kind === 'run'
-                          ? active.run.baseFont
-                          : active.kind === 'edit'
-                            ? active.edit.font.baseFont
-                            : (active.style?.baseFont ?? '')
-                      }
-                      size={
-                        active.kind === 'run'
-                          ? active.run.size
-                          : active.kind === 'edit'
-                            ? matrixFontSize(active.edit.matrix)
-                            : matrixFontSize(active.matrix)
-                      }
-                      styles={active.kind === 'new' || (active.kind === 'edit' && active.edit.kind === 'add') ? styles : null}
-                      styleKey={
-                        active.kind === 'new'
-                          ? (active.style?.key ?? '')
-                          : active.kind === 'edit'
-                            ? `${active.edit.font.baseFont}|${Math.round(matrixFontSize(active.edit.matrix) * 10) / 10}`
-                            : ''
-                      }
-                      onStyle={(key) => {
-                        if (active.kind === 'new') changeNewStyle(key);
-                        else if (active.kind === 'edit') changeAddEditStyle(active.edit, key);
-                      }}
-                      onDelete={active.kind === 'edit' ? () => {
-                        removeEdit(active.edit.id);
-                        setActive(null);
-                      } : null}
-                    />
-                  ) : null
-                }
-              />
-            ))
+            <div className="space-y-4">
+              {pages.map((p) => (
+                <PageView
+                  key={p.pageNo}
+                  page={p}
+                  scale={scale}
+                  doc={displayDoc}
+                  mode={showOriginal ? 'view' : mode}
+                  edits={layout.edits.filter((e) => e.page === p.pageNo)}
+                  active={active}
+                  draft={draft}
+                  setDraft={setDraft}
+                  finish={finish}
+                  onRun={openRun}
+                  onEdit={(e) => {
+                    setActive({ kind: 'edit', edit: e });
+                    setDraft(e.text);
+                  }}
+                  onMove={moveEdit}
+                  onClick={onPageClick}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                  dragBox={dragBox?.page === p.pageNo ? dragBox : null}
+                  hint={
+                    activePrediction && active ? (
+                      <EditHint
+                        prediction={activePrediction}
+                        fontName={activeFontName}
+                        size={activeSize}
+                        styles={canPickStyle ? styles : null}
+                        styleKey={activeStyleKey}
+                        onStyle={changeStyle}
+                        onDelete={
+                          active.kind === 'edit'
+                            ? () => {
+                                removeEdit(active.edit.id);
+                                setActive(null);
+                              }
+                            : null
+                        }
+                      />
+                    ) : null
+                  }
+                />
+              ))}
+            </div>
           )}
         </div>
       </div>
 
-      {/* ── 오른쪽: 수정 목록 · 글꼴 ───────────────────────────────────── */}
-      <aside className="min-w-0 space-y-3 xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:self-start xl:overflow-y-auto">
+      {/* ── 오른쪽: 쪽 · 수정 목록 · 글꼴 ─────────────────────────────── */}
+      <aside className={cx('min-w-0 space-y-3 lg:sticky lg:self-start lg:overflow-y-auto', variant === 'page' ? 'lg:top-20 lg:max-h-[calc(100vh-6rem)]' : 'lg:top-2 lg:max-h-[80vh]')}>
+        {pages.length > 1 ? (
+          <div className="rounded-2xl border border-ink-100 bg-white p-3">
+            <p className="mb-2 text-[12px] font-bold text-ink-700">쪽 {pages.length}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {pages.map((p) => {
+                const n = layout.edits.filter((e) => e.page === p.pageNo).length;
+                return (
+                  <button
+                    key={p.pageNo}
+                    type="button"
+                    onClick={() => {
+                      setView('edit');
+                      scrollToPage(p.pageNo);
+                    }}
+                    className="relative h-8 min-w-8 rounded-lg border border-ink-200 px-2 text-[12px] font-bold text-ink-700 hover:border-brand-400"
+                  >
+                    {p.pageNo}
+                    {n ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand-700 px-1 text-[9.5px] text-white">{n}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
         <Card>
           <div className="flex items-center justify-between">
             <CardTitle>수정한 곳 {layout.edits.length}</CardTitle>
@@ -715,7 +780,7 @@ export function PdfFormEditor({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('모든 수정을 지우고 원본으로 되돌립니다. 저장해야 반영됩니다.')) commit({ ...layout, edits: [] });
+                  if (window.confirm('모든 수정을 지우고 원본으로 되돌립니다.')) commit({ ...layout, edits: [] });
                 }}
                 className="flex items-center gap-1 text-[11.5px] font-bold text-ink-500 hover:text-ink-900"
               >
@@ -724,46 +789,76 @@ export function PdfFormEditor({
             ) : null}
           </div>
           {layout.edits.length === 0 ? (
-            <p className="mt-2 text-[12.5px] text-ink-400">아직 고친 곳이 없습니다. 원본 그대로 쓰입니다.</p>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-ink-400">아직 고친 곳이 없습니다. 올린 원본이 그대로 쓰입니다.</p>
           ) : (
-            <ul className="mt-2 space-y-1.5">
-              {layout.edits.map((e) => {
-                const t = tierOf(e);
-                return (
-                  <li key={e.id} className="rounded-xl border border-ink-100 px-2.5 py-2">
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10.5px] font-bold text-ink-500">{e.page}쪽</span>
-                      <div className="min-w-0 flex-1 text-[12px] leading-snug">
-                        {e.kind === 'add' ? (
-                          <p className="truncate font-semibold text-ink-900">+ {e.text}</p>
-                        ) : e.kind === 'erase' ? (
-                          <p className="truncate text-ink-500 line-through">{e.original || '영역'}</p>
-                        ) : (
-                          <>
-                            <p className="truncate text-ink-400 line-through">{e.original}</p>
-                            <p className="truncate font-semibold text-ink-900">{e.text}</p>
-                          </>
-                        )}
-                        {t.tier ? (
-                          <p className={cx('mt-0.5 text-[11px]', t.tier === 'FALLBACK' ? 'text-warning-500' : 'text-brand-700')}>
-                            {pdfFontTierLabel[t.tier].text} · {e.font.baseFont ? displayFontName(e.font.baseFont) : '기본'} {Math.round(matrixFontSize(e.matrix) * 10) / 10}pt
-                            {t.missing.length && t.tier === 'FALLBACK' ? ` · 원본에 없는 글자: ${t.missing.slice(0, 6).join(' ')}` : ''}
-                            {t.predicted ? ' (예상)' : ''}
-                          </p>
-                        ) : null}
+            <>
+              <p className={cx('mt-1 text-[11.5px]', fallbackCount ? 'text-warning-500' : 'text-brand-700')}>
+                {fallbackCount
+                  ? `${fallbackCount}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴로 들어갑니다.`
+                  : '모두 원본 글꼴로 들어갑니다.'}
+                {stripped ? ` 덮은 자리의 원래 글자 ${stripped}자는 파일에서도 지웁니다.` : ''}
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {layout.edits.map((e) => {
+                  const t = tierOf(e);
+                  return (
+                    <li key={e.id}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setView('edit');
+                          scrollToPage(e.page);
+                          if (e.kind !== 'erase') {
+                            setActive({ kind: 'edit', edit: e });
+                            setDraft(e.text);
+                          }
+                        }}
+                        onKeyDown={(ev) => ev.key === 'Enter' && (ev.currentTarget as HTMLElement).click()}
+                        className="flex cursor-pointer items-start gap-2 rounded-xl border border-ink-100 px-2.5 py-2 hover:border-brand-200"
+                      >
+                        <span className="mt-0.5 shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10.5px] font-bold text-ink-500">{e.page}쪽</span>
+                        <div className="min-w-0 flex-1 text-[12px] leading-snug">
+                          {e.kind === 'add' ? (
+                            <p className="truncate font-semibold text-ink-900">+ {e.text}</p>
+                          ) : e.kind === 'erase' ? (
+                            <p className="truncate text-ink-500 line-through">{e.original || '영역'}</p>
+                          ) : (
+                            <>
+                              <p className="truncate text-ink-400 line-through">{e.original}</p>
+                              <p className="truncate font-semibold text-ink-900">{e.text}</p>
+                            </>
+                          )}
+                          {t.tier ? (
+                            <p className={cx('mt-0.5 text-[11px]', t.tier === 'FALLBACK' ? 'text-warning-500' : 'text-brand-700')}>
+                              {pdfFontTierLabel[t.tier].text} · {e.font.baseFont ? displayFontName(e.font.baseFont) : '기본'}{' '}
+                              {Math.round(matrixFontSize(e.matrix) * 10) / 10}pt
+                              {t.missing.length && t.tier === 'FALLBACK' ? ` · 없는 글자: ${t.missing.slice(0, 6).join(' ')}` : ''}
+                              {t.predicted ? ' (예상)' : ''}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            removeEdit(e.id);
+                          }}
+                          className="shrink-0 text-ink-300 hover:text-ink-700"
+                          aria-label="이 수정 되돌리기"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
-                      <button type="button" onClick={() => removeEdit(e.id)} className="shrink-0 text-ink-300 hover:text-ink-700" aria-label="이 수정 되돌리기">
-                        <X size={14} />
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
           {coverOnly.length ? (
             <p className="mt-2 text-[11.5px] leading-relaxed text-ink-500">
-              {coverOnly.join(', ')}쪽은 원본 구조상 원래 글자를 파일에서 지우지 못하고 덮기만 했습니다. 화면·인쇄 결과는 같습니다.
+              {coverOnly.join(', ')}쪽은 원본 구조상 원래 글자를 파일에서 지우지 못하고 덮기만 합니다. 화면·인쇄 결과는 같습니다.
             </p>
           ) : null}
         </Card>
@@ -771,7 +866,7 @@ export function PdfFormEditor({
         <Card>
           <CardTitle>원본 글꼴</CardTitle>
           <p className="mb-2 mt-0.5 text-[11.5px] leading-relaxed text-ink-400">
-            PDF 에는 보통 문서에 쓰인 글자만 들어 있습니다. 새 글자가 원본 글꼴에 없으면 같은 계열·굵기의 글꼴로 대신하고 크기·색은 그대로 둡니다.
+            PDF 에는 보통 문서에 쓰인 글자만 들어 있습니다. 그 밖의 글자는 같은 계열·굵기의 글꼴로 넣고 크기·색은 그대로 둡니다.
             같은 글꼴 파일(TTF·OTF)을 올리면 모든 글자를 원본 글꼴로 씁니다.
           </p>
           {fonts.length === 0 ? (
@@ -780,7 +875,9 @@ export function PdfFormEditor({
             <ul className="space-y-1.5">
               {dedupeFonts(fonts).map((f) => {
                 const info = fontInfo(f.baseFont) ?? f;
-                const sizes = Array.from(new Set(allRuns.filter((r) => stripSubsetTag(r.baseFont) === stripSubsetTag(f.baseFont)).map((r) => Math.round(r.size * 10) / 10))).sort((a, b) => a - b);
+                const sizes = Array.from(
+                  new Set(allRuns.filter((r) => stripSubsetTag(r.baseFont) === stripSubsetTag(f.baseFont)).map((r) => Math.round(r.size * 10) / 10)),
+                ).sort((a, b) => a - b);
                 return (
                   <li key={f.baseFont} className="rounded-xl border border-ink-100 px-2.5 py-2 text-[12px]">
                     <p className="font-semibold text-ink-900" style={{ fontFamily: f.serif ? SERIF_STACK : SANS_STACK, fontWeight: f.bold ? 700 : 400 }}>
@@ -820,27 +917,24 @@ export function PdfFormEditor({
           )}
         </Card>
 
-        <Card>
-          <CardTitle>내려받기</CardTitle>
-          <div className="mt-2 flex flex-col gap-1.5 text-[12.5px]">
-            <a href={`${basePdfUrl}?name=${encodeURIComponent(`${templateName}_원본.pdf`)}`} className="flex items-center gap-1.5 font-bold text-ink-700 hover:text-ink-900">
-              <FileDown size={15} strokeWidth={1.7} /> 올린 원본
-            </a>
-            {renderedPdfUrl && !dirty ? (
-              <a href={`${renderedPdfUrl}?name=${encodeURIComponent(`${templateName}.pdf`)}`} className="flex items-center gap-1.5 font-bold text-brand-700 hover:underline">
-                <FileDown size={15} strokeWidth={1.7} /> 고친 서식 (후원자에게 가는 파일)
-              </a>
-            ) : (
-              <p className="text-[11.5px] text-ink-400">고친 서식은 저장한 뒤 내려받을 수 있습니다.</p>
-            )}
-          </div>
-          <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-ink-400">
-            <Info size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" />
-            저장할 때마다 새 파일로 남습니다. 이미 보낸 서명 요청·작성 링크는 보낼 때의 서식 그대로입니다.
-          </p>
-        </Card>
+        <p className="flex items-start gap-1.5 px-1 text-[11px] leading-relaxed text-ink-400">
+          <Info size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" />
+          올린 원본은 그대로 보관되고, 저장할 때마다 고친 결과가 새 파일로 남습니다. 이미 보낸 서명 요청·작성 링크는 보낼 때의 서식 그대로입니다.
+          {' '}
+          <a href={`${basePdfUrl}?name=${encodeURIComponent(`${downloadName}_원본.pdf`)}`} className="font-bold text-ink-500 underline">
+            원본 내려받기
+          </a>
+        </p>
       </aside>
     </div>
+  );
+}
+
+function IconButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type="button" className="grid h-9 w-9 place-items-center rounded-xl text-ink-700 hover:bg-ink-50 disabled:opacity-35" {...props}>
+      {children}
+    </button>
   );
 }
 
@@ -855,33 +949,14 @@ function dedupeFonts(fonts: PdfFontInfo[]): PdfFontInfo[] {
 }
 
 // ===========================================================================
-// 쪽 하나
+// 쪽 그리기 (공용)
 // ===========================================================================
 
-function PageView({
-  page, scale, doc, mode, edits, active, draft, setDraft, finish, onRun, onEdit, onClick,
-  onPointerDown, onPointerMove, onPointerUp, dragBox, hint,
-}: {
-  page: PageState;
-  scale: number;
-  doc: PDFDocumentProxy | null;
-  mode: Mode;
-  edits: PdfEdit[];
-  active: Active | null;
-  draft: string;
-  setDraft: (v: string) => void;
-  finish: (apply: boolean) => void;
-  onRun: (r: PdfTextRun) => void;
-  onEdit: (e: PdfEdit) => void;
-  onClick: (pageNo: number, vp: PageViewport, e: React.MouseEvent<HTMLDivElement>) => void;
-  onPointerDown: (pageNo: number, vp: PageViewport, e: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
-  dragBox: { left: number; top: number; w: number; h: number } | null;
-  hint: React.ReactNode;
-}) {
+/** 쪽 하나를 캔버스에 그린다. scale 을 주면 그 배율, width 를 주면 그 폭에 맞춘다. */
+function useRenderedPage(doc: PDFDocumentProxy | null, pageNo: number, size: { scale?: number; width?: number }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const [vp, setVp] = React.useState<PageViewport | null>(null);
+  const { scale, width } = size;
 
   React.useEffect(() => {
     if (!doc) return;
@@ -890,12 +965,13 @@ function PageView({
     (async () => {
       let pg: PDFPageProxy;
       try {
-        pg = await doc.getPage(page.pageNo);
+        pg = await doc.getPage(pageNo);
       } catch {
         return;
       }
       if (cancelled) return;
-      const viewport = pg.getViewport({ scale });
+      const vp1 = pg.getViewport({ scale: 1 });
+      const viewport = pg.getViewport({ scale: width ? width / vp1.width : (scale ?? 1) });
       const canvas = canvasRef.current;
       if (!canvas) return;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -923,29 +999,60 @@ function PageView({
       cancelled = true;
       task?.cancel();
     };
-  }, [doc, page.pageNo, scale]);
+  }, [doc, pageNo, scale, width]);
+  return { canvasRef, vp };
+}
+
+function PageView({
+  page, scale, doc, mode, edits, active, draft, setDraft, finish, onRun, onEdit, onMove, onClick,
+  onPointerDown, onPointerMove, onPointerUp, dragBox, hint,
+}: {
+  page: PageState;
+  scale: number;
+  doc: PDFDocumentProxy | null;
+  mode: Mode | 'view';
+  edits: PdfEdit[];
+  active: Active | null;
+  draft: string;
+  setDraft: (v: string) => void;
+  finish: (apply: boolean) => void;
+  onRun: (r: PdfTextRun) => void;
+  onEdit: (e: PdfEdit) => void;
+  onMove: (e: PdfEdit, vp: PageViewport, dx: number, dy: number) => void;
+  onClick: (pageNo: number, vp: PageViewport, e: React.MouseEvent<HTMLDivElement>) => void;
+  onPointerDown: (pageNo: number, vp: PageViewport, e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: () => void;
+  dragBox: { left: number; top: number; w: number; h: number } | null;
+  hint: React.ReactNode;
+}) {
+  const { canvasRef, vp } = useRenderedPage(doc, page.pageNo, { scale });
+
+  // 넣은 글 끌어 옮기기
+  const moveRef = React.useRef<{ edit: PdfEdit; x: number; y: number; moved: boolean } | null>(null);
+  const [moveDelta, setMoveDelta] = React.useState<{ id: string; dx: number; dy: number } | null>(null);
 
   const editIds = new Set(edits.map((e) => e.id));
-  const activeId =
-    active?.kind === 'run' ? active.run.id : active?.kind === 'edit' ? active.edit.id : null;
+  const activeId = active?.kind === 'run' ? active.run.id : active?.kind === 'edit' ? active.edit.id : null;
+  const interactive = mode !== 'view';
 
   return (
-    <div className="mx-auto w-fit">
+    <div id={`pdf-edit-page-${page.pageNo}`} className="mx-auto w-fit scroll-mt-24">
       <p className="mb-1 text-[11px] font-bold text-ink-400">{page.pageNo}쪽</p>
       <div
         className={cx(
-          'relative select-none overflow-hidden rounded-md bg-white shadow-[0_1px_4px_rgba(15,23,42,0.12)] ring-1 ring-ink-100',
+          'relative select-none overflow-hidden rounded-[3px] bg-white shadow-[0_1px_6px_rgba(15,23,42,0.14)]',
           mode === 'add' ? 'cursor-text' : mode === 'erase' ? 'cursor-crosshair' : '',
         )}
         style={{ width: vp?.width ?? page.widthPt * scale, height: vp?.height ?? page.heightPt * scale }}
-        onClick={(e) => vp && onClick(page.pageNo, vp, e)}
-        onPointerDown={(e) => vp && onPointerDown(page.pageNo, vp, e)}
+        onClick={(e) => vp && interactive && onClick(page.pageNo, vp, e)}
+        onPointerDown={(e) => vp && interactive && onPointerDown(page.pageNo, vp, e)}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
         <canvas ref={canvasRef} className="block" />
 
-        {vp && mode !== 'add'
+        {vp && interactive && mode !== 'add'
           ? page.runs.map((r) => {
               if (r.id === activeId) return null;
               const b = boxOf(vp, coverPolygon(r));
@@ -971,30 +1078,59 @@ function PageView({
             })
           : null}
 
-        {vp
+        {vp && interactive
           ? edits
               .filter((e) => e.kind === 'add' && e.id !== activeId)
               .map((e) => {
-                const size = matrixFontSize(e.matrix);
-                const approxW = Math.max(size, e.text.length * size * 0.92);
-                const b = boxOf(vp, coverPolygon({ matrix: e.matrix, width: approxW }));
+                const b = boxOf(vp, coverPolygon({ matrix: e.matrix, width: approxAddWidth(e) }));
+                const d = moveDelta?.id === e.id ? moveDelta : null;
                 return (
                   <button
                     key={e.id}
                     type="button"
                     data-editor-ui
-                    onClick={(ev) => {
+                    title="눌러서 고치기 · 끌어서 옮기기"
+                    onPointerDown={(ev) => {
                       ev.stopPropagation();
-                      onEdit(e);
+                      moveRef.current = { edit: e, x: ev.clientX, y: ev.clientY, moved: false };
+                      ev.currentTarget.setPointerCapture(ev.pointerId);
                     }}
-                    className="absolute rounded-[2px] border border-dashed border-brand-400 hover:bg-brand-500/10"
-                    style={{ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top }}
+                    onPointerMove={(ev) => {
+                      const m = moveRef.current;
+                      if (!m) return;
+                      const dx = ev.clientX - m.x;
+                      const dy = ev.clientY - m.y;
+                      if (!m.moved && Math.hypot(dx, dy) < 4) return;
+                      m.moved = true;
+                      setMoveDelta({ id: e.id, dx, dy });
+                    }}
+                    onPointerUp={(ev) => {
+                      ev.stopPropagation();
+                      const m = moveRef.current;
+                      moveRef.current = null;
+                      setMoveDelta(null);
+                      if (!m) return;
+                      if (m.moved) onMove(m.edit, vp, ev.clientX - m.x, ev.clientY - m.y);
+                      else onEdit(e);
+                    }}
+                    onClick={(ev) => ev.stopPropagation()}
+                    className={cx(
+                      'absolute cursor-move rounded-[2px] border border-dashed border-brand-400 hover:bg-brand-500/10',
+                      d ? 'bg-brand-500/10' : '',
+                    )}
+                    style={{
+                      left: b.left,
+                      top: b.top,
+                      width: b.right - b.left,
+                      height: b.bottom - b.top,
+                      transform: d ? `translate(${d.dx}px, ${d.dy}px)` : undefined,
+                    }}
                   />
                 );
               })
           : null}
 
-        {vp && active && activePage(active) === page.pageNo ? (
+        {vp && interactive && active && activePage(active) === page.pageNo ? (
           <InlineInput vp={vp} active={active} draft={draft} setDraft={setDraft} finish={finish} hint={hint} />
         ) : null}
 
@@ -1008,6 +1144,33 @@ function PageView({
 
 function activePage(a: Active): number {
   return a.kind === 'run' ? a.run.page : a.kind === 'edit' ? a.edit.page : a.page;
+}
+
+/** 후원자 휴대폰에서 보이는 모습 (360px 폭) */
+function PhonePreview({ doc, pages }: { doc: PDFDocumentProxy | null; pages: number }) {
+  return (
+    <div className="flex flex-col items-center py-2">
+      <div className="w-[360px] max-w-full overflow-hidden rounded-[28px] border-[6px] border-ink-900 bg-white shadow-xl">
+        <div className="flex items-center gap-1.5 border-b border-ink-100 px-4 py-2.5 text-[12px] font-bold text-ink-700">
+          <Eye size={14} strokeWidth={1.7} /> 후원자·서명자가 보는 서식
+        </div>
+        <div className="max-h-[70vh] space-y-2 overflow-y-auto bg-ink-50 p-3">
+          {Array.from({ length: pages }, (_, i) => (
+            <PhonePage key={i} doc={doc} pageNo={i + 1} />
+          ))}
+          <p className="pb-1 pt-2 text-center text-[11px] text-ink-400">아래에 작성 항목·서명 칸이 이어집니다</p>
+        </div>
+      </div>
+      <p className="mt-2 flex items-center gap-1 text-[11.5px] text-ink-400">
+        <Maximize2 size={13} strokeWidth={1.7} /> 휴대폰 폭에 맞춰 줄어든 모습입니다. 글자가 너무 작으면 내려받아 볼 수 있게 안내됩니다.
+      </p>
+    </div>
+  );
+}
+
+function PhonePage({ doc, pageNo }: { doc: PDFDocumentProxy | null; pageNo: number }) {
+  const { canvasRef } = useRenderedPage(doc, pageNo, { width: 324 });
+  return <canvas ref={canvasRef} className="block rounded-md bg-white ring-1 ring-ink-100" />;
 }
 
 /** 원래 글자 자리 위에 같은 크기·색으로 뜨는 입력칸 */
@@ -1040,7 +1203,7 @@ function InlineInput({
     bold = active.run.bold;
   } else if (active.kind === 'edit') {
     matrix = active.edit.matrix;
-    width = active.edit.width;
+    width = active.edit.kind === 'add' ? approxAddWidth(active.edit) : active.edit.width;
     serif = active.edit.font.serif;
     bold = active.edit.font.bold;
     color = active.edit.color;
@@ -1057,7 +1220,7 @@ function InlineInput({
   const px = size * vp.scale;
 
   return (
-    <div data-editor-ui className="absolute z-10" style={{ left: b.left - 2, top: b.top - 2 }} onClick={(e) => e.stopPropagation()}>
+    <div data-editor-ui className="absolute z-10" style={{ left: b.left - 2, top: b.top - 2 }} onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
       <input
         ref={ref}
         value={draft}
@@ -1073,7 +1236,7 @@ function InlineInput({
           }
         }}
         onBlur={(e) => {
-          // 모양 고르기·삭제 버튼으로 옮겨 갈 때는 닫지 않는다.
+          // 모양 고르기·되돌리기 버튼으로 옮겨 갈 때는 닫지 않는다.
           if ((e.relatedTarget as HTMLElement | null)?.closest('[data-editor-hint]')) return;
           finish(true);
         }}
@@ -1082,11 +1245,11 @@ function InlineInput({
           fontFamily: serif ? SERIF_STACK : SANS_STACK,
           fontWeight: bold ? 700 : 400,
           fontSize: px,
-          lineHeight: `${(b.bottom - b.top) + 2}px`,
+          lineHeight: `${b.bottom - b.top + 2}px`,
           height: b.bottom - b.top + 4,
           minWidth: Math.max(60, b.right - b.left + 4),
           width: `${Math.max(4, Array.from(draft).length + 1) * 1.05}em`,
-          maxWidth: vp.width - b.left,
+          maxWidth: Math.max(80, vp.width - b.left),
           color: rgbCss(color),
           background: cover ? rgbCss(cover) : 'rgba(255,255,255,0.96)',
         }}
@@ -1127,6 +1290,7 @@ function EditHint({
             onChange={(e) => onStyle(e.target.value)}
             className="max-w-[220px] rounded-md border border-ink-200 bg-white px-1.5 py-0.5 text-[11.5px]"
           >
+            {!styles.some((s) => s.key === styleKey) ? <option value={styleKey}>현재 모양</option> : null}
             {styles.map((s) => (
               <option key={s.key} value={s.key}>
                 {displayFontName(s.baseFont)} {s.size}pt — {s.sample}

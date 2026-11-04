@@ -1,7 +1,7 @@
 import { Card, CardTitle, Field, Input, Notice, Textarea } from '@/components/ui';
 import { ActionForm } from '@/components/studio/action-form';
 import { DocumentFieldEditor, type EditorField } from '@/components/studio/document-field-editor';
-import { DocumentFileField } from '@/components/studio/document-file-field';
+import { DocumentFileEditorField, type ExistingPdfForm } from '@/components/studio/document-file-editor-field';
 import {
   DOCUMENT_BODY_MAX, MAX_DOCUMENT_FIELDS, documentTemplateTypeLabel, fieldTypeLabel,
   type DocumentField,
@@ -56,6 +56,7 @@ export function DocumentTemplateForm({
   defaultBody,
   presetKey,
   submitLabel,
+  pdfEditor,
 }: {
   action: Action;
   templateType: DocumentTemplateType;
@@ -68,6 +69,8 @@ export function DocumentTemplateForm({
   defaultBody?: string;
   presetKey?: string | null;
   submitLabel: string;
+  /** 파일 서식 수정 화면: 저장된 원본·편집 기록·글꼴 정보 */
+  pdfEditor?: ExistingPdfForm | null;
 }) {
   const isFile = templateType === 'FILE';
   const editorFields: EditorField[] = fields.map((f) => ({
@@ -127,29 +130,24 @@ export function DocumentTemplateForm({
       {isFile ? (
         <Section
           step={2}
-          title="서식 파일"
-          description="기관이 가지고 있던 서식(PDF·한글·워드·스캔본)을 그대로 올립니다. 저장한 뒤 원본 위에서 직접 고칠 수 있습니다."
+          title="서식 파일 · 미리보기"
+          description="쓰던 서식(PDF·한글·워드·스캔본)을 그대로 올리면 바로 아래에 원본이 열립니다. 글자를 눌러 고치면 원래 글꼴·크기로 들어가고, 서식 저장 때 함께 저장됩니다. 개인정보가 미리 채워진 파일은 올리지 마세요."
         >
-          <DocumentFileField
-            name="fileUrl"
-            nameFieldName="fileName"
-            label="서식 파일"
-            defaultValue={template?.fileUrl ?? ''}
+          <DocumentFileEditorField
+            defaultFileUrl={template?.fileUrl ?? ''}
             defaultFileName={template?.fileName ?? ''}
-            defaultBasePdfUrl={template?.basePdfUrl ?? ''}
-            defaultConvertedFrom={template?.baseConvertedFrom ?? ''}
-            hint="기관이 쓰던 서식을 그대로 올리세요. 올린 뒤 원본 위에서 글자를 고치면 원래 글꼴·크기로 들어갑니다. 개인정보가 미리 채워진 파일은 올리지 마세요."
+            existing={pdfEditor ?? null}
           />
           <Field
             label="작성 안내"
-            hint="파일을 내려받은 뒤 무엇을 해야 하는지 적어 주세요. 작성 화면에 그대로 보입니다."
+            hint="후원자·서명자가 서식 위에서 읽는 안내입니다. 무엇을 확인하고 어떻게 제출하는지 적어 주세요."
           >
             <Textarea
               name="body"
               rows={4}
               maxLength={DOCUMENT_BODY_MAX}
               defaultValue={template?.body ?? ''}
-              placeholder={'서식을 내려받아 작성하신 뒤, 아래 연락처로 보내 주세요.\n문의: 평일 10시~18시'}
+              placeholder={'서식 내용을 확인하신 뒤 아래 항목을 채워 제출해 주세요.\n문의: 평일 10시~18시'}
             />
           </Field>
         </Section>
