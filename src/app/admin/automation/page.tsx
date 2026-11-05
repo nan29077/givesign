@@ -8,6 +8,7 @@ import { ActionButton } from '@/components/admin/action-form';
 import { setAlimtalkStatusAction, retryEventAction } from '@/app/actions/admin/automation';
 import { CRON_JOBS } from '@/server/cron-registry';
 import { eventQueueStats } from '@/server/services/events';
+import { APPROVAL_STALE_PROCESSING_MS } from '@/server/services/approvals';
 import { alimtalkIsMock, getAlimtalkAdapter } from '@/server/adapters/alimtalk';
 import { getMailAdapter } from '@/server/adapters/mail';
 import { platformMissingCredentials, SNS_OAUTH_FAMILY, SNS_PLATFORMS, SNS_PLATFORM_LABEL } from '@/server/adapters/sns/platforms';
@@ -32,6 +33,11 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
 
+/** 처리 중(PROCESSING)이 정리 기준보다 오래됐는가 (렌더 밖 함수 — 화면 시각 계산) */
+function isStuckApproval(a: { status: string; updatedAt: Date }) {
+  return a.status === 'PROCESSING' && Date.now() - a.updatedAt.getTime() > APPROVAL_STALE_PROCESSING_MS;
+}
+
 /** 마지막 종료가 주기의 3배를 넘었으면 지연. (렌더 밖 함수 — 화면 시각 계산) */
 function isLate(lastFinishedAt: Date | null, intervalSec: number) {
   return !lastFinishedAt || Date.now() - lastFinishedAt.getTime() > intervalSec * 3000;
@@ -55,13 +61,20 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
     prisma.volunteerApplication.count({ where: { createdAt: { gte: start } } }),
     prisma.agreementDocument.count({ where: { createdAt: { gte: start } } }),
   ]);
-  const [heartbeats, eventStats, failedEvents] = tab === 'jobs'
+  const [heartbeats, eventStats, failedEvents, approvalRuns] = tab === 'jobs'
     ? await Promise.all([
         prisma.cronHeartbeat.findMany(),
         eventQueueStats(),
         prisma.domainEvent.findMany({ where: { status: 'FAILED' }, orderBy: { occurredAt: 'desc' }, take: 50, select: { id: true, type: true, merchantId: true, occurredAt: true, attempts: true, lastError: true } }),
+        // 승인 뒤 처리 중·실행 대기·실행 실패(점검 A-1). 멈춘 처리는 events 배치가 15분 뒤 승인 대기로 되돌린다.
+        prisma.approvalRequest.findMany({
+          where: { status: { in: ['PROCESSING', 'QUEUED', 'FAILED'] } },
+          orderBy: { updatedAt: 'desc' },
+          take: 50,
+          select: { id: true, kind: true, title: true, status: true, merchantId: true, updatedAt: true, attempts: true, result: true, error: true },
+        }),
       ])
-    : [[], null, []] as const;
+    : [[], null, [], []] as const;
   const beatByName = new Map(heartbeats.map((h) => [h.name, h]));
   const merchants = new Map((await prisma.merchantProfile.findMany({ where: { id: { in: contentAgg.map((c) => c.merchantId) } }, select: { id: true, displayName: true } })).map((m) => [m.id, m.displayName]));
   // 공급자 상태: 꺼짐 / mock / 키 없음 / 실연동 (2026-11-06 7단계 — SNS 플랫폼별·알림톡·메일)
@@ -185,6 +198,26 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
               <StatTile label="최근 24시간 이벤트" value={`${formatNumber(eventStats.last24h)}건`} />
             </div>
           ) : null}
+          <h2 className="text-[15px] font-black">승인 처리 상태 (처리 중 · 실행 대기 · 실패)</h2>
+          <Table>
+            <thead><tr><Th>갱신</Th><Th>종류</Th><Th>기관</Th><Th>제목</Th><Th>상태</Th><Th>진행</Th></tr></thead>
+            <tbody>
+              {approvalRuns.map((a) => {
+                const stuck = isStuckApproval(a);
+                return (
+                  <tr key={a.id}>
+                    <Td className="whitespace-nowrap text-[12px]">{formatKst(a.updatedAt)}</Td>
+                    <Td className="font-mono text-[12px]">{a.kind}</Td>
+                    <Td className="font-mono text-[12px]">{a.merchantId}</Td>
+                    <Td className="text-[12px]">{a.title}</Td>
+                    <Td>{a.status === 'FAILED' ? <Badge tone="danger">실행 실패 {a.attempts}회</Badge> : stuck ? <Badge tone="warning">멈춤</Badge> : a.status === 'QUEUED' ? <Badge tone="brand">실행 대기</Badge> : <Badge tone="neutral">처리 중</Badge>}</Td>
+                    <Td className="text-[12px] text-ink-500">{a.result ?? '-'}{a.error ? <span className="block text-danger-500">{a.error}</span> : null}</Td>
+                  </tr>
+                );
+              })}
+              {approvalRuns.length === 0 ? <tr><Td className="text-ink-400">처리 중이거나 실패한 승인 요청이 없습니다.</Td></tr> : null}
+            </tbody>
+          </Table>
           <h2 className="text-[15px] font-black">재시도 소진 이벤트</h2>
           <Table>
             <thead><tr><Th>시각</Th><Th>종류</Th><Th>기관</Th><Th>시도</Th><Th>오류</Th><Th></Th></tr></thead>
