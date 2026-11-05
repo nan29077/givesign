@@ -482,6 +482,43 @@ async function main() {
   // 브랜드명이 기브싸인으로 바뀌기 전(토네이도 · 도네이도)에 만들어진 시드 데이터가 남아 있으면
   // 계정 이메일과 사회복지기관 코드 체계까지 달라지므로 `npm run db:reset` 으로 새로 만든다.
 
+  // ---------------------------------------------------------------- 라이브 바자회(로컬 데모)
+  // 운영·스테이징 기본값은 꺼짐이다(최고관리자 사이트 설정에서 켠다). 로컬 미리보기에서는 바로 볼 수 있게
+  // 스위치를 켜고 데모 기관 1곳을 참여 승인한다. 이미 값이 있으면(관리자가 끈 경우 포함) 바꾸지 않는다.
+  if (tier === 'local') {
+    const now = new Date();
+    await prisma.systemSetting.upsert({
+      where: { key: 'live_bazaar.enabled' },
+      create: { key: 'live_bazaar.enabled', value: { enabled: true }, memo: '라이브 바자회 사용(로컬 데모 시드)' },
+      update: {},
+    });
+    await prisma.systemSetting.upsert({
+      where: { key: 'live_bazaar.config' },
+      create: {
+        key: 'live_bazaar.config',
+        value: {
+          feeRatePercent: '30', feeVatMode: 'INCLUDED', minSalePrice: 5000, defaultPerPersonLimit: 5,
+          matchDeadlineDays: 3, settlementPayDay: 10, warehouseAddress: '경기도 이천시 바자회로 1, 기브싸인 바자회 센터(데모)',
+          consignmentNotice: '{기관명} 위탁판매 상품입니다. 판매 금액에서 수수료를 뺀 금액이 {기관명}에 귀속됩니다.',
+        },
+        memo: '라이브 바자회 운영 설정(로컬 데모 시드)',
+      },
+      update: {},
+    });
+    const demoOrg = await prisma.merchantProfile.findUnique({ where: { code: 'GIV-8K2M' }, select: { id: true, contactName: true } });
+    if (demoOrg) {
+      await prisma.merchantBazaar.upsert({
+        where: { merchantId: demoOrg.id },
+        create: {
+          merchantId: demoOrg.id, status: 'APPROVED', neededItems: '생필품, 아동 도서, 겨울 의류',
+          consignmentName: demoOrg.contactName ?? '데모 담당자', consignmentAgreedAt: now, consignmentVersion: '2026-11-05',
+          appliedAt: now, decidedAt: now, decidedBy: adminUser.id, note: '로컬 데모 시드',
+        },
+        update: {},
+      });
+    }
+  }
+
   // 시드 버전 기록. 다음 실행 때 이 값으로 보충 시드 필요 여부를 판단한다.
   await prisma.systemSetting.upsert({
     where: { key: SEED_VERSION_KEY },
