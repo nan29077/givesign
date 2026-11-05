@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { ownedContentItemId } from './attribution';
 import { initialPointStatus } from './point-status';
 import { newId, newTransactionNo } from '@/lib/id';
 import { encrypt } from '@/lib/crypto';
@@ -155,7 +156,7 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         campaignId,
         anonymous: Boolean(input.anonymous),
         source: input.source ?? 'WEB',
-        contentItemId: input.contentItemId ?? null,
+        contentItemId: await ownedContentItemId(merchant.id, input.contentItemId),
       },
     });
   } catch (error) {

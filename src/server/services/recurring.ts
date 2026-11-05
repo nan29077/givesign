@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { ownedContentItemId } from './attribution';
 import { newId, newTransactionNo } from '@/lib/id';
 import { encrypt } from '@/lib/crypto';
 import { kstDateKey } from '@/lib/datetime';
@@ -208,6 +209,7 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
 
   const message = await cleanMessage(merchant.id, input.message);
   const firstDate = firstChargeDate(input.dayOfMonth);
+  const contentItemId = await ownedContentItemId(merchant.id, input.contentItemId);
   let recurring: RecurringDonation;
   try {
     recurring = await prisma.$transaction(async (tx) => {
@@ -238,7 +240,7 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
           cycleMonth: firstDate.slice(0, 7),
           consentId: consent.id,
           source: input.source ?? null,
-          contentItemId: input.contentItemId ?? null,
+          contentItemId,
         },
       });
     });

@@ -1,5 +1,5 @@
 import { env, featureContentEnabled } from '@/lib/env';
-import { decrypt, encrypt } from '@/lib/crypto';
+import { decrypt } from '@/lib/crypto';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
 import { kstMonthKey } from '@/lib/datetime';
@@ -78,7 +78,7 @@ export async function getContentSetting(merchantId: string) {
 
 export async function saveContentSetting(
   merchantId: string,
-  input: { tone: string; bannedWords: string[]; autoApprove: boolean; monthlyLimit?: number; hashtags: string[] },
+  input: { tone: string; bannedWords: string[]; autoApprove: boolean; hashtags: string[] },
 ) {
   const tone = TONES.includes(input.tone as Tone) ? input.tone : 'WARM';
   const banned = input.bannedWords.map((w) => w.trim()).filter(Boolean).slice(0, 50);
@@ -94,7 +94,8 @@ export async function saveContentSetting(
 export async function monthlyUsage(merchantId: string, now = new Date()) {
   const { start, end } = monthRange(kstMonthKey(now));
   const [count, cost] = await Promise.all([
-    prisma.contentItem.count({ where: { merchantId, createdAt: { gte: start, lt: end } } }),
+    // 생성 실패(공급자 오류)는 한도에 넣지 않는다 — 공급자 장애의 비용을 기관 한도로 떠안지 않게. 비용 합계는 실제 쓴 만큼 그대로 센다.
+    prisma.contentItem.count({ where: { merchantId, createdAt: { gte: start, lt: end }, status: { not: 'FAILED' } } }),
     prisma.contentItem.aggregate({ where: { merchantId, createdAt: { gte: start, lt: end } }, _sum: { costKrw: true } }),
   ]);
   return { count, costKrw: cost._sum.costKrw ?? 0 };
@@ -155,6 +156,56 @@ async function jobDone(itemId: string, step: Step) {
   return j?.status === 'DONE' ? j : null;
 }
 
+/** 다른 실행이 같은 단계를 돌리는 중이다. 이 실행은 조용히 물러난다(실패로 기록하지 않는다). */
+class StepBusyError extends Error {}
+
+/** 단계 선점 유지 시간. 이보다 오래 RUNNING 이면 멈춘 것으로 보고 다시 잡는다. */
+const STEP_LEASE_MS = 10 * 60_000;
+/** 배치가 멈춘 생성으로 보고 재개하는 기준. */
+const STUCK_GENERATING_MS = 120_000;
+
+/**
+ * 외부 호출(과금) 단계 선점. (콘텐츠, 단계) 유니크 행을 RUNNING 으로 먼저 만들고,
+ * 이미 있으면 FAILED·오래된 RUNNING 만 조건부 갱신으로 다시 잡는다. 끝난 단계면 그 기록을 돌려준다.
+ * 두 실행이 겹쳐도 같은 단계의 공급자 호출은 한 번만 일어난다.
+ */
+async function claimStep(itemId: string, step: Step, provider: string) {
+  try {
+    await prisma.contentJob.create({ data: { id: newId(), itemId, step, status: 'RUNNING', provider } });
+    return null;
+  } catch (e) {
+    if ((e as { code?: string })?.code !== 'P2002') throw e;
+  }
+  const r = await prisma.contentJob.updateMany({
+    where: { itemId, step, OR: [{ status: 'FAILED' }, { status: 'RUNNING', updatedAt: { lt: new Date(Date.now() - STEP_LEASE_MS) } }] },
+    data: { status: 'RUNNING', provider, error: null },
+  });
+  if (r.count === 1) return null;
+  const done = await jobDone(itemId, step);
+  if (done) return done;
+  throw new StepBusyError(`${step} 단계를 다른 실행이 처리 중입니다.`);
+}
+
+/** 생성이 살아 있음을 알린다(배치가 멈춘 것으로 오인해 다시 집지 않게). */
+async function touchItem(itemId: string) {
+  await prisma.contentItem.updateMany({ where: { id: itemId, status: 'GENERATING' }, data: { updatedAt: new Date() } }).catch(() => undefined);
+}
+
+/**
+ * 게시 전 문구 검사(담당자 수정·자동 승인 공통). 통과하면 null, 아니면 사유.
+ * 금지어 · 장면 자막 길이 · {링크} · "AI 생성 콘텐츠" 표시.
+ */
+export function contentDraftViolation(input: { bannedWords: string[]; captions: string[]; caption: string; hashtags?: string[] }): string | null {
+  for (const c of [...input.captions, input.caption, ...(input.hashtags ?? [])]) {
+    const hit = input.bannedWords.find((w) => w && c.includes(w));
+    if (hit) return `금지어가 들어 있습니다: ${hit}`;
+  }
+  if (input.captions.some((c) => c.length > 120)) return '장면 자막은 120자 이내로 적어 주세요.';
+  if (!input.caption.includes('{링크}')) return '캡션에서 {링크} 를 지우면 후원 링크가 빠집니다. {링크} 를 남겨 주세요.';
+  if (!input.caption.includes('AI 생성 콘텐츠')) return '캡션의 "AI 생성 콘텐츠" 표시는 지울 수 없습니다.';
+  return null;
+}
+
 async function recordJob(itemId: string, step: Step, provider: string, status: 'DONE' | 'FAILED', output: object | null, costKrw = 0, error?: string) {
   await prisma.contentJob.upsert({
     where: { itemId_step: { itemId, step } },
@@ -182,7 +233,6 @@ export async function buildBrief(merchantId: string, campaignId: string, toneOve
       campaignTitle: campaign.title,
       summary: campaign.summary,
       story: campaign.story,
-      beneficiary: campaign.beneficiary,
       usagePlan: campaign.usagePlan,
       goalAmount: campaign.goalAmount,
       raisedAmount: stats?.raised ?? 0n,
@@ -212,18 +262,24 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
   if (!item.campaignId) throw new ContentError('캠페인이 없는 콘텐츠입니다.');
   const adapter = getContentAdapter();
   const provider = adapter.info().provider;
+  const claimed: Step[] = [];
   try {
     const { brief, color } = await buildBrief(item.merchantId, item.campaignId, toneOverride);
     const kind = item.kind;
     let cost = 0;
 
-    let script = (await jobDone(itemId, 'SCRIPT'))?.output as { title: string; script: string; scenes: Array<{ caption: string; durationSec: number }>; hashtags: string[] } | null;
-    if (!script) {
+    type ScriptOut = { title: string; script: string; scenes: Array<{ caption: string; durationSec: number }>; hashtags: string[] };
+    const scriptDone = await claimStep(itemId, 'SCRIPT', provider);
+    let script = (scriptDone?.output ?? null) as ScriptOut | null;
+    if (!scriptDone) {
+      claimed.push('SCRIPT');
       const r = await adapter.script(brief, kind);
       script = r.data;
       cost += r.costKrw;
       await recordJob(itemId, 'SCRIPT', provider, 'DONE', script, r.costKrw);
+      await touchItem(itemId);
     }
+    if (!script) throw new ContentError('대본 기록을 읽지 못했습니다.');
 
     let scenes: Scene[] | null = (await jobDone(itemId, 'SCENES')) ? (item.scenes as unknown as Scene[]) : null;
     if (!scenes || scenes.length === 0) {
@@ -232,15 +288,19 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
     }
 
     if (kind === 'SHORTFORM') {
-      if (!(await jobDone(itemId, 'VOICE'))) {
+      if (!(await claimStep(itemId, 'VOICE', provider))) {
+        claimed.push('VOICE');
         const v = await adapter.voice(script.script);
         cost += v.costKrw;
         await recordJob(itemId, 'VOICE', provider, 'DONE', v, v.costKrw);
+        await touchItem(itemId);
       }
-      if (!(await jobDone(itemId, 'ASSEMBLE'))) {
+      if (!(await claimStep(itemId, 'ASSEMBLE', provider))) {
+        claimed.push('ASSEMBLE');
         const a = await adapter.assemble(scenes.length);
         cost += a.costKrw;
         await recordJob(itemId, 'ASSEMBLE', provider, 'DONE', a, a.costKrw);
+        await touchItem(itemId);
       }
     }
     if (!(await jobDone(itemId, 'COVER'))) await recordJob(itemId, 'COVER', 'givesign-svg', 'DONE', { from: 'scene-2' });
@@ -249,9 +309,14 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
     const tags = [...new Set([...script.hashtags, ...setting.hashtags])].slice(0, 12);
     const regNoIncluded = Boolean(brief.regNo);
     const caption = buildCaptionTemplate({ summary: brief.summary, campaignTitle: brief.campaignTitle, moNumber: brief.moNumber, keyword: brief.keyword, regNo: brief.regNo, tags });
-    const autoApprove = setting.autoApprove && regNoIncluded;
-    await prisma.contentItem.update({
-      where: { id: itemId },
+    // 자동 승인도 담당자 수정과 같은 검사를 거친다. 걸리면 자동 승인을 무시하고 검토 대기로 두며 사유를 남긴다.
+    const violation = setting.autoApprove
+      ? contentDraftViolation({ bannedWords: setting.bannedWords, captions: scenes.map((s) => s.caption), caption, hashtags: tags })
+      : null;
+    const autoApprove = setting.autoApprove && regNoIncluded && !violation;
+    // 다른 실행이 먼저 끝냈으면(생성 중이 아니면) 덮어쓰지 않는다.
+    const finished = await prisma.contentItem.updateMany({
+      where: { id: itemId, status: 'GENERATING' },
       data: {
         title: script.title,
         script: script.script,
@@ -265,13 +330,23 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         status: autoApprove ? 'APPROVED' : 'REVIEW',
         approvedBy: autoApprove ? 'AUTO' : null,
         approvedAt: autoApprove ? new Date() : null,
-        error: null,
+        error: violation ? `자동 승인 보류: ${violation}`.slice(0, 300) : null,
       },
     });
+    if (finished.count === 0) logger.warn('콘텐츠 생성 결과를 반영하지 않음 — 이미 다른 실행이 끝냈습니다', { itemId });
   } catch (e) {
+    if (e instanceof StepBusyError) {
+      logger.info('콘텐츠 생성 단계가 다른 실행에서 진행 중 — 이 실행은 물러납니다', { itemId, message: e.message });
+      return;
+    }
     const message = (e as Error).message;
     logger.error('콘텐츠 생성 실패', { itemId, message });
-    await prisma.contentItem.update({ where: { id: itemId }, data: { status: 'FAILED', error: message.slice(0, 300) } });
+    if (claimed.length) {
+      await prisma.contentJob
+        .updateMany({ where: { itemId, step: { in: claimed }, status: 'RUNNING' }, data: { status: 'FAILED', error: message.slice(0, 300) } })
+        .catch(() => undefined);
+    }
+    await prisma.contentItem.updateMany({ where: { id: itemId, status: 'GENERATING' }, data: { status: 'FAILED', error: message.slice(0, 300) } });
   }
 }
 
@@ -323,13 +398,8 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
   const setting = await getContentSetting(merchantId);
   const captions = input.captions.map((c) => c.trim()).filter(Boolean).slice(0, 10);
   if (captions.length === 0) throw new ContentError('장면 자막이 비어 있습니다.');
-  for (const c of [...captions, input.caption]) {
-    const hit = setting.bannedWords.find((w) => w && c.includes(w));
-    if (hit) throw new ContentError(`금지어가 들어 있습니다: ${hit}`);
-  }
-  if (captions.some((c) => c.length > 120)) throw new ContentError('장면 자막은 120자 이내로 적어 주세요.');
-  if (!input.caption.includes('{링크}')) throw new ContentError('캡션에서 {링크} 를 지우면 후원 링크가 빠집니다. {링크} 를 남겨 주세요.');
-  if (!input.caption.includes('AI 생성 콘텐츠')) throw new ContentError('캡션의 "AI 생성 콘텐츠" 표시는 지울 수 없습니다.');
+  const violation = contentDraftViolation({ bannedWords: setting.bannedWords, captions, caption: input.caption });
+  if (violation) throw new ContentError(violation);
   const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true } });
   const page = await prisma.merchantDonationPage.findUnique({ where: { merchantId }, select: { color: true } });
   const scenes = renderScenes(
@@ -349,6 +419,7 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
       status: 'REVIEW',
       approvedAt: null,
       approvedBy: null,
+      error: null,
     },
   });
 }
@@ -382,16 +453,20 @@ export async function regenerateContent(merchantId: string, id: string, userId: 
 // SNS 채널 · 게시
 // ---------------------------------------------------------------------------
 
+export const SOCIAL_OAUTH_NOT_READY = 'SNS 계정 로그인(OAuth) 연동이 아직 구현되지 않아 실제 채널을 연결할 수 없습니다. 승인된 콘텐츠를 내려받아 직접 올려 주세요.';
+
 export async function connectSocialChannel(merchantId: string, platform: SocialPlatform, accountName: string, userId: string) {
   const name = accountName.trim();
   if (!/^[@\p{L}\p{N}_. -]{2,40}$/u.test(name)) throw new ContentError('계정 이름은 2~40자로 입력해 주세요.');
   const adapter = getSnsAdapter();
   const mock = adapter.info().mode === 'mock';
-  // 실연동에서는 OAuth 동의 화면을 거쳐 토큰을 받는다. mock 은 토큰 없이 연결 표시만 한다.
+  // 실연동에서는 OAuth 동의 화면을 거쳐 토큰을 받아야 연결이다. 그 흐름이 아직 없으므로 연결을 거절한다
+  // (계정 이름만으로 '연결됨'을 꾸미거나 자리표시자 토큰을 저장하지 않는다 — 절대 규칙 2). mock 은 토큰 없이 연결 표시만 한다.
+  if (!mock) throw new ContentError(SOCIAL_OAUTH_NOT_READY);
   return prisma.socialChannel.upsert({
     where: { merchantId_platform: { merchantId, platform } },
-    create: { id: newId(), merchantId, platform, accountName: name, status: 'CONNECTED', mock, connectedBy: userId, accessTokenEnc: mock ? null : encrypt('pending-oauth') },
-    update: { accountName: name, status: 'CONNECTED', mock, connectedBy: userId, connectedAt: new Date() },
+    create: { id: newId(), merchantId, platform, accountName: name, status: 'CONNECTED', mock: true, connectedBy: userId, accessTokenEnc: null },
+    update: { accountName: name, status: 'CONNECTED', mock: true, connectedBy: userId, connectedAt: new Date(), accessTokenEnc: null, refreshTokenEnc: null },
   });
 }
 
@@ -485,18 +560,52 @@ async function publishOne(publishId: string, now: Date) {
   }
 }
 
-/** 배치: 멈춘 생성 재개 → 예약 게시 → 지표 수집 */
+/** 게시 중(PUBLISHING) 상태가 이보다 오래 갱신이 없으면 게시 도중 멈춘 것으로 본다. */
+export const PUBLISHING_STALE_MS = 30 * 60_000;
+
+/** 이 시각보다 오래 갱신이 없는 PUBLISHING 은 멈춘 것으로 본다(관리자 화면 표시용). */
+export function stalePublishingBefore(now = new Date()) {
+  return new Date(now.getTime() - PUBLISHING_STALE_MS);
+}
+
+/**
+ * 게시 도중 멈춘 건(프로세스 종료·타임아웃) 복구. 결과를 모르므로 다시 예약으로 되돌리되,
+ * 시도 횟수를 다 썼으면 실패로 닫는다. 조건부 갱신이라 그 사이 끝난 게시는 건드리지 않는다.
+ * 공급자에 실제로 올라갔을 수 있으므로 사유에 "이미 올라갔는지 확인" 을 남긴다.
+ */
+export async function recoverStalePublishing(now = new Date()) {
+  const threshold = new Date(now.getTime() - PUBLISHING_STALE_MS);
+  const note = '게시 도중 응답이 끊겨 결과를 확인하지 못했습니다. 채널에 이미 올라갔는지 확인해 주세요.';
+  const failed = await prisma.contentPublish.updateMany({
+    where: { status: 'PUBLISHING', updatedAt: { lt: threshold }, attempts: { gte: PUBLISH_MAX_ATTEMPTS } },
+    data: { status: 'FAILED', error: note },
+  });
+  const requeued = await prisma.contentPublish.updateMany({
+    where: { status: 'PUBLISHING', updatedAt: { lt: threshold }, attempts: { lt: PUBLISH_MAX_ATTEMPTS } },
+    data: { status: 'SCHEDULED', scheduledAt: now, error: note },
+  });
+  return { requeued: requeued.count, failed: failed.count };
+}
+
+/** 배치: 멈춘 생성 재개 → 멈춘 게시 복구 → 예약 게시 → 지표 수집 */
 export async function processContentQueue(now = new Date()) {
-  const result = { resumed: 0, published: 0, retried: 0, failed: 0, deferred: 0, metrics: 0 };
+  const result = { resumed: 0, published: 0, retried: 0, failed: 0, deferred: 0, metrics: 0, recovered: 0 };
+  const threshold = new Date(now.getTime() - STUCK_GENERATING_MS);
   const stuck = await prisma.contentItem.findMany({
-    where: { status: 'GENERATING', updatedAt: { lt: new Date(now.getTime() - 120_000) } },
+    where: { status: 'GENERATING', updatedAt: { lt: threshold } },
     select: { id: true },
     take: 20,
   });
   for (const s of stuck) {
+    // 재개 전에 선점한다. 그 사이 다른 실행(요청 안의 생성·겹친 배치)이 갱신했으면 건너뛴다.
+    const claim = await prisma.contentItem.updateMany({ where: { id: s.id, status: 'GENERATING', updatedAt: { lt: threshold } }, data: { updatedAt: new Date() } });
+    if (claim.count === 0) continue;
     await runContentPipeline(s.id);
     result.resumed += 1;
   }
+  const rec = await recoverStalePublishing(now);
+  result.recovered = rec.requeued + rec.failed;
+  result.failed += rec.failed;
   if (env.automation.socialPublishEnabled) {
     const due = await prisma.contentPublish.findMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: now } }, select: { id: true }, orderBy: { scheduledAt: 'asc' }, take: 50 });
     for (const d of due) {

@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 
 export default async function NoticePage() {
   const posts = await prisma.contentPost.findMany({
-    where: { type: 'NOTICE', published: true },
+    where: { type: 'NOTICE', published: true, archivedAt: null },
     orderBy: [{ pinned: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'desc' }],
   });
 

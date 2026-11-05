@@ -1,9 +1,12 @@
-import { encrypt, maskPhone, normalizePhone, phoneHash, sha256 } from '@/lib/crypto';
+import { decrypt, encrypt, maskPhone, normalizePhone, phoneHash, sha256 } from '@/lib/crypto';
 import { newId } from '@/lib/id';
 import { addDays } from '@/lib/datetime';
 import { prisma } from '@/server/db';
 import { PAID_STATUSES } from '@/components/studio/shared';
-import { RESERVED_DETAIL } from './charge-flow';
+import { RESERVED_DETAIL, sendMtDetailed } from './charge-flow';
+import { env } from '@/lib/env';
+import { kv } from '@/server/redis';
+import * as tpl from './mt-templates';
 
 /**
  * 후원자·자원봉사자 통합 관리 (구성원).
@@ -377,19 +380,58 @@ export async function pendingPledgeRequests(merchantId: string, now = new Date()
   const latest = new Map<string, Date>();
   for (const m of mos) if (!latest.has(m.phoneHash)) latest.set(m.phoneHash, m.receivedAt);
   if (latest.size === 0) return [];
+  // 이용 제한된 후원자는 대상에서 뺀다(전체 제한 blockedAt).
   const payers = await prisma.payerProfile.findMany({
-    where: { phoneHash: { in: [...latest.keys()] } },
+    where: { phoneHash: { in: [...latest.keys()] }, blockedAt: null },
     select: { id: true, phoneHash: true, displayName: true, phoneMasked: true },
   });
-  const pledged = new Set(
-    (
-      await prisma.recurringDonation.findMany({
-        where: { merchantId, payerId: { in: payers.map((p) => p.id) }, createdAt: { gte: since } },
-        select: { payerId: true },
-      })
-    ).map((r) => r.payerId),
-  );
+  const ids = payers.map((p) => p.id);
+  const [pledges, blockedByMerchant, blockedByPayer] = await Promise.all([
+    // 진행 중 약정(언제 만들었든) 또는 최근 30일 안에 만든 약정이 있으면 이미 마친 사람이다.
+    prisma.recurringDonation.findMany({
+      where: { merchantId, payerId: { in: ids }, OR: [{ status: { in: ['ACTIVE', 'PAUSED', 'SUSPENDED'] } }, { createdAt: { gte: since } }] },
+      select: { payerId: true },
+    }),
+    // 기관이 차단한 후원자
+    prisma.blockedPayer.findMany({ where: { merchantId, payerId: { in: ids } }, select: { payerId: true } }),
+    // 후원자가 이 기관을 차단했거나 이 기관 안내를 거부한 경우
+    prisma.payerMerchantLink.findMany({
+      where: { merchantId, payerId: { in: ids }, OR: [{ payerBlockedAt: { not: null } }, { noticeOptOutAt: { not: null } }] },
+      select: { payerId: true },
+    }),
+  ]);
+  const excluded = new Set([...pledges, ...blockedByMerchant, ...blockedByPayer].map((r) => r.payerId));
   return payers
-    .filter((p) => !pledged.has(p.id))
+    .filter((p) => !excluded.has(p.id))
     .map((p) => ({ payerId: p.id, name: p.displayName ?? '후원자', phoneMasked: p.phoneMasked, requestedAt: latest.get(p.phoneHash)! }));
+}
+
+/** 약정 재안내 최소 간격(후원자별). */
+export const PLEDGE_REMINDER_INTERVAL_DAYS = 7;
+
+/**
+ * 약정 미완료 재안내 발송. 후원자당 PLEDGE_REMINDER_INTERVAL_DAYS 에 한 번만 보낸다 —
+ * 버튼을 여러 번 눌러도, 동시에 눌러도 다시 나가지 않는다(kv setnx). 잠금 상태를 확인할 수 없으면
+ * 보내지 않는다(스팸보다 누락이 낫다). 약정 링크는 문자로만 보낸다(알림톡 템플릿 목록에 없음).
+ */
+export async function sendPledgeReminders(merchantId: string, now = new Date()) {
+  const targets = await pendingPledgeRequests(merchantId, now);
+  const out = { targets: targets.length, sent: 0, suppressed: 0, failed: 0 };
+  if (targets.length === 0) return out;
+  const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true, displayName: true } });
+  const payers = await prisma.payerProfile.findMany({ where: { id: { in: targets.map((t) => t.payerId) } }, select: { id: true, phoneEnc: true } });
+  for (const p of payers) {
+    const fresh = await kv
+      .setnx(`pledge:remind:${merchantId}:${p.id}`, String(now.getTime()), PLEDGE_REMINDER_INTERVAL_DAYS * 86_400)
+      .catch(() => false);
+    if (!fresh) {
+      out.suppressed += 1;
+      continue;
+    }
+    const link = `${env.baseUrl}/my/recurring/new?merchant=${merchant.code}&src=sms`;
+    const r = await sendMtDetailed({ phone: decrypt(p.phoneEnc), template: tpl.tplPledgeLink({ merchantName: merchant.displayName, link }), merchantId }).catch(() => null);
+    if (r?.ok) out.sent += 1;
+    else out.failed += 1;
+  }
+  return out;
 }

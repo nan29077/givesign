@@ -12,6 +12,7 @@ import { formatNumber, formatWon } from '@/lib/money';
 import { getContentAdapter, TONE_LABEL, type Tone } from '@/server/adapters/content';
 import { CONTENT_KIND_LABEL, CONTENT_STATUS_LABEL, contentConversions, getContentSetting, monthlyUsage } from '@/server/services/content';
 import { requestContentAction, saveContentSettingAction } from '@/app/actions/automation';
+import type { ContentStatus } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,11 +28,12 @@ export default async function StudioContentPage({ searchParams }: { searchParams
   if (!featureContentEnabled()) notFound();
   const { merchantId } = await requireMerchant();
   const sp = await searchParams;
-  const filter = sp.status && CONTENT_STATUS_LABEL[sp.status] ? sp.status : undefined;
+  // 허용 목록(자기 속성)만 받는다. 일반 객체 조회는 constructor·toString 같은 프로토타입 키를 통과시킨다.
+  const filter = sp.status && Object.hasOwn(CONTENT_STATUS_LABEL, sp.status) ? (sp.status as ContentStatus) : undefined;
   const [merchant, campaigns, items, setting, usage, counts] = await Promise.all([
     prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { fundraisingRegNo: true } }),
     prisma.campaign.findMany({ where: { merchantId, status: { in: ['ACTIVE', 'DRAFT'] } }, orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }] }),
-    prisma.contentItem.findMany({ where: { merchantId, status: filter ? (filter as never) : { not: 'ARCHIVED' } }, orderBy: { createdAt: 'desc' }, take: 60, include: { publishes: true } }),
+    prisma.contentItem.findMany({ where: { merchantId, status: filter ?? { not: 'ARCHIVED' } }, orderBy: { createdAt: 'desc' }, take: 60, include: { publishes: true } }),
     getContentSetting(merchantId),
     monthlyUsage(merchantId),
     prisma.contentItem.groupBy({ by: ['status'], where: { merchantId }, _count: { _all: true } }),

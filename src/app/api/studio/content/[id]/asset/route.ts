@@ -45,11 +45,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     return svg(item.coverSvg, `${base}-cover`);
   }
   const cap = url.searchParams.get('caption');
-  if (cap) {
-    const platform = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK'].includes(cap) ? (cap as SocialPlatform) : null;
+  if (cap !== null) {
+    // 파일명은 허용 목록의 값으로만 조립한다(임의 문자열·따옴표·개행이 헤더에 들어가지 않게).
+    const CAPTION_TARGETS = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'QR'] as const;
+    const target = CAPTION_TARGETS.find((t) => t === cap);
+    if (!target) return new Response('캡션 대상이 올바르지 않습니다.', { status: 400 });
+    const platform = target === 'QR' ? null : (target as SocialPlatform);
     const text = await renderCaption(item, platform);
     return new Response(text, {
-      headers: { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': `attachment; filename="${base}-caption-${cap.toLowerCase()}.txt"`, 'cache-control': 'private, no-store' },
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': `attachment; filename="${base}-caption-${target.toLowerCase()}.txt"`, 'cache-control': 'private, no-store' },
     });
   }
   if (url.searchParams.get('script')) {

@@ -62,13 +62,14 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Badge tone={item.status === 'REVIEW' ? 'warning' : item.status === 'PUBLISHED' ? 'success' : 'brand'}>{CONTENT_STATUS_LABEL[item.status]}</Badge>
-            <Badge tone="success">AI 생성 표시 포함</Badge>
+            <Badge tone={item.aiLabeled ? 'success' : 'danger'}>{item.aiLabeled ? 'AI 생성 표시 포함' : 'AI 생성 표시 없음 — 승인 불가'}</Badge>
             <Badge tone={item.regNoIncluded ? 'success' : 'danger'}>{item.regNoIncluded ? '모집등록번호 포함' : '모집등록번호 없음 — 승인 불가'}</Badge>
             {item.approvedAt ? <Badge>승인 {formatKst(item.approvedAt, false)}{item.approvedBy === 'AUTO' ? ' (자동)' : ''}</Badge> : null}
           </div>
         </div>
       </div>
       {item.status === 'FAILED' ? <Notice tone="danger" title="생성 실패">{item.error ?? '알 수 없는 오류'}</Notice> : null}
+      {item.status === 'REVIEW' && item.error ? <Notice tone="warning" title="자동 승인하지 않음">{item.error} — 내용을 확인하고 고친 뒤 승인해 주세요.</Notice> : null}
 
       <div className="grid gap-3 sm:grid-cols-4">
         <StatTile label="이 콘텐츠로 들어온 후원" value={`${cv.donations}건`} sub={formatWon(cv.amount)} tone="brand" />

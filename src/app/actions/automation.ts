@@ -4,14 +4,12 @@ import { revalidatePath } from 'next/cache';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { logger } from '@/lib/logger';
-import { decrypt } from '@/lib/crypto';
-import { env } from '@/lib/env';
 import type { StudioActionState } from '@/app/actions/studio';
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { decideVolunteer, recordVolunteerActivity, VolunteerError } from '@/server/services/volunteers';
-import { commitSupporterImport, ImportError, pendingPledgeRequests, previewSupporterImport, type ImportPreviewRow } from '@/server/services/supporters';
+import { commitSupporterImport, ImportError, PLEDGE_REMINDER_INTERVAL_DAYS, previewSupporterImport, sendPledgeReminders, type ImportPreviewRow } from '@/server/services/supporters';
 import { AlimtalkConfigError, ALIMTALK_TEMPLATES, saveAlimtalkChannel } from '@/server/services/alimtalk';
-import { runMerchantNotice, previousMonthKey } from '@/server/services/monthly-notice';
+import { runMerchantNoticeDetailed, previousMonthKey } from '@/server/services/monthly-notice';
 import {
   approveContent,
   archiveContent,
@@ -25,8 +23,6 @@ import {
   schedulePublish,
   updateContentDraft,
 } from '@/server/services/content';
-import { sendMtDetailed } from '@/server/services/charge-flow';
-import * as tpl from '@/server/services/mt-templates';
 
 /**
  * 기관 콘솔 — 자동화(구성원·자원봉사·알림톡·월간 안내·콘텐츠·SNS) 액션.
@@ -131,20 +127,18 @@ export async function supporterImportAction(_p: ImportActionState, f: FormData):
   }
 }
 
+/** 약정 재안내 최소 간격(후원자별). */
 /** 문자 '정기' 로 링크를 받고 약정을 마치지 않은 분께 같은 안내를 한 번 더 보낸다(본인 요청에 대한 정보성 안내). */
 export async function pledgeReminderAction(_p: StudioActionState) {
   return withMerchant(async (merchantId) => {
-    const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true, displayName: true } });
-    const targets = await pendingPledgeRequests(merchantId);
-    if (targets.length === 0) return { ok: true, message: '다시 안내할 대상이 없습니다.' };
-    const payers = await prisma.payerProfile.findMany({ where: { id: { in: targets.map((t) => t.payerId) } }, select: { id: true, phoneEnc: true } });
-    let sent = 0;
-    for (const p of payers) {
-      const link = `${env.baseUrl}/my/recurring/new?merchant=${merchant.code}&src=sms`;
-      const r = await sendMtDetailed({ phone: decrypt(p.phoneEnc), template: tpl.tplPledgeLink({ merchantName: merchant.displayName, link }), merchantId }).catch(() => null);
-      if (r?.ok) sent += 1;
-    }
-    return { ok: true, message: `${sent}명에게 약정 안내를 다시 보냈습니다.` };
+    const r = await sendPledgeReminders(merchantId);
+    if (r.targets === 0) return { ok: true, message: '다시 안내할 대상이 없습니다.' };
+    const { sent, suppressed, failed } = r;
+    await writeAudit({ action: 'PLEDGE_REMINDER_SEND', targetType: 'merchant', targetId: merchantId, after: r }).catch(() => undefined);
+    return {
+      ok: true,
+      message: `${sent}명에게 약정 안내를 다시 보냈습니다.${suppressed ? ` (최근 ${PLEDGE_REMINDER_INTERVAL_DAYS}일 안에 받은 ${suppressed}명 제외)` : ''}${failed ? ` · 실패 ${failed}` : ''}`,
+    };
   });
 }
 
@@ -176,8 +170,9 @@ export async function saveNoticeSettingsAction(_p: StudioActionState, f: FormDat
 export async function runNoticeNowAction(_p: StudioActionState) {
   return withMerchant(async (merchantId) => {
     const month = previousMonthKey();
-    const r = await runMerchantNotice(merchantId, month);
+    const { outcome, run: r } = await runMerchantNoticeDetailed(merchantId, month);
     revalidatePath('/studio/notices');
+    if (outcome === 'BUSY') return { ok: true, message: `${month} 안내를 이미 보내는 중입니다. 잠시 뒤 결과를 확인해 주세요.` };
     if (!r) return { ok: true, message: `${month} 안내는 이미 보냈습니다. 같은 달은 한 번만 보냅니다.` };
     return { ok: true, message: `${month} 안내: 발송 ${r.sentCount}건(알림톡 ${r.alimtalkCount}) · 문자 대체 ${r.fallbackCount} · 제외 ${r.skippedCount} · 실패 ${r.failedCount}` };
   });

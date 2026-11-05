@@ -80,22 +80,27 @@ export async function saveBanner(_prev: AdminActionState, fd: FormData): Promise
   });
 }
 
+/**
+ * 배너 보관 / 복원. 영구 삭제하지 않는다(CLAUDE.md "보관은 되돌릴 수 있게"). 보관된 배너는 공개 화면에 나오지 않는다.
+ * `restore=1` 이면 복원한다.
+ */
 export async function deleteBanner(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   return run(async (admin) => {
     const id = requiredId(fd, 'id', '배너');
+    const restore = text(fd, 'restore') === '1';
     const before = await prisma.banner.findUnique({ where: { id } });
     if (!before) throw new Error('배너를 찾을 수 없습니다.');
 
-    await prisma.banner.delete({ where: { id } });
+    await prisma.banner.update({ where: { id }, data: { archivedAt: restore ? null : new Date() } });
     await writeAudit({
       adminUserId: admin.id,
-      action: 'BANNER_DELETE',
+      action: restore ? 'BANNER_RESTORE' : 'BANNER_ARCHIVE',
       targetType: 'Banner',
       targetId: id,
-      before: { position: before.position, title: before.title },
+      before: { position: before.position, title: before.title, archivedAt: before.archivedAt },
     });
     revalidatePath('/admin/banners');
-    return '배너를 삭제했습니다.';
+    return restore ? '배너를 복원했습니다.' : '배너를 보관했습니다. 보관함에서 다시 복원할 수 있습니다.';
   });
 }
 
@@ -149,21 +154,25 @@ export async function saveContentPost(_prev: AdminActionState, fd: FormData): Pr
   });
 }
 
+/** 공지·FAQ 보관 / 복원(`restore=1`). 영구 삭제하지 않는다. 보관된 글은 /notice·/faq·문의 위젯에 나오지 않는다. */
 export async function deleteContentPost(_prev: AdminActionState, fd: FormData): Promise<AdminActionState> {
   return run(async (admin) => {
     const id = requiredId(fd, 'id', '게시글');
+    const restore = text(fd, 'restore') === '1';
     const before = await prisma.contentPost.findUnique({ where: { id } });
     if (!before) throw new Error('게시글을 찾을 수 없습니다.');
 
-    await prisma.contentPost.delete({ where: { id } });
+    await prisma.contentPost.update({ where: { id }, data: { archivedAt: restore ? null : new Date() } });
     await writeAudit({
       adminUserId: admin.id,
-      action: 'CONTENT_POST_DELETE',
+      action: restore ? 'CONTENT_POST_RESTORE' : 'CONTENT_POST_ARCHIVE',
       targetType: 'ContentPost',
       targetId: id,
-      before: { type: before.type, title: before.title },
+      before: { type: before.type, title: before.title, archivedAt: before.archivedAt },
     });
     revalidatePath('/admin/contents');
-    return '게시글을 삭제했습니다.';
+    revalidatePath('/notice');
+    revalidatePath('/faq');
+    return restore ? '게시글을 복원했습니다.' : '게시글을 보관했습니다. 보관함에서 다시 복원할 수 있습니다.';
   });
 }
