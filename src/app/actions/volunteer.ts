@@ -54,6 +54,8 @@ export async function applyVolunteerAction(_prev: DonorActionState, f: FormData)
       agree: Boolean(f.get('agree')),
       source: attribution?.source ?? 'WEB',
       contentItemId: attribution?.contentItemId ?? null,
+      postingId: text(f, 'postingId') || null,
+      shiftId: text(f, 'shiftId') || null,
       meta: { ip: clientIpFrom((n) => h.get(n)) ?? undefined, userAgent: h.get('user-agent') ?? undefined },
     });
     revalidatePath('/my/volunteer');

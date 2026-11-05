@@ -25,6 +25,8 @@ import { getDonorMember, type DonorViewer } from '@/server/services/donor-member
 import { formatMoNumber } from '@/lib/mo-number';
 import { isOptimizableImage } from '@/lib/image-src';
 import { ProgressBar } from '@/components/public/progress-bar';
+import { listOpenPostings } from '@/server/services/volunteer-postings';
+import { shiftWhenLabel } from '@/lib/volunteer-schedule';
 
 /**
  * 공개 후원페이지 `/donate/[code]` 와 캠페인 상세 `/donate/[code]/campaigns/[id]`.
@@ -43,13 +45,15 @@ export async function DonationLanding({ code, campaignId }: { code: string; camp
   });
   if (!org) notFound();
 
-  const [page, campaigns, staff, viewer, summary] = await Promise.all([
+  const [page, campaigns, staff, viewer, summary, postings] = await Promise.all([
     getDonationPage(org.id),
     listCampaigns(org.id, { publicOnly: true }),
     getSessionUser().catch(() => null),
     // 후원 회원은 이 기관 회원만 인정한다(기관마다 독립된 로그인).
     getDonorMember(org).catch(() => null),
     merchantDonationSummary(org.id),
+    // 자원봉사 모집: 모집 중 + 모집 기간 안 공고만(기관 첫 화면에서만 보인다).
+    featureVolunteerEnabled() && !campaignId ? listOpenPostings(org.id).catch(() => []) : Promise.resolve([]),
   ]);
   // 비공개 페이지·작성 중 캠페인을 열어 볼 수 있는 사람(기관 담당자·관리자). 안내 띠는 띄우지 않는다.
   const preview = staff?.merchantId === org.id || staff?.role === 'ADMIN';
@@ -60,7 +64,7 @@ export async function DonationLanding({ code, campaignId }: { code: string; camp
     const draft = await listCampaigns(org.id, { includeArchived: true });
     const d = draft.find((c) => c.id === campaignId);
     if (!d) notFound();
-    return <Landing org={org} page={page} campaigns={campaigns} campaign={d} viewer={viewer} summary={summary} donors={[]} />;
+    return <Landing org={org} page={page} campaigns={campaigns} campaign={d} viewer={viewer} summary={summary} donors={[]} postings={[]} />;
   }
   if (!page.published && !preview) {
     // 후원페이지를 아직 공개하지 않은 기관이라도 승인된 기관이면 후원은 받을 수 있다.
@@ -68,7 +72,7 @@ export async function DonationLanding({ code, campaignId }: { code: string; camp
     redirect(`/c/${org.code}${campaign?.open ? `?campaign=${campaign.id}` : ''}`);
   }
   const donors = page.showRecentDonors ? await recentDonors(org.id, 12) : [];
-  return <Landing org={org} page={page} campaigns={campaigns} campaign={campaign} viewer={viewer} summary={summary} donors={donors} />;
+  return <Landing org={org} page={page} campaigns={campaigns} campaign={campaign} viewer={viewer} summary={summary} donors={donors} postings={postings} />;
 }
 
 type Org = NonNullable<Awaited<ReturnType<typeof prisma.merchantProfile.findFirst<{ include: { moRoutes: true } }>>>>;
@@ -81,6 +85,7 @@ function Landing({
   viewer,
   summary,
   donors,
+  postings,
 }: {
   org: Org;
   page: Awaited<ReturnType<typeof getDonationPage>>;
@@ -89,6 +94,7 @@ function Landing({
   viewer: DonorViewer | null;
   summary: Awaited<ReturnType<typeof merchantDonationSummary>>;
   donors: Awaited<ReturnType<typeof recentDonors>>;
+  postings: Awaited<ReturnType<typeof listOpenPostings>>;
 }) {
   const color = page.color || '#28634e';
   const route = org.moRoutes[0] ?? null;
@@ -283,6 +289,26 @@ function Landing({
                 </ul>
               </details>
             ) : null}
+          </section>
+        ) : null}
+
+        {!campaign && postings.length > 0 ? (
+          <section id="volunteer-postings" className="scroll-mt-6">
+            <SectionHead title="자원봉사 모집" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              {postings.map((p) => (
+                <Link key={p.id} href={`/donate/${org.code}/volunteer/${p.id}`} className="group rounded-[24px] border border-ink-100 bg-white p-4 shadow-[0_2px_10px_rgba(23,22,26,0.04)] transition-shadow hover:shadow-lg">
+                  <p className="flex items-center gap-1.5 text-[11.5px] font-bold" style={{ color }}>
+                    <HandHeart size={14} strokeWidth={1.7} /> {p.interest} · {p.recruitTo.toISOString().slice(5, 10).replace('-', '/')} 마감
+                  </p>
+                  <h3 className="mt-1 text-[15.5px] font-extrabold text-ink-900 group-hover:underline">{p.title}</h3>
+                  <p className="mt-1 text-[12.5px] text-ink-500">{p.place}</p>
+                  <p className="mt-2 text-[12px] tabular-nums text-ink-600">
+                    {p.nextShift ? <>다음 회차 {shiftWhenLabel(p.nextShift)} · 남은 자리 {formatNumber(p.remaining)}명</> : '일정은 담당자가 따로 안내합니다'}
+                  </p>
+                </Link>
+              ))}
+            </div>
           </section>
         ) : null}
 

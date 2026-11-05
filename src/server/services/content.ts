@@ -17,6 +17,7 @@ import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_SRC } from '@/server/adapters/s
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { campaignStats } from './fundraising';
 import { monthRange } from './monthly-notice';
+import { ownedPostingId } from './volunteer-postings';
 
 /**
  * 콘텐츠 자동 생성 → 검토 → 승인 → (SNS 게시) 파이프라인.
@@ -127,7 +128,7 @@ function aiFooter(regNo: string | null) {
   return regNo ? `AI 생성 콘텐츠 · 기부금품 모집등록 ${regNo}` : 'AI 생성 콘텐츠';
 }
 
-export async function requestContent(input: { merchantId: string; campaignId: string; kind: ContentKind; userId: string; tone?: string }) {
+export async function requestContent(input: { merchantId: string; campaignId: string; kind: ContentKind; userId: string; tone?: string; postingId?: string | null }) {
   if (!featureContentEnabled()) throw new ContentError('콘텐츠 자동 생성을 사용하지 않는 중입니다.');
   const campaign = await prisma.campaign.findFirst({ where: { id: input.campaignId, merchantId: input.merchantId } });
   if (!campaign) throw new ContentError('캠페인을 찾을 수 없습니다.');
@@ -146,6 +147,8 @@ export async function requestContent(input: { merchantId: string; campaignId: st
       title: campaign.title,
       provider: getContentAdapter().info().provider,
       createdBy: input.userId,
+      // 봉사 모집 공고 연결(저장만). 5단계 buildBrief 와 합칠 때 공고 필드를 대본에 연결한다.
+      postingId: await ownedPostingId(input.merchantId, input.postingId),
     },
   });
   await runContentPipeline(item.id, input.tone && TONES.includes(input.tone as Tone) ? (input.tone as Tone) : undefined);
