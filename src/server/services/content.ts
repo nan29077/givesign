@@ -1,5 +1,4 @@
 import { env, featureContentEnabled } from '@/lib/env';
-import { decrypt } from '@/lib/crypto';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
 import { kstMonthKey } from '@/lib/datetime';
@@ -20,6 +19,7 @@ import { loadSharp } from '@/server/adapters/content/video';
 import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_LABEL, PLATFORM_SRC } from '@/server/adapters/sns';
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { getObject, objectNameFromUrl } from '@/server/uploads';
+import { collectSocialMetrics, socialPublishAuth } from './social-oauth';
 import { campaignStats } from './fundraising';
 import { monthRange } from './monthly-notice';
 import { recordAiUsage } from './ai-usage';
@@ -683,7 +683,7 @@ export async function regenerateContent(merchantId: string, id: string, userId: 
 // SNS 채널 · 게시
 // ---------------------------------------------------------------------------
 
-export const SOCIAL_OAUTH_NOT_READY = 'SNS 계정 로그인(OAuth) 연동이 아직 구현되지 않아 실제 채널을 연결할 수 없습니다. 승인된 콘텐츠를 내려받아 직접 올려 주세요.';
+export const SOCIAL_OAUTH_NOT_READY = '실연동에서는 계정 이름만으로 연결하지 않습니다. SNS 채널 화면의 "계정 로그인으로 연결"(OAuth 동의 화면)로 연결해 주세요. 연결 키가 없는 플랫폼은 승인된 콘텐츠를 내려받아 직접 올려 주세요.';
 
 export async function connectSocialChannel(merchantId: string, platform: SocialPlatform, accountName: string, userId: string) {
   const name = accountName.trim();
@@ -771,7 +771,7 @@ async function publishOne(publishId: string, now: Date) {
   try {
     const res = await getSnsAdapter().publish({
       platform: p.platform,
-      accessToken: channel.accessTokenEnc ? decrypt(channel.accessTokenEnc) : null,
+      ...(await socialPublishAuth(channel)),
       caption: post.text,
       title: post.title ?? p.item.title,
       assets: scenes.map((s) => s.svg),
@@ -856,7 +856,7 @@ export async function processContentQueue(now = new Date()) {
     take: 100,
   });
   for (const p of live) {
-    const m = await getSnsAdapter().metrics(p.platform, p.externalPostId).catch(() => null);
+    const m = await collectSocialMetrics(p).catch(() => null);
     if (!m) continue;
     await prisma.contentPublish.update({ where: { id: p.id }, data: { views: m.views, likes: m.likes, metricsAt: now } });
     result.metrics += 1;

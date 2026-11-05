@@ -15,6 +15,7 @@ import {
   approveContentAction,
   archiveContentAction,
   cancelPublishAction,
+  makeYoutubePublicAction,
   regenerateContentAction,
   schedulePublishAction,
   updateContentAction,
@@ -188,6 +189,12 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                       {!p.mock && p.metricsAt ? <span className="tabular-nums text-ink-500">조회 {p.views} · 좋아요 {p.likes}</span> : null}
                       {/* 링크 클릭은 기브싸인 짧은 링크(/go)로 직접 센 값이다(봇·같은 IP 10분 중복 제외). */}
                       <span className="tabular-nums text-ink-500">링크 클릭 {p.clicks}</span>
+                      {p.platform === 'YOUTUBE' && p.status === 'PRIVATE_UPLOADED' && !p.mock ? (
+                        <ActionForm action={makeYoutubePublicAction} submitLabel="공개로 전환" size="sm" confirmMessage="유튜브 영상을 공개로 바꿉니다. 영상 내용을 유튜브에서 먼저 확인해 주세요.">
+                          <input type="hidden" name="id" value={item.id} />
+                          <input type="hidden" name="publishId" value={p.id} />
+                        </ActionForm>
+                      ) : null}
                       {p.status === 'SCHEDULED' ? (
                         <ActionForm action={cancelPublishAction} submitLabel="취소" variant="ghost" size="sm">
                           <input type="hidden" name="id" value={item.id} />

@@ -4,6 +4,8 @@ import { env, isLocal } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { generateToken, randomCodeString, tokenHash } from '@/lib/crypto';
 import { hashPassword } from '@/server/auth';
+import { mailIsLive } from '@/server/adapters/mail';
+import { sendPasswordResetMail } from './mail';
 
 /**
  * 비밀번호 재설정.
@@ -14,7 +16,8 @@ import { hashPassword } from '@/server/auth';
  *     계정이 탈취됐을 가능성을 전제하므로, 공격자의 로그인 상태가 남아 있으면 안 된다.
  *  3) 요청 화면은 가입 여부를 알려 주지 않는다(계정 열거 방지). 존재하지 않는 이메일도
  *     같은 문구로 응답한다.
- *  4) 이메일 발송은 아직 연동 전이다. mock 임을 화면에 명시하고, 로컬에서만 링크를 노출한다.
+ *  4) 메일 공급자가 실연동(MAIL_PROVIDER=ses + 키)일 때만 메일로 보낸다(이때는 링크를 어디에도 남기지 않는다).
+ *     아니면 예전처럼 mock 임을 화면에 명시하고, 로컬에서만 링크를 노출한다.
  */
 
 /** 재설정 링크 유효시간 */
@@ -31,6 +34,8 @@ export interface ResetRequestResult {
    * 이메일 연동 전까지 개발·검수용으로만 노출한다.
    */
   devLink?: string;
+  /** 메일 공급자가 실연동인지(가입 여부와 무관 — 계정 열거 방지). true 일 때만 화면이 "메일로 보냈습니다" 라고 쓴다. */
+  mailLive: boolean;
 }
 
 function resetLink(token: string): string {
@@ -47,15 +52,16 @@ export async function requestPasswordReset(
   requestIp: string | null,
 ): Promise<ResetRequestResult> {
   const normalized = email.trim().toLowerCase();
+  const mailLive = mailIsLive();
   const user = await prisma.user.findUnique({
     where: { email: normalized },
-    select: { id: true, status: true, deletedAt: true },
+    select: { id: true, email: true, status: true, deletedAt: true },
   });
 
   // 가입되지 않았거나 이용할 수 없는 계정이면 아무것도 만들지 않고 같은 응답을 돌려준다.
   if (!user || user.deletedAt || user.status !== 'ACTIVE') {
     logger.info('비밀번호 재설정 요청 - 대상 없음', { emailKnown: Boolean(user) });
-    return { accepted: true };
+    return { accepted: true, mailLive };
   }
 
   const token = generateToken(32);
@@ -80,6 +86,13 @@ export async function requestPasswordReset(
 
   const link = resetLink(token);
 
+  // 메일 실연동: 메일로만 보낸다. 링크를 콘솔·로그·화면 어디에도 남기지 않는다.
+  if (mailLive) {
+    const sent = user.email ? await sendPasswordResetMail(user.email, link) : false;
+    if (!sent) logger.error('비밀번호 재설정 메일을 보내지 못했습니다.', { userId: user.id });
+    return { accepted: true, mailLive };
+  }
+
   // 링크는 로컬에서만 밖으로 내보낸다.
   //
   // 예전에는 환경과 무관하게 logger.info 로 링크를 남겼다. 그 한 줄이면
@@ -97,7 +110,7 @@ export async function requestPasswordReset(
     });
   }
 
-  return { accepted: true, devLink: isLocal ? link : undefined };
+  return { accepted: true, mailLive, devLink: isLocal ? link : undefined };
 }
 
 export type ResetTokenState = 'VALID' | 'NOT_FOUND' | 'EXPIRED' | 'USED';

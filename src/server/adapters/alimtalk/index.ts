@@ -1,6 +1,7 @@
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { AdapterNotConfiguredError, type AdapterInfo, type ProviderResult } from '../types';
+import { solapiAlimtalkAdapter } from './solapi';
 
 /**
  * 카카오 알림톡 어댑터.
@@ -10,7 +11,7 @@ import { AdapterNotConfiguredError, type AdapterInfo, type ProviderResult } from
  * 어떤 기관·어떤 문자를 알림톡으로 보낼지는 서비스(alimtalk.ts)가 정하고,
  * 실패하면 호출부가 같은 본문을 문자로 대체 발송한다.
  *
- * 실연동(coolsms·emma)은 사업자 계약 뒤에 붙인다. 그 전에는 mock 만 동작하고,
+ * 실연동: coolsms = 솔라피 알림톡(solapi.ts, 2026-11-06). emma 는 알림톡 테이블 규격 수령 전이라 notConfigured.
  * mock 은 실제로 카카오톡을 보내지 않는다(절대 규칙 2).
  */
 
@@ -90,9 +91,11 @@ export function getAlimtalkAdapter(): AlimtalkAdapter {
     case 'mock':
       return mockAlimtalkAdapter;
     case 'coolsms':
-      return notConfigured('coolsms', ['COOLSMS_ALIMTALK_PFID 연동 구현']);
+      // 솔라피(coolsms) 알림톡 실연동 (solapi.ts). 키가 없으면 호출하지 않고 NOT_CONFIGURED → 문자 대체.
+      return solapiAlimtalkAdapter;
     case 'emma':
-      return notConfigured('emma', ['EMMA 알림톡 큐(em_kko_tran) 연동 구현']);
+      // EMMA 알림톡 큐 테이블 규격(em_kko_tran 등)을 받지 못했다. src/server/emma 는 문자 큐만 다룬다 → 규격 수령 후.
+      return notConfigured('emma', ['EMMA 알림톡 큐(em_kko_tran) 규격 수령 후 구현']);
     default:
       return notConfigured(env.automation.alimtalkProvider, ['ALIMTALK_PROVIDER 구현']);
   }

@@ -1,6 +1,7 @@
 import { env } from '@/lib/env';
 import type { Source } from '@/lib/attribution';
-import { AdapterNotConfiguredError, type AdapterInfo, type ProviderResult } from '../types';
+import type { AdapterInfo, ProviderResult } from '../types';
+import { liveSnsAdapter } from './live';
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 
 /**
@@ -11,21 +12,26 @@ import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
  *    → 실연동 어댑터는 그 경우 PRIVATE_UPLOADED 를 돌려주고 기관이 직접 공개 전환한다.
  *  - 인스타그램·페이스북: 메타 앱 검수(content_publish·pages_manage_posts). 인스타는 비즈니스 계정 + 페이지 연결, 24시간 50건 제한.
  *  - 틱톡: Content Posting API 앱 심사. 심사 전에는 비공개(SELF_ONLY)로만 올라간다.
- *  - 네이버 블로그·카카오 채널: 공개 게시 API 가 제한적이라 연동 방식(제휴·관리자 도구)을 정한 뒤 붙인다.
- *    (실제 OAuth·업로드는 외부 연동 단계에서 구현한다. 여기는 형식·라벨·캡션 규칙만.)
+ *  - 네이버 블로그·카카오 채널: 공식 공개 게시 API 가 없어(블로그 글쓰기 API 종료, 채널 API 는 관계·고객파일만)
+ *    내려받아 직접 게시한다. 실연동 어댑터는 NOT_CONFIGURED 로 돌려준다.
+ *
+ * 실연동 구현은 sns/live.ts — youtube.ts · meta.ts · tiktok.ts, 계정 연결은 oauth.ts(services/social-oauth.ts).
  *
  * mock 은 아무 데도 올리지 않는다. 결과에 mock 표시를 남기고 게시물 주소·지표를 만들어 내지 않는다(절대 규칙 2).
  */
 
 export interface SnsPublishRequest {
-  platform: SocialPlatform;
+  /** 플랫폼 이름(문자열로도 받는다) */
+  platform: SocialPlatform | string;
   accessToken: string | null;
+  /** 연결 계정 ID (유튜브 채널 · 인스타그램 사용자 · 페이스북 페이지 · 틱톡 open_id) */
+  accountId?: string | null;
   caption: string;
   title: string;
   /** 게시할 자산 (SVG 장면·표지). 실연동에서는 렌더된 이미지/영상 파일로 바꿔 올린다. */
   assets: string[];
-  kind: ContentKind;
-  /** 조립된 영상(mp4) 주소 — 숏폼이고 FFMPEG_PATH 로 만들었을 때만 */
+  kind: ContentKind | string;
+  /** 조립된 영상(mp4) 주소 — 숏폼이고 FFMPEG_PATH 로 만들었을 때만. 없으면 영상 게시는 실패 사유로 돌려준다. */
   videoUrl?: string | null;
 }
 
@@ -41,11 +47,16 @@ export interface SnsMetrics {
   likes: number;
 }
 
+export interface SnsAuth {
+  accessToken: string | null;
+  accountId?: string | null;
+}
+
 export interface SnsAdapter {
   info(): AdapterInfo;
   publish(req: SnsPublishRequest): Promise<ProviderResult<SnsPublishResult>>;
-  /** 지표 수집. mock 은 null(지표 없음). */
-  metrics(platform: SocialPlatform, externalPostId: string | null): Promise<SnsMetrics | null>;
+  /** 지표 수집. mock 은 null(지표 없음). 실연동은 연결 토큰(auth)이 있어야 조회한다. */
+  metrics(platform: SocialPlatform | string, externalPostId: string | null, auth?: SnsAuth): Promise<SnsMetrics | null>;
 }
 
 export const PLATFORM_LABEL: Record<SocialPlatform, string> = {
@@ -106,17 +117,8 @@ export const mockSnsAdapter: SnsAdapter = {
 
 export function getSnsAdapter(): SnsAdapter {
   if (env.automation.socialProvider === 'mock') return mockSnsAdapter;
-  const provider = env.automation.socialProvider;
-  return {
-    info: () => ({ provider, mode: 'live', missingCredentials: ['YOUTUBE_CLIENT_ID', 'META_APP_ID'] }),
-    async publish() {
-      const err = new AdapterNotConfiguredError(provider, ['YOUTUBE_CLIENT_ID', 'META_APP_ID']);
-      return { ok: false, code: 'NOT_CONFIGURED', message: err.message };
-    },
-    async metrics() {
-      return null;
-    },
-  };
+  // 실연동: 플랫폼별 키가 있는 곳만 호출한다(sns/live.ts). 키가 없으면 NOT_CONFIGURED 로 실패시키고 공급자를 부르지 않는다.
+  return liveSnsAdapter;
 }
 
 export function snsIsMock() {

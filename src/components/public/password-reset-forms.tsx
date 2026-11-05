@@ -31,10 +31,17 @@ export function RequestResetForm() {
   if (state.submitted) {
     return (
       <div className="space-y-3">
-        <Notice tone="brand" title="재설정 안내를 보냈습니다">
-          가입된 이메일이라면 재설정 링크가 발송됩니다. 링크는 발급 후 1시간 동안만 사용할 수 있고, 한 번 사용하면
-          다시 쓸 수 없습니다. 메일이 오지 않으면 스팸함을 확인하거나 잠시 후 다시 요청해 주세요.
-        </Notice>
+        {state.mailLive ? (
+          <Notice tone="brand" title="재설정 링크를 메일로 보냈습니다">
+            가입된 이메일이라면 재설정 링크를 메일로 보냈습니다. 링크는 발급 후 1시간 동안만 사용할 수 있고, 한 번 사용하면
+            다시 쓸 수 없습니다. 메일이 오지 않으면 스팸함을 확인하거나 잠시 후 다시 요청해 주세요.
+          </Notice>
+        ) : (
+          <Notice tone="brand" title="재설정 안내를 보냈습니다">
+            가입된 이메일이라면 재설정 링크가 발송됩니다. 링크는 발급 후 1시간 동안만 사용할 수 있고, 한 번 사용하면
+            다시 쓸 수 없습니다. 메일이 오지 않으면 스팸함을 확인하거나 잠시 후 다시 요청해 주세요.
+          </Notice>
+        )}
 
         {state.devLink ? (
           <Notice tone="warning" title="[MOCK] 이메일 발송은 아직 연동 전입니다">
