@@ -13,6 +13,11 @@ import { ALIMTALK_REPORT_TIMEOUT_MS, processAlimtalkReports } from '@/server/ser
 import { CRON_JOBS } from '@/server/cron-registry';
 import { GET as alimtalkReportsGET } from '@/app/api/cron/alimtalk-reports/route';
 import * as tpl from '@/server/services/mt-templates';
+import { maskForLlm, draftCampaign, AiDraftError } from '@/server/services/ai-drafts';
+import { personalInfoHit, validateScriptJson } from '@/server/adapters/content/llm-script';
+import type { ContentBrief } from '@/server/adapters/content/brief';
+import { filterContent } from '@/server/services/content-filter';
+import { kv } from '@/server/redis';
 
 /**
  * 2026-11-06 정밀 점검 — 콘텐츠·SNS·알림톡·봉사 영역 회귀 테스트.
@@ -221,4 +226,65 @@ describe('A-5 알림톡 전달 실패 → 문자 대체', () => {
   });
 });
 
-export { encrypt, newId };
+
+// ---------------------------------------------------------------------------
+describe('A-M13 LLM 전송 전 가리기 — 외국인등록번호(뒷자리 5~8)', () => {
+  it('maskForLlm·personalInfoHit·content-filter 가 [1-8] 을 모두 가린다', () => {
+    for (const d of ['1', '4', '5', '6', '7', '8']) {
+      const rrn = `900101-${d}234567`;
+      expect(maskForLlm(`제 번호는 ${rrn} 입니다`)).toBe('제 번호는 [주민번호] 입니다');
+      expect(personalInfoHit(`번호 ${rrn}`)).toMatch(/주민등록번호/);
+      expect(filterContent(`번호 ${rrn}`, { bannedWords: [], maxLength: 100 }).containsPersonalInfo).toBe(true);
+    }
+    // 9·0 으로 시작하는 뒷자리는 등록번호가 아니다(날짜·주문번호 오탐 방지 범위 유지)
+    expect(personalInfoHit('900101-9234567')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('낮음: 콘텐츠 LLM 응답 실명 검사 · AI 초안 속도 제한 저장소 장애', () => {
+  const brief: ContentBrief = {
+    merchantName: '기관', campaignTitle: '김장', summary: '요약', story: null, usagePlan: null, goalAmount: 0n, raisedAmount: 0n,
+    daysLeft: null, keyword: null, moNumber: null, tone: 'WARM', color: '#28634e', regNo: null, bannedWords: [],
+  };
+  const good = () => ({
+    title: '함께 담그는 겨울 김장',
+    scenes: [
+      { label: '표지', caption: '올겨울, 김장 한 통의 온기' },
+      { label: '문제', caption: '홀로 겨울을 나는 이웃에게 김장은 큰 부담입니다.' },
+      { label: '사연', caption: '해마다 기다려 주시는 이웃이 계십니다.' },
+      { label: '마무리', caption: '따뜻한 겨울을 함께 만들어 주세요.' },
+      { label: '사용계획', caption: '모인 후원금은 김장 재료와 배송에 쓰입니다.' },
+    ],
+    hashtags: ['김장나눔', '겨울나눔', '이웃사랑'],
+    platforms: {
+      YOUTUBE: { title: '함께 담그는 겨울 김장', body: '올겨울 김장 나눔에 함께해 주세요.' },
+      INSTAGRAM: { body: '올겨울 김장 나눔 소식입니다.' },
+      FACEBOOK: { body: '김장 나눔에 함께해 주세요.' },
+      TIKTOK: { body: '김장 한 통의 온기' },
+      NAVER_BLOG: { title: '겨울 김장 나눔 이야기', body: '올겨울에도 김장 나눔을 준비합니다.' },
+      KAKAO_CHANNEL: { body: '김장 나눔 소식을 전합니다.' },
+    },
+  });
+
+  it('대본 장면·플랫폼 본문에 실명 표현이 있으면 거절하고, 가린 이름(김OO)은 통과한다', () => {
+    expect(validateScriptJson(good(), brief, 'CARD_NEWS').ok).toBe(true);
+    const bad = good();
+    bad.scenes[2]!.caption = '김영희할머니께 김장을 전합니다.';
+    const r = validateScriptJson(bad, brief, 'CARD_NEWS');
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason: string }).reason).toMatch(/실명/);
+    const bad2 = good();
+    bad2.platforms.INSTAGRAM.body = '박철수씨의 겨울';
+    expect(validateScriptJson(bad2, brief, 'CARD_NEWS').ok).toBe(false);
+    const masked = good();
+    masked.scenes[2]!.caption = '김OO 어르신께 김장을 전합니다.';
+    expect(validateScriptJson(masked, brief, 'CARD_NEWS').ok).toBe(true);
+  });
+
+  it('속도 제한 저장소가 고장 나면 AI 초안을 열어 두지 않는다(유료 호출 무제한 방지)', async () => {
+    vi.spyOn(kv, 'incr').mockRejectedValue(new Error('redis down'));
+    await expect(draftCampaign(fx.merchantId)).rejects.toThrow(AiDraftError);
+    await expect(draftCampaign(fx.merchantId)).rejects.toThrow(/한도를 확인할 수 없어/);
+  });
+});
