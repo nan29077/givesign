@@ -22,7 +22,9 @@ import {
   saveContentSetting,
   schedulePublish,
   updateContentDraft,
+  CONTENT_KINDS,
 } from '@/server/services/content';
+import { PLATFORMS } from '@/server/adapters/sns';
 
 /**
  * 기관 콘솔 — 자동화(구성원·자원봉사·알림톡·월간 안내·콘텐츠·SNS) 액션.
@@ -184,8 +186,7 @@ export async function runNoticeNowAction(_p: StudioActionState) {
 // 콘텐츠
 // ---------------------------------------------------------------------------
 
-const KINDS: ContentKind[] = ['SHORTFORM', 'IMAGE_SQUARE', 'IMAGE_STORY'];
-const PLATFORMS: SocialPlatform[] = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK'];
+const KINDS: ContentKind[] = CONTENT_KINDS;
 
 export async function requestContentAction(_p: StudioActionState, f: FormData) {
   return withMerchant(async (merchantId, userId) => {
@@ -266,6 +267,15 @@ export async function saveContentSettingAction(_p: StudioActionState, f: FormDat
       bannedWords: text(f, 'bannedWords').split(/[,\n]/),
       hashtags: text(f, 'hashtags').split(/[\s,]+/),
       autoApprove: Boolean(f.get('autoApprove')),
+      calendar: {
+        calendarEnabled: Boolean(f.get('calendarEnabled')),
+        weeklyCount: Number(text(f, 'weeklyCount') || '3'),
+        days: list(f, 'day').map(Number),
+        postHour: Number(text(f, 'postHour') || '19'),
+        kinds: list(f, 'calendarKind').filter((k): k is ContentKind => KINDS.includes(k as ContentKind)),
+        platforms: list(f, 'calendarPlatform').filter((p): p is SocialPlatform => PLATFORMS.includes(p as SocialPlatform)),
+        autoSchedule: Boolean(f.get('autoSchedule')),
+      },
     });
     revalidatePath('/studio/content');
     return { ok: true, message: '콘텐츠 설정을 저장했습니다.' };
