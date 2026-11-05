@@ -256,11 +256,28 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - **흐름:** 기업·개인 현물 기부 → 기관 매칭(기관 수락) → 가액 협의·확정 → 기부자 약정 → 입고·검수(관리자) → 기관 검수 확정 = 현물 기부금영수증 발급 + 판매 상품 생성 → 셀러브릭스 바자회 센터 창고 등록·방송(기브싸인 소속 셀러) → 판매 결과 입력·승인 → 월 1회 기관 정산·지급.
 - **판매 구조:** 기관 → 회사 위탁판매. 셀러브릭스 코드는 바꾸지 않는다(1단계). 판매 결과는 관리자 수기·CSV 입력이고, 2단계에서 같은 표(`bazaar_sale_batch/line`)에 API 공급원(`source=API`)을 붙인다.
-- **스위치:** `system_setting 'live_bazaar.enabled'`(기본 꺼짐), 최고관리자 `/admin/site-settings`. 판단은 `isLiveBazaarEnabled()` 하나(1초 캐시). 꺼지면 메인 섹션·공개 `/bazaar`·`/giver`·`/studio/bazaar`·`/admin/bazaar`·메뉴·푸터·사이트맵·가입 안내·서버 액션·파일/CSV API 가 모두 사라진다(404, 404 화면에 바자회 문구 없음). **예외(대표 결정):** ① 정산 지급 `/admin/in-kind-settlements` 는 꺼져도 열린다(문구 "현물 판매 정산") ② 발급된 현물 기부금영수증은 기관 `/studio/receipts` 와 홈택스 명세에 계속 포함된다. 새 화면을 만들 때 반드시 `bazaarPageGuard()`/`assertBazaarEnabled()` 를 건다.
+- **스위치:** `system_setting 'live_bazaar.enabled'`(기본 꺼짐), 최고관리자 `/admin/site-settings`. 판단은 `isLiveBazaarEnabled()` 하나(1초 캐시). 꺼지면 메인 섹션·공개 `/bazaar`·`/giver`·`/studio/bazaar`·`/admin/bazaar`·메뉴·푸터·사이트맵·가입 안내·서버 액션·파일/CSV API 가 모두 사라진다(404, 404 화면에 바자회 문구 없음). **예외(대표 결정):** ① 정산 `/admin/in-kind-settlements` 는 꺼져도 열린다(문구 "현물 판매 정산"). 꺼져도 이미 승인된 판매분의 집계·확정·이월·지급은 그대로 한다(새 판매 결과는 받지 않음) ② 발급된 현물 기부금영수증은 기관 `/studio/receipts` 와 홈택스 명세에 계속 포함되고, 정정(무효·재발급)은 `/admin/in-kind-receipts`(꺼져도 열림, 최고관리자)에서 한다. 새 화면을 만들 때 반드시 `bazaarPageGuard()`/`assertBazaarEnabled()` 를 건다(위 예외 화면에는 바자회 문구를 쓰지 않는다).
 - **계정:** 현물 기부 회원은 `UserRole.GIVER` + `in_kind_donor`(donorType CORPORATE/INDIVIDUAL). 기관 후원 회원(`DonorMember`)·통합 후원자와 섞지 않는다. 셀러는 기브싸인 로그인이 없다(`bazaar_seller` 명단).
 - **상태 전이**는 `bazaar.ts transition()` 만 쓴다(조건부 갱신 + `in_kind_status_log` append-only). 상태값은 `src/lib/bazaar.ts` 문자열 상수.
 - **현물 영수증** `in_kind_receipt`: 번호 `{기관코드}-{연도}-H{6자리}`, 기관 검수 확정 때만 발급, 금액 = 확정 단가 × 합격 수량. 개인은 주민번호 3분리(발급·명세에서만 복호화), 기업은 사업자번호. 정정은 무효(VOID) 후 재발급, 번호 재사용 없음.
 - **원장** `bazaar_ledger` append-only(트리거), 멱등키 `sale:/refund:/fee:/return:/inbound-return:/payout:`. 수수료는 설정값(기본 30%, 부가세 포함/별도는 설정)이고 공급가액·부가세를 나눠 기록한다. 이번 달 정산이 확정·지급됐으면 새 원장은 다음 달로 넘어간다. 판매 결과 승인은 입력자 ≠ 승인자(최고관리자는 사유를 적으면 단독 승인).
 - **추적 코드** `GSB-000001`: 셀러브릭스 상품명 앞에 붙인다. 추적 코드 없는 판매(셀러브릭스 임시상품)는 판매 결과 입력에서 거절된다.
-- 접수 금지 품목·유통기한 30일 미만은 `blockedKeyword()`·`validateDonationInput()` 에서 막는다.
-- 테스트: `tests/live-bazaar.test.ts`, 화면 흐름 `node e2e/live-bazaar-e2e.mjs`(서버 + 시드 DB 필요).
+- 접수 금지 품목·유통기한 30일 미만은 `blockedKeyword()`·`validateDonationInput()` 에서 막는다. 주류는 종류 이름(소주·맥주·와인·위스키·막걸리 등)까지 막고, 잔·오프너 같은 용품만 예외(`BLOCKED_KEYWORD_EXCEPTIONS`).
+- 테스트: `tests/live-bazaar.test.ts`, 점검 조치 회귀 `tests/live-bazaar-fixes.test.ts`, 화면 흐름 `node e2e/live-bazaar-e2e.mjs`(서버 + 시드 DB 필요).
+
+### 2026-11-08 점검 조치로 생긴 규칙 (`docs/2026-11-06_후원자동화_라이브바자회_정밀점검보고서.md` B 항목)
+
+- **정산 동시성.** 원장 월을 정하거나 정산을 집계·확정·이월·지급하는 코드는 모두 `lockMerchantSettlement(tx, [merchantId])`(기관별 `pg_advisory_xact_lock(778202, hashtext(id))`) 아래에서 한다. 판매 결과 승인은 기관 잠금 → 상품 `FOR UPDATE`(id 정렬) 순서. 확정은 잠금·재계산·DRAFT 조건부 갱신을 **한 트랜잭션**으로, 집계 갱신도 `status: 'DRAFT'` 조건부다. 잠금 없이 `openMonthFor` 를 부르지 않는다.
+- **0원 이하 정산 = 이월.** 확정 때 지급액 ≤ 0 이면 `CARRIED` 로 닫고, 그 달에 `CARRY_OUT`(+|금액|, `carry-out:{정산 id}`), 다음 열린 달에 `CARRY_IN`(금액, `carry:{정산 id}`)을 남긴다. 정산 합계는 `PAYOUT`·`CARRY_OUT` 을 빼고 `CARRY_IN` 을 `carryAmount` 로 더한다. 0원 이하 정산은 지급 기록을 하지 않는다. 미지급 요약·"정산 예정"은 지급액 > 0 만 센다. 예전 데이터(0원 이하 CONFIRMED)는 "다음 달로 이월" 버튼(`carryOverSettlement`).
+- **판매 결과 승인 재검증.** 입력 때는 승인+대기 묶음 합으로, 승인 때는 **승인된 묶음만**으로 재고·환불 한도를 다시 본다(반려된 판매를 근거로 한 환불 거절). 판매 수량은 이미 판매 결과에 든 수량 아래로 줄일 수 없다.
+- **요율 기록.** 승인 때 판매 줄에 `fee_rate_percent/fee_vat_mode`(판매분), 환불이 있으면 `refund_fee_rate_percent/refund_fee_vat_mode`(그 상품의 가장 최근 승인 판매 요율)를 남기고 `settleLine(line, 판매요율, 환불요율)` 로 계산한다. 화면 미리보기는 `lineRates()`.
+- **가액 확정은 제안 id 로.** `acceptValuation(donationId, actor, valuationId)` — 화면이 본 제안(`valuationId` hidden)이 최신 제안이 아니면 거절. 제안·확정·검수 확정·영수증 무효·재발급은 기부 건 `FOR UPDATE`(`lockDonation`). 최신 제안은 `createdAt desc, id desc`.
+- **참여 승인 가드.** 기관 콘솔 변경 액션은 `requireBazaarMerchant()`(참여 `APPROVED` 필수). 참여 신청·상태 조회만 `requireBazaarMerchantAny()`. 서비스도 `assertMerchantParticipating`/`assertEligible`(수락 시 공익법인 지정 재확인)로 다시 막는다. 정지·반려하면 대기 중 매칭 제안을 `WITHDRAWN` + 상태 이력으로 되돌린다.
+- **현물 영수증 1장.** 기부 건당 `ISSUED` 는 1장(부분 유니크 `in_kind_receipt_donation_issued_one`). 영수증 금액 = 확정 단가 × (합격 수량 − `bazaar_product.returned_qty`). 남은 물품을 기부자에게 반환(`RETURN`)하면 반환 수량을 기록하고 상태 이력에 "영수증 정정 필요"를 남긴다. 정정(무효 → 재발급) 전에는 종결하지 않는다(`receiptCorrectionNeeded`).
+- **판매 결과 CSV.** 8개 열 정확히(따옴표 없는 "10,000" 처럼 밀린 줄 거절), 따옴표 안 줄바꿈 지원(`splitCsvRecords`), UTF-8 이 깨지면 CP949(`TextDecoder('euc-kr')`)로 읽는다(`decodeCsvBytes`). 판매 금액이 수량 × 판매가의 절반 미만 또는 수량 × (판매가+배송비)의 2배 초과면 거절(`amountMismatch`). 추적 코드는 숫자를 끝까지 읽는다(`GSB-0000012` 는 코드가 아님, 1,000,000번부터 7자리). 다음 번호는 문자열이 아닌 숫자 최대값.
+- **업로드.** 서버 액션 본문 상한 `experimental.serverActions.bodySizeLimit = '32mb'`(next.config.ts) = 파일 6개(`BAZAAR_UPLOAD_MAX_FILES`) × 5MB + CSV 2MB + 여유. 바꾸면 상수·안내 문구를 함께. 파일은 `prepareDonationFiles`(개수·크기·매직바이트, 사진은 이미지만)로 **DB 에 손대기 전에** 검사하고, 저장소에 먼저 올린 뒤 기부 건과 같은 트랜잭션에서 `in_kind_file` 을 만든다(실패 시 올린 파일 삭제). 근거 자료는 `DONOR_EVIDENCE_STATUSES` 단계에서만, 기부 건당 20개.
+- **권한.** 입고·검수, 판매 결과 입력·반려, 판매 종료는 `MONEY_PERMISSIONS`(최고관리자·운영·재무)만 — 고객지원·읽기 전용 불가. 기부자 대장·셀러브릭스 등록 정보·관리자용 현물 기부 대장 CSV 도 같은 화이트리스트이고, 대장·셀러브릭스 반출은 감사로그(`BAZAAR_LEDGER_EXPORT`·`BAZAAR_SELLERBRICKS_EXPORT`·`BAZAAR_GIVERS_EXPORT`). 현물 기부 회원(GIVER)은 기관 도입 신청을 할 수 없다(별도 계정 안내).
+- **배치.** 매칭 수락 기한 만료는 `/api/cron/bazaar`(1시간, `cron-registry.ts` `bazaar`, 스위치 꺼지면 건너뜀). 기한 지난 제안은 기관 상세·파일을 열 수 없다.
+- **설정 검증.** `validateConfigInput` 이 범위(`BAZAAR_CONFIG_RANGES`)·요율 형식(`isFeeRateString`, `1e1` 거절)을 검사해 오류 문구로 돌려준다. 범위 밖 값을 기본값으로 바꿔 저장하지 않는다.
+- **그 밖.** 편성은 참여 승인 기관만(상품 없는 편성 포함), 방송 주소 변경·편성 승인/반려·종결은 감사로그. 가액 이력은 `valuationKindLabel`(영문 코드 노출 금지). 되돌릴 수 없는 버튼(수락·거절·가액 확정·약정·재발급·종결·반려·판매 종료·방송 완료·이월)은 `confirm` 필수. 입고일 귀속 연도가 지난해면 검수 확정 화면에 홈택스 명세 재생성 경고.
+- **결정 필요(코드는 안전한 쪽으로만).** ① 수수료 반올림은 판매 줄 단위(월 합계 반올림과 원 단위 차이) ② 원장 귀속 월 = 승인일 기준 열린 달(판매일 아님, 묶음 `month` 는 기관별 원장 월 목록) ③ 법인·사업자 현물 영수증은 홈택스 명세 파일 끝 별도 구역(`HOMETAX_CORPORATE_COLUMNS`)에만 두고 개인 주민번호 열에 넣지 않는다 — 제출 방식은 세무 확인 후.

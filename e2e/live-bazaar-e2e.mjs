@@ -4,7 +4,9 @@
  * 흐름: 스위치 OFF 비노출 확인 → ON → 기관 참여 신청·승인 → 기업 기부 회원 가입 → 물품 기부(기관 지정)
  *      → 기관 매칭 수락·가액 확정 → 기부자 약정 → 관리자 입고·검수 → 기관 검수 확정(현물 영수증)
  *      → 판매 상품 등록 → 셀러·편성 → 기관 편성 승인 → 판매 결과 입력·승인 → 월 정산 집계·확정·지급
- *      → 각 콘솔 결과 확인 → CSV 내려받기 → 스위치 OFF 후 전수 비노출 + 예외(정산 지급·영수증) 확인
+ *      → 각 콘솔 결과 확인 → CSV 내려받기 → 스위치 OFF 후 전수 비노출 + 예외(정산 지급·영수증·영수증 정정) 확인
+ * 2026-11-08 점검 조치: 가액 확정 폼은 본 제안 id(valuationId)를 보낸다, 되돌릴 수 없는 버튼은 확인창(자동 수락),
+ *      금액이 수량 × 판매가와 크게 다른 판매 결과는 거절, 0원 이하 정산은 확정 때 이월.
  *
  * 실행: 서버(npm start 또는 npm run dev, 3060) + 시드 DB 에서 `node e2e/live-bazaar-e2e.mjs`
  * 스크린샷: E2E_SHOTS=폴더 를 주면 주요 화면을 저장한다.
@@ -141,8 +143,9 @@ try {
     await submit(merchant, '수락', '수락했습니다', { exact: true });
   });
   const donationId = donationUrl.split('/').pop();
-  await R.step('기관: 기부자 제시 가액 확정', async () => {
+  await R.step('기관: 기부자 제시 가액 확정(본 제안 id 를 함께 보냄)', async () => {
     await go(merchant, `/studio/bazaar/donations/${donationId}`);
+    if ((await merchant.locator('input[name=valuationId]').count()) === 0) return false;
     await submit(merchant, /기부자 제시 가액/, '가액을 확정했습니다');
   });
 
@@ -222,6 +225,12 @@ try {
     await admin.fill('textarea[name=rowsText]', '양말 임시상품,1,5000,0,0,0,없음,');
     await submit(admin, '판매 결과 등록(승인 대기)', '추적 코드');
   });
+  await R.step('관리자: 금액이 수량 × 판매가와 크게 다른 판매 결과는 거절(쉼표 밀림 방지)', async () => {
+    await go(admin, '/admin/bazaar/sales');
+    await admin.fill('input[name=title]', '금액 오입력 시험');
+    await admin.fill('textarea[name=rowsText]', 'GSB-000001,20,100,0,0,0,없음,');
+    await submit(admin, '판매 결과 등록(승인 대기)', '크게 다릅니다');
+  });
   await R.step('관리자: 판매 결과 입력(20개·100,000원, 환불 1개·5,000원)', async () => {
     await go(admin, '/admin/bazaar/sales');
     await admin.fill('input[name=title]', '1회차 방송');
@@ -291,6 +300,10 @@ try {
   await R.step('OFF: 관리자 메뉴에 바자회 없음', async () => { await go(admin, '/admin'); return noBazaarWord(admin); });
   await R.step('OFF: /admin/bazaar 404', async () => (await go(admin, '/admin/bazaar')) === 404);
   await R.step('OFF 예외: 정산 지급 화면은 열림(바자회 문구 없음)', async () => { const s = await go(admin, '/admin/in-kind-settlements'); return s === 200 && (await noBazaarWord(admin)); });
+  await R.step('OFF 예외: 현물 기부금영수증 정정 화면은 열림(바자회 문구 없음)', async () => {
+    const s = await go(admin, '/admin/in-kind-receipts');
+    return s === 200 && (await bodyText(admin)).includes('현물 기부금영수증 정정') && (await noBazaarWord(admin));
+  });
   await R.step('OFF 예외: 기관 기부금영수증에 현물 영수증 유지', async () => { await go(merchant, '/studio/receipts'); return (await bodyText(merchant)).includes('현물 기부금영수증'); });
   await R.step('OFF: 파일·CSV API 404', async () => (await merchant.request.get(`${BASE}/api/bazaar/export?kind=ledger`)).status() === 404);
 } finally {
