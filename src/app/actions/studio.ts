@@ -7,7 +7,7 @@ import { prisma } from '@/server/db';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { RETURN_SHIPMENT_STATUSES, shipmentStatusLabel } from '@/lib/labels';
 import { newId } from '@/lib/id';
-import { accountTail4, decrypt, encrypt, isValidResident, maskName, maskResident, normalizeResident } from '@/lib/crypto';
+import { accountTail4, decrypt, encrypt, isValidResident, maskName, maskPhone, maskResident, normalizeResident } from '@/lib/crypto';
 import { resolvePolicy } from '@/server/services/limits';
 import { issueMerchantApiKey } from '@/server/services/partner-auth';
 import { formatWon } from '@/lib/money';
@@ -2109,7 +2109,7 @@ export async function bulkShipAction(
 export async function revealShipmentAddressAction(
   chargeId: string,
 ): Promise<
-  | { ok: true; receiver: string; phone: string; address: string; zipCode: string }
+  | { ok: true; receiver: string; phoneMasked: string; address: string; zipCode: string }
   | { ok: false; message: string }
 > {
   let merchantId: string;
@@ -2145,7 +2145,8 @@ export async function revealShipmentAddressAction(
     return {
       ok: true,
       receiver: decrypt(row.receiverEnc),
-      phone: decrypt(row.phoneEnc),
+      // 기관 콘솔에는 전화번호 원문을 내보내지 않는다(CLAUDE.md 기관 콘솔 규칙). 이름·주소만 원문.
+      phoneMasked: maskPhone(decrypt(row.phoneEnc)),
       address: decrypt(row.addressEnc),
       zipCode: row.zipCode,
     };

@@ -24,7 +24,7 @@ export function AddressReveal({
   addressMasked: string;
   zipCode: string;
 }) {
-  const [full, setFull] = React.useState<{ receiver: string; phone: string; address: string } | null>(null);
+  const [full, setFull] = React.useState<{ receiver: string; address: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -35,7 +35,7 @@ export function AddressReveal({
     try {
       const res = await revealShipmentAddressAction(chargeId);
       if (!res.ok) setError(res.message);
-      else setFull({ receiver: res.receiver, phone: res.phone, address: res.address });
+      else setFull({ receiver: res.receiver, address: res.address });
     } catch {
       setError('배송지를 여는 중 오류가 발생했습니다.');
     } finally {
@@ -46,7 +46,7 @@ export function AddressReveal({
   const copy = async () => {
     if (!full) return;
     try {
-      await navigator.clipboard.writeText(`${full.receiver}\t${full.phone}\t${zipCode}\t${full.address}`);
+      await navigator.clipboard.writeText(`${full.receiver}\t${phoneMasked}\t${zipCode}\t${full.address}`);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -81,14 +81,15 @@ export function AddressReveal({
 
       <p className="mt-1 text-[13px] font-semibold text-ink-900">
         {full ? full.receiver : receiverMasked}
-        <span className="ml-2 font-normal tabular-nums text-ink-600">{full ? full.phone : phoneMasked}</span>
+        {/* 전화번호는 열어도 마스킹 값만 보인다(기관 콘솔에는 전화번호 원문을 보여 주지 않는다). */}
+        <span className="ml-2 font-normal tabular-nums text-ink-600">{phoneMasked}</span>
       </p>
       <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-700">
         ({zipCode}) {full ? full.address : addressMasked}
       </p>
 
       {!full ? (
-        <p className="mt-1 text-[11px] text-ink-300">가려진 값입니다. 열람 기록이 남습니다.</p>
+        <p className="mt-1 text-[11px] text-ink-300">가려진 값입니다. 열람 기록이 남습니다. 연락처는 열어도 가린 번호로만 보입니다.</p>
       ) : null}
       {error ? <p className="mt-1 text-[11.5px] text-danger-500">{error}</p> : null}
     </div>

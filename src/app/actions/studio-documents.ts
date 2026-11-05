@@ -5,7 +5,7 @@ import { prisma } from '@/server/db';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
-import { decrypt, generateToken, tokenHash } from '@/lib/crypto';
+import { decrypt, generateToken, maskPhone, tokenHash } from '@/lib/crypto';
 import { addDays, formatKst } from '@/lib/datetime';
 import { sendMt } from '@/server/services/charge-flow';
 import { tplDocumentRequest } from '@/server/services/mt-templates';
@@ -628,7 +628,8 @@ export async function revealDocumentSubmissionAction(
   | {
       ok: true;
       payerName: string | null;
-      payerPhone: string | null;
+      /** 기관 콘솔에는 전화번호 원문을 내보내지 않는다(CLAUDE.md 기관 콘솔 규칙). 마스킹 값만. */
+      payerPhoneMasked: string | null;
       values: Array<{ id: string; value: string }>;
     }
   | { ok: false; message: string }
@@ -672,7 +673,8 @@ export async function revealDocumentSubmissionAction(
     return {
       ok: true,
       payerName: row.payerNameEnc ? decrypt(row.payerNameEnc) : null,
-      payerPhone: row.payerPhoneEnc ? decrypt(row.payerPhoneEnc) : null,
+      // 전화번호는 원문 대신 마스킹 값만 돌려준다. 연락이 필요하면 문자 발송 기능(서버 측)을 쓴다.
+      payerPhoneMasked: row.payerPhoneEnc ? maskPhone(decrypt(row.payerPhoneEnc)) : null,
       values: Object.entries(values).map(([id, value]) => ({ id, value })),
     };
   } catch (e) {
