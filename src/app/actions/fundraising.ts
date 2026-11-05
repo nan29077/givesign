@@ -22,6 +22,7 @@ import {
 import type { StudioActionState } from '@/app/actions/studio';
 import { ExportGateError, issueHometaxExportToken } from '@/server/services/hometax-export-gate';
 import type { CampaignStatus, OrganizationType } from '@/generated/prisma/enums';
+import { kstDateKey } from '@/lib/datetime';
 
 /**
  * 기관 콘솔 — 캠페인 · 후원페이지 · 기관 정보 · 기부금영수증 액션.
@@ -190,7 +191,8 @@ export async function saveOrganizationInfoAction(_prev: StudioActionState, f: Fo
     const d = parsed.data;
     const bn = d.businessNo.replace(/-/g, '');
     const businessNo = bn ? `${bn.slice(0, 3)}-${bn.slice(3, 5)}-${bn.slice(5)}` : null;
-    const until = d.designatedDoneeUntil ? new Date(`${d.designatedDoneeUntil}T00:00:00Z`) : null;
+    // KST 자정으로 저장한다(관리자 optDate·영수증 발급 판정 doneeVerified 와 같은 KST 날짜 기준, 점검 E).
+    const until = d.designatedDoneeUntil ? new Date(`${d.designatedDoneeUntil}T00:00:00+09:00`) : null;
     const before = await prisma.merchantProfile.findUnique({
       where: { id: merchantId },
       select: {
@@ -204,7 +206,8 @@ export async function saveOrganizationInfoAction(_prev: StudioActionState, f: Fo
       (before.designatedDonee !== d.designatedDonee ||
         before.businessNo !== businessNo ||
         before.donationCode !== d.donationCode ||
-        (before.designatedDoneeUntil?.getTime() ?? null) !== (until?.getTime() ?? null));
+        // 날짜(KST)로 비교한다. 예전에 UTC 자정으로 저장된 값과 같은 날짜면 바뀌지 않은 것으로 본다.
+        (before.designatedDoneeUntil ? kstDateKey(before.designatedDoneeUntil) : null) !== (until ? kstDateKey(until) : null));
     await prisma.merchantProfile.update({
       where: { id: merchantId },
       data: {
@@ -322,7 +325,9 @@ export async function reissueReceiptAction(_prev: StudioActionState, f: FormData
 export interface HometaxExportGateState {
   ok: boolean;
   message?: string;
-  url?: string;
+  /** 1회용 내려받기 토큰(5분). POST 본문으로만 보낸다. */
+  token?: string;
+  year?: number;
 }
 
 export async function prepareHometaxExportAction(_prev: HometaxExportGateState, f: FormData): Promise<HometaxExportGateState> {
@@ -344,7 +349,8 @@ export async function prepareHometaxExportAction(_prev: HometaxExportGateState, 
       password,
       reason: text(f, 'reason'),
     });
-    return { ok: true, url: `/api/studio/receipts/export?year=${year}&t=${encodeURIComponent(token)}` };
+    // 토큰은 주소(쿼리스트링)에 싣지 않는다. 화면이 POST 본문으로 보낸다.
+    return { ok: true, token, year };
   } catch (e) {
     if (e instanceof ExportGateError) {
       await writeAudit({

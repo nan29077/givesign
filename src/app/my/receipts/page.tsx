@@ -3,7 +3,7 @@ import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components
 import { Badge, Card, Checkbox, EmptyState, Field, Input, LinkButton, Notice } from '@/components/ui';
 import { DonorActionForm } from '@/components/my/donor-action-form';
 import { deleteReceiptProfileAction, openReceiptAction, saveReceiptProfileAction } from '@/app/actions/donor';
-import { getReceiptProfile, payerReceiptOverview, receiptStatusLabel } from '@/server/services/receipts';
+import { getReceiptProfile, payerReceiptOverview, receiptStatusLabel, RECEIPT_PROFILE_DAILY_ATTEMPTS } from '@/server/services/receipts';
 import { currentTermsDoc } from '@/server/services/terms';
 import { formatKst } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
@@ -51,6 +51,9 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
         <details className="mt-3" open={!profile}>
           <summary className="cursor-pointer text-[13px] font-bold text-brand-700">{profile ? '정보 수정' : '정보 등록하기'}</summary>
           <DonorActionForm action={saveReceiptProfileAction} submitLabel={profile ? '수정 저장' : '동의하고 등록'} className="mt-3">
+            <Notice tone="warning" title="본인 명의 주민등록번호만 등록하세요">
+              기브싸인은 아직 실명확인(본인인증) 서비스와 연동되어 있지 않아, 입력한 성명과 주민등록번호가 일치하는지 확인하지 못합니다. 다른 사람의 번호를 등록하면 그 사람 명의로 영수증이 발급되고 국세청 자료에 실립니다. 같은 번호는 한 계정에만 등록할 수 있고, 저장 시도는 하루 {RECEIPT_PROFILE_DAILY_ATTEMPTS}번까지입니다.
+            </Notice>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="성명(실명)" required><Input name="legalName" maxLength={30} defaultValue={profile?.legalName ?? ''} required /></Field>
               <Field label="주민등록번호" required hint="앞 6자리 - 뒤 7자리. 저장 후에는 마스킹으로만 표시됩니다.">

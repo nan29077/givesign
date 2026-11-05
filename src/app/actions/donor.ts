@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSessionUser } from '@/server/auth';
 import { prisma } from '@/server/db';
-import { clientIpFrom } from '@/server/rate-limit';
+import { clientIpFrom, consumeRateLimit } from '@/server/rate-limit';
 import { logger } from '@/lib/logger';
 import {
   createRecurringDonation,
@@ -134,6 +134,13 @@ export async function saveReceiptProfileAction(_prev: DonorActionState, f: FormD
   if (!ctx) return { ok: false, message: NO_PAYER };
   if (!f.get('agree')) return { ok: false, message: '기부금영수증 발급을 위한 개인정보 수집·이용 동의에 체크해 주세요.' };
   const meta = await requestMeta();
+  // 주민등록번호를 다루는 액션이라 계정별 하루 제한(서비스 안)과 별개로 IP 단위로도 막는다.
+  // 여러 계정을 돌려 가며 번호 등록 여부를 확인하는 것을 늦춘다. 저장소 장애 시 막는다.
+  const [byIp, byUser] = await Promise.all([
+    consumeRateLimit('receipt-profile:ip', meta.ip ?? null, 20, 3600, { failClosed: true }),
+    consumeRateLimit('receipt-profile:user', ctx.user.id, 10, 3600, { failClosed: true }),
+  ]);
+  if (!byIp.ok || !byUser.ok) return { ok: false, message: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' };
   try {
     const r = await upsertReceiptProfile(ctx.payerId, {
       legalName: text(f, 'legalName'),

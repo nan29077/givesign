@@ -12,11 +12,13 @@ import {
   tokenHash,
 } from '@/lib/crypto';
 import { env } from '@/lib/env';
+import { kstDateKey } from '@/lib/datetime';
 import { logger } from '@/lib/logger';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { DONATION_CODES } from '@/lib/receipt-codes';
 import { currentTermsDoc } from './terms';
 import { writeAudit } from '@/server/auth';
+import { consumeRateLimit } from '@/server/rate-limit';
 import { sendMtForPayer } from './charge-flow';
 import * as tpl from './mt-templates';
 import type { Prisma } from '@/generated/prisma/client';
@@ -72,12 +74,21 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
   // 그 사람 명의로 영수증이 발급되고 국세청 명세에 실리기 때문이다.
   // (실명 확인(본인인증) 계약 전이라 성명·번호 일치는 확인하지 못한다. 중복·변경 횟수로 막는다)
   const hash = residentHash(resident);
+
+  // 거절된 시도까지 포함한 하루 시도 횟수 제한. "다른 계정에 등록됨" 응답이 특정 주민번호의
+  // 등록 여부(=후원자인지)를 알려 주는 오라클이 되지 않도록, 성공 여부와 관계없이 센다.
+  // 저장소 장애 시에는 막는다(민감정보 보호용 제한).
+  const attempt = await consumeRateLimit('receipt-profile:try', payerId, RECEIPT_PROFILE_DAILY_ATTEMPTS, 86_400, { failClosed: true });
+  if (!attempt.ok) {
+    return { ok: false, message: RECEIPT_PROFILE_TOO_MANY };
+  }
+
   const taken = await prisma.payerReceiptProfile.findFirst({
     where: { residentNoHash: hash, payerId: { not: payerId } },
     select: { payerId: true },
   });
   if (taken) {
-    return { ok: false, message: '이미 다른 계정에 등록된 주민등록번호입니다. 본인 번호가 맞다면 고객센터로 문의해 주세요.' };
+    return { ok: false, message: RECEIPT_RESIDENT_TAKEN };
   }
   // 하루 변경 횟수 제한(번호를 바꿔 가며 시도하는 것을 막는다)
   const changesToday = await prisma.consentRecord.count({
@@ -90,31 +101,38 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
   const terms = await currentTermsDoc('RECEIPT_ISSUANCE');
   if (!terms) return { ok: false, message: '기부금영수증 동의 약관이 준비되지 않았습니다. 관리자에게 문의해 주세요.' };
 
-  await prisma.$transaction(async (tx) => {
-    const consent = await tx.consentRecord.create({
-      data: {
-        id: newId(),
-        userId: payer.userId,
-        phoneHash: payer.phoneHash,
-        termsId: terms.id,
-        type: 'RECEIPT_ISSUANCE',
-        agreed: true,
-        ip: input.ip ?? null,
-        userAgent: input.userAgent ?? null,
-      },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const consent = await tx.consentRecord.create({
+        data: {
+          id: newId(),
+          userId: payer.userId,
+          phoneHash: payer.phoneHash,
+          termsId: terms.id,
+          type: 'RECEIPT_ISSUANCE',
+          agreed: true,
+          ip: input.ip ?? null,
+          userAgent: input.userAgent ?? null,
+        },
+      });
+      const data = {
+        legalName: name,
+        residentNoEnc: encrypt(resident),
+        residentNoHash: hash,
+        residentNoMasked: maskResident(resident),
+        address: (input.address ?? '').trim() || null,
+        hometaxOptIn: input.hometaxOptIn,
+        consentId: consent.id,
+        consentAt: new Date(),
+      };
+      await tx.payerReceiptProfile.upsert({ where: { payerId }, create: { payerId, ...data }, update: data });
     });
-    const data = {
-      legalName: name,
-      residentNoEnc: encrypt(resident),
-      residentNoHash: hash,
-      residentNoMasked: maskResident(resident),
-      address: (input.address ?? '').trim() || null,
-      hometaxOptIn: input.hometaxOptIn,
-      consentId: consent.id,
-      consentAt: new Date(),
-    };
-    await tx.payerReceiptProfile.upsert({ where: { payerId }, create: { payerId, ...data }, update: data });
-  });
+  } catch (e) {
+    // 위의 중복 확인과 저장 사이에 다른 계정이 같은 번호를 먼저 저장한 경우(동시 요청).
+    // resident_no_hash 유니크 제약이 뒤에 온 쪽을 막는다. 트랜잭션이라 동의 기록도 남지 않는다.
+    if ((e as { code?: string })?.code === 'P2002') return { ok: false, message: RECEIPT_RESIDENT_TAKEN };
+    throw e;
+  }
   // 주민번호 원문·해시는 감사로그에 남기지 않는다. 등록 사실과 마스킹 값만.
   await writeAudit({
     action: 'RECEIPT_PROFILE_UPSERT',
@@ -127,6 +145,16 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
 
 /** 하루에 영수증 정보를 바꿀 수 있는 횟수 */
 export const RECEIPT_PROFILE_DAILY_CHANGES = 3;
+/** 하루에 영수증 정보 저장을 시도할 수 있는 횟수(거절된 시도 포함) */
+export const RECEIPT_PROFILE_DAILY_ATTEMPTS = 5;
+const RECEIPT_PROFILE_TOO_MANY = '오늘은 영수증 정보 저장을 더 시도할 수 없습니다. 내일 다시 시도하거나 고객센터로 문의해 주세요.';
+const RECEIPT_RESIDENT_TAKEN = '이미 다른 계정에 등록된 주민등록번호입니다. 본인 번호가 맞다면 고객센터로 문의해 주세요.';
+
+/** 마이그레이션(20261105110000)에서 중복으로 정리된 행. 확인 전까지 발급하지 않는다. */
+export function isResidentConflict(residentNoHash: string): boolean {
+  return residentNoHash.startsWith('conflict:');
+}
+export const RECEIPT_RESIDENT_CONFLICT_REASON = '확인 필요(주민등록번호 중복) — 후원자가 영수증 정보를 다시 저장해야 발급할 수 있습니다.';
 
 export async function getReceiptProfile(payerId: string) {
   const row = await prisma.payerReceiptProfile.findUnique({ where: { payerId } });
@@ -160,6 +188,32 @@ export async function deleteReceiptProfile(payerId: string, meta: { ip?: string;
   await writeAudit({ action: 'RECEIPT_PROFILE_DELETE', targetType: 'PayerReceiptProfile', targetId: payerId }).catch(() => undefined);
 }
 
+/**
+ * 회원 탈퇴 시 영수증 정보 정리(점검 B H-5).
+ *
+ * 탈퇴로 개인정보 처리 목적이 끝났으므로 성명·주민번호 암호문·주소를 지우고, 영수증 발급 동의 철회를
+ * 기록한다. 탈퇴 트랜잭션 안에서 부르도록 트랜잭션 클라이언트를 받는다. 철회 기록의 phoneHash 는
+ * 무효화하기 전의 값(동의 기록과 같은 키)을 넘겨야 한다.
+ *
+ * 이미 발급된 영수증(donation_receipt 의 스냅샷·주민번호 암호문)은 법정 보존 대상이라 건드리지 않는다.
+ */
+export async function purgeReceiptProfileForWithdrawal(
+  tx: Prisma.TransactionClient,
+  payer: { id: string; userId: string | null; phoneHash: string | null },
+  meta: { termsId: string | null; ip?: string | null; userAgent?: string | null },
+): Promise<{ removed: boolean }> {
+  const removed = await tx.payerReceiptProfile.deleteMany({ where: { payerId: payer.id } });
+  if (removed.count > 0 && meta.termsId) {
+    await tx.consentRecord.create({
+      data: {
+        id: newId(), userId: payer.userId, phoneHash: payer.phoneHash, termsId: meta.termsId,
+        type: 'RECEIPT_ISSUANCE', agreed: false, ip: meta.ip ?? null, userAgent: meta.userAgent ?? null,
+      },
+    });
+  }
+  return { removed: removed.count > 0 };
+}
+
 // ---------------------------------------------------------------------------
 // 발급 대상·발급
 // ---------------------------------------------------------------------------
@@ -189,26 +243,36 @@ export async function receiptCandidates(merchantId: string, taxYear: number) {
   });
   const payerIds = groups.map((g) => g.payerId!).filter(Boolean);
   const [payers, profiles] = await Promise.all([
-    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true } }),
-    prisma.payerReceiptProfile.findMany({ where: { payerId: { in: payerIds } }, select: { payerId: true, legalName: true, hometaxOptIn: true } }),
+    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, onboardingStatus: true } }),
+    prisma.payerReceiptProfile.findMany({ where: { payerId: { in: payerIds } }, select: { payerId: true, legalName: true, hometaxOptIn: true, residentNoHash: true } }),
   ]);
   const payerMap = new Map(payers.map((p) => [p.id, p]));
   const profMap = new Map(profiles.map((p) => [p.payerId, p]));
   return groups
-    .map((g) => ({
+    .map((g) => {
+      const withdrawn = payerMap.get(g.payerId!)?.onboardingStatus === 'WITHDRAWN';
+      const prof = profMap.get(g.payerId!);
+      return {
       payerId: g.payerId!,
       displayName: payerMap.get(g.payerId!)?.displayName ?? '',
       phoneMasked: payerMap.get(g.payerId!)?.phoneMasked ?? '',
-      legalName: profMap.get(g.payerId!)?.legalName ?? null,
-      hometaxOptIn: profMap.get(g.payerId!)?.hometaxOptIn ?? null,
-      ready: profMap.has(g.payerId!),
+      legalName: prof?.legalName ?? null,
+      hometaxOptIn: prof?.hometaxOptIn ?? null,
+      // 탈퇴한 후원자는 영수증 정보가 남아 있더라도 발급하지 않는다(개인정보 처리 목적 종료).
+      withdrawn,
+      conflict: Boolean(prof && isResidentConflict(prof.residentNoHash)),
+      ready: !withdrawn && Boolean(prof) && !isResidentConflict(prof!.residentNoHash),
       amount: g._sum.amount ?? 0n,
       count: g._count._all,
-    }))
+      };
+    })
     .sort((a, b) => Number(b.amount - a.amount));
 }
 
 export class ReceiptError extends Error {}
+
+/** 탈퇴한 후원자에 대한 발급 거절 사유(화면·일괄 발급 결과에 같은 문구를 쓴다). */
+export const RECEIPT_WITHDRAWN_REASON = '발급 불가(탈퇴) — 탈퇴한 후원자에게는 새 영수증을 발급하지 않습니다.';
 
 /**
  * 공익법인 지정이 지금 유효한가.
@@ -221,8 +285,9 @@ export function doneeVerified(
 ) {
   if (!m.designatedDonee || !m.designatedDoneeVerifiedAt) return false;
   if (m.designatedDoneeUntil) {
-    const today = new Date(now.getTime() + 9 * 3600000).toISOString().slice(0, 10);
-    if (m.designatedDoneeUntil.toISOString().slice(0, 10) < today) return false;
+    // 만료일과 오늘을 모두 KST 날짜로 비교한다. 만료일은 KST 자정(+09:00)으로 저장하며,
+    // 예전에 UTC 자정으로 저장된 값도 KST 날짜는 같은 날이라 그대로 맞는다. 만료 당일까지 유효.
+    if (kstDateKey(m.designatedDoneeUntil) < kstDateKey(now)) return false;
   }
   return true;
 }
@@ -267,7 +332,10 @@ export async function issueReceipt(input: IssueReceiptInput) {
   if (!readiness.ok) throw new ReceiptError(`기관 정보가 부족합니다: ${readiness.missing.join(', ')}`);
   // 후원 내역 확인을 먼저 한다. 임의의 후원자 ID 로 "후원자 없음 / 정보 미등록" 을 구분해 볼 수 없게.
   if (charges.length === 0 || !payer) throw new ReceiptError('발급할 후원 내역이 없습니다(이미 발급됐거나 결제 성공 건이 없음).');
+  // 탈퇴한 후원자 명의로는 새로 발급하지 않는다. 이미 발급된 영수증(스냅샷)은 법정 보존 대상이라 그대로 둔다.
+  if (payer.onboardingStatus === 'WITHDRAWN') throw new ReceiptError(RECEIPT_WITHDRAWN_REASON);
   if (!profile) throw new ReceiptError('후원자가 기부금영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다.');
+  if (isResidentConflict(profile.residentNoHash)) throw new ReceiptError(RECEIPT_RESIDENT_CONFLICT_REASON);
 
   const total = charges.reduce((s, c) => s + c.amount, 0n);
   const viewToken = generateToken(24);
@@ -367,6 +435,16 @@ export async function issueReceiptsBulk(merchantId: string, taxYear: number, iss
   const candidates = await receiptCandidates(merchantId, taxYear);
   const result = { issued: 0, skipped: 0, failed: 0, details: [] as Array<{ payerId: string; status: 'ISSUED' | 'SKIPPED' | 'FAILED'; reason?: string; receiptNo?: string }> };
   for (const c of candidates) {
+    if (c.withdrawn) {
+      result.skipped += 1;
+      result.details.push({ payerId: c.payerId, status: 'SKIPPED', reason: '발급 불가(탈퇴)' });
+      continue;
+    }
+    if (c.conflict) {
+      result.skipped += 1;
+      result.details.push({ payerId: c.payerId, status: 'SKIPPED', reason: '확인 필요(주민등록번호 중복)' });
+      continue;
+    }
     if (!c.ready) {
       result.skipped += 1;
       result.details.push({ payerId: c.payerId, status: 'SKIPPED', reason: '영수증 정보 미등록' });

@@ -2431,7 +2431,8 @@ model PayerReceiptProfile {
   payerId          String    @id @map("payer_id")
   legalName        String    @map("legal_name")
   residentNoEnc    String    @map("resident_no_enc")
-  residentNoHash   String    @map("resident_no_hash")
+  /// 같은 번호는 한 후원자만 등록한다(2026-11-05 유니크). 중복 정리된 행은 'conflict:' 접두어가 붙는다.
+  residentNoHash   String    @unique @map("resident_no_hash")
   /// 901010-1******
   residentNoMasked String    @map("resident_no_masked")
   address          String?
@@ -2444,7 +2445,6 @@ model PayerReceiptProfile {
 
   payer PayerProfile @relation(fields: [payerId], references: [id], onDelete: Cascade)
 
-  @@index([residentNoHash])
   @@map("payer_receipt_profile")
 }
 

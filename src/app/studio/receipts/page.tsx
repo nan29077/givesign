@@ -40,7 +40,8 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
   ]);
   const readiness = issuerReadiness(merchant);
   const ready = candidates.filter((c) => c.ready);
-  const notReady = candidates.filter((c) => !c.ready);
+  const withdrawn = candidates.filter((c) => c.withdrawn);
+  const notReady = candidates.filter((c) => !c.ready && !c.withdrawn && !c.conflict);
   const issuedValid = issued.filter((r) => r.status === 'ISSUED');
   const issuedTotal = issuedValid.reduce((s, r) => s + r.totalAmount, 0n);
 
@@ -75,7 +76,10 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
       </div>
 
       <section className="mb-6">
-        <SectionTitle title="발급 대기" description="결제 성공 건 중 아직 영수증에 포함되지 않은 금액입니다. 후원자가 영수증 정보를 등록해야 발급할 수 있습니다." />
+        <SectionTitle
+          title="발급 대기"
+          description={`결제 성공 건 중 아직 영수증에 포함되지 않은 금액입니다. 후원자가 영수증 정보를 등록해야 발급할 수 있습니다.${withdrawn.length ? ` 탈퇴한 후원자 ${withdrawn.length}명은 새로 발급할 수 없습니다(이미 발급된 영수증은 그대로 보관).` : ''}`}
+        />
         {candidates.length === 0 ? (
           <EmptyState title={`${year}년에 발급 대기 중인 후원이 없습니다`} />
         ) : (
@@ -109,7 +113,17 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
                       <span className="font-semibold text-ink-900">{displayPayerName(c.displayName)}</span>
                       <span className="ml-2 font-mono text-[12px] text-ink-400">{c.phoneMasked}</span>
                     </Td>
-                    <Td>{c.ready ? c.legalName : <Badge tone="warning">정보 미등록</Badge>}</Td>
+                    <Td>
+                      {c.withdrawn ? (
+                        <Badge tone="neutral">발급 불가(탈퇴)</Badge>
+                      ) : c.conflict ? (
+                        <Badge tone="warning">확인 필요(주민번호 중복)</Badge>
+                      ) : c.ready ? (
+                        c.legalName
+                      ) : (
+                        <Badge tone="warning">정보 미등록</Badge>
+                      )}
+                    </Td>
                     <Td className="font-semibold tabular-nums">{formatWon(c.amount)}</Td>
                     <Td className="tabular-nums">{c.count}건</Td>
                     <Td>{c.ready ? (c.hometaxOptIn ? <Badge tone="success">동의</Badge> : <Badge tone="neutral">종이만</Badge>) : '-'}</Td>

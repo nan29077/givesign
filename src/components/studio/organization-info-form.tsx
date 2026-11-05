@@ -1,5 +1,6 @@
 import { Checkbox, Field, Input, Notice, Select } from '@/components/ui';
 import { ActionForm } from '@/components/studio/action-form';
+import { kstDateKey } from '@/lib/datetime';
 import { issuerReadiness } from '@/server/services/receipts';
 import type { MerchantProfile } from '@/generated/prisma/client';
 import type { StudioActionState } from '@/app/actions/studio';
@@ -79,7 +80,7 @@ export function OrganizationInfoForm({
             />
           </div>
           <Field label="지정 만료일" hint="재지정 신청 시기를 놓치지 않도록 안내합니다.">
-            <Input type="date" name="designatedDoneeUntil" defaultValue={m.designatedDoneeUntil ? m.designatedDoneeUntil.toISOString().slice(0, 10) : ''} />
+            <Input type="date" name="designatedDoneeUntil" defaultValue={m.designatedDoneeUntil ? kstDateKey(m.designatedDoneeUntil) : ''} />
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-2">

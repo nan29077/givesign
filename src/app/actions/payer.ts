@@ -1,16 +1,19 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { prisma } from '@/server/db';
 import { currentTermsDoc } from '@/server/services/terms';
-import { getSessionUser, destroySession } from '@/server/auth';
+import { getSessionUser, destroySession, writeAudit } from '@/server/auth';
+import { purgeReceiptProfileForWithdrawal } from '@/server/services/receipts';
 import { revokePaymentMethod } from '@/server/services/payer-registration';
 import { requestRefund } from '@/server/services/refund';
 import { resolvePolicy } from '@/server/services/limits';
 import { validatePayerName } from '@/server/services/payer-name';
 import { newId } from '@/lib/id';
+import { clientIpFrom } from '@/server/rate-limit';
 
 /**
  * 후원자 마이페이지 서버 액션.
@@ -334,12 +337,28 @@ export async function withdrawAccount(_prev: PayerActionState, formData: FormDat
     // 다만 이 프로필은 더 이상 어떤 번호와도 매칭되지 않는다.
     const withdrawing = await prisma.payerProfile.findUnique({
       where: { userId: user.id },
-      select: { id: true },
+      select: { id: true, userId: true, phoneHash: true },
     });
+    // 영수증 발급 동의 철회 기록에 쓸 현행 약관(없으면 정보 삭제만 한다)
+    const receiptTerms = withdrawing ? await currentTermsDoc('RECEIPT_ISSUANCE') : null;
+    const h = await headers();
+    const meta = { ip: clientIpFrom((name) => h.get(name)) ?? null, userAgent: h.get('user-agent') ?? null };
+    let receiptProfileRemoved = false;
 
-    await prisma.$transaction([
+    await prisma.$transaction(async (tx) => {
+      // 기부금영수증 정보(성명·주민번호 암호문·주소)는 탈퇴와 함께 지우고 동의 철회를 남긴다.
+      // 남겨 두면 탈퇴 뒤에도 기관이 발급하고 홈택스 명세에 실린다(점검 B H-5).
+      // 이미 발급된 영수증 스냅샷은 법정 보존 대상이라 그대로 둔다.
+      if (withdrawing) {
+        const r = await purgeReceiptProfileForWithdrawal(tx, withdrawing, {
+          termsId: receiptTerms?.id ?? null,
+          ip: meta.ip,
+          userAgent: meta.userAgent,
+        });
+        receiptProfileRemoved = r.removed;
+      }
       // 후원자 프로필은 남기고 계정 연결만 끊는다 (거래 이력 보존)
-      prisma.payerProfile.updateMany({
+      await tx.payerProfile.updateMany({
         where: { userId: user.id },
         data: {
           userId: null,
@@ -350,8 +369,8 @@ export async function withdrawAccount(_prev: PayerActionState, formData: FormDat
           displayName: null,
           snsPlatform: null,
         },
-      }),
-      prisma.user.update({
+      });
+      await tx.user.update({
         where: { id: user.id },
         data: {
           status: 'WITHDRAWN',
@@ -364,9 +383,12 @@ export async function withdrawAccount(_prev: PayerActionState, formData: FormDat
           phoneMasked: null,
           deletedAt: new Date(),
         },
-      }),
-      prisma.userSession.deleteMany({ where: { userId: user.id } }),
-    ]);
+      });
+      await tx.userSession.deleteMany({ where: { userId: user.id } });
+    });
+    if (receiptProfileRemoved && withdrawing) {
+      await writeAudit({ action: 'RECEIPT_PROFILE_DELETE', targetType: 'PayerReceiptProfile', targetId: withdrawing.id, actorUserId: user.id, after: { reason: '회원 탈퇴' } }).catch(() => undefined);
+    }
   } catch {
     return { ok: false, message: '탈퇴 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.' };
   }
