@@ -28,9 +28,11 @@ try {
     const opts = await g.locator('select[name=category] option').allInnerTexts();
     const miss = missingOf(opts.join('|'), [
       '결제 취소 · 환불', '계좌 등록 · 자동출금 동의', '결제 오류 · 중복 결제',
-      '방송 노출 · 메시지 표시', '부적절한 이용 신고', '사회복지기관 가입 · 정산', '기타 문의',
+      '후원 반영 · 후원 내역 표시', '부적절한 이용 신고', '사회복지기관 가입 · 정산', '기타 문의',
     ]);
     r.ok('문의 유형 7종', miss.length === 0, miss.join(','));
+    // 방송 후원 시절의 "방송 노출 · 메시지 표시" 유형은 후원 반영 문의로 바뀌었다.
+    r.ok('문의 유형에 방송 문구가 없다', !opts.some((o) => o.includes('방송')), opts.join('|'));
   }
   r.ok('거래번호 입력칸', (await g.locator('input[name=transactionNo]').count()) > 0);
   r.ok('문의 내용 입력칸', (await g.locator('textarea[name=content]').count()) > 0);

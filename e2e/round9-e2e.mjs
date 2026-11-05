@@ -16,16 +16,30 @@ const b = await launch();
 const PAYOUT = '/api/admin/settlements/payout';
 const WITHHOLD = '/api/admin/settlements/withholding';
 
+// 두 CSV 라우트는 동일 출처(Origin/Referer) 검사를 먼저 한다(주민번호 복호화·반출 감사로그를
+// 다른 사이트의 <img src> 로 유발하지 못하게). 브라우저의 같은 출처 요청을 흉내 내 Origin 을 붙인다.
+const SAME_ORIGIN = { Origin: new URL(BASE).origin };
+
 try {
+  // ══════════════ 0. 동일 출처 검사 ══════════════
+  for (const [label, path] of [['지급대행', `${PAYOUT}?ids=x`], ['원천징수', `${WITHHOLD}?from=2026-08-01`]]) {
+    const noOrigin = await fetch(`${BASE}${path}`);
+    r.ok(`${label} CSV: Origin·Referer 없는 요청은 403`, noOrigin.status === 403, `status=${noOrigin.status}`);
+    const cross = await fetch(`${BASE}${path}`, { headers: { Origin: 'https://evil.example' } });
+    r.ok(`${label} CSV: 다른 출처 요청은 403`, cross.status === 403, `status=${cross.status}`);
+    const viaReferer = await fetch(`${BASE}${path}`, { headers: { Referer: `${BASE}/admin/settlements` } });
+    r.ok(`${label} CSV: 같은 출처 Referer 는 검사를 통과한다(비로그인 401)`, viaReferer.status === 401, `status=${viaReferer.status}`);
+  }
+
   // ══════════════ 1. 비로그인 접근 차단 ══════════════
   {
-    const res = await fetch(`${BASE}${PAYOUT}?ids=x`);
+    const res = await fetch(`${BASE}${PAYOUT}?ids=x`, { headers: SAME_ORIGIN });
     const text = await res.text();
     r.ok('지급대행 CSV: 비로그인 401', res.status === 401, `status=${res.status}`);
     r.ok('지급대행 CSV: 401 안내 문구', text.includes('관리자 로그인이 필요합니다'));
   }
   {
-    const res = await fetch(`${BASE}${WITHHOLD}?from=2026-08-01`);
+    const res = await fetch(`${BASE}${WITHHOLD}?from=2026-08-01`, { headers: SAME_ORIGIN });
     const text = await res.text();
     r.ok('원천징수 CSV: 비로그인 401', res.status === 401, `status=${res.status}`);
     r.ok('원천징수 CSV: 401 안내 문구', text.includes('관리자 로그인이 필요합니다'));
@@ -38,12 +52,17 @@ try {
   await loginAdmin(p);
 
   {
-    const res = await p.request.get(`${BASE}${PAYOUT}`);
+    // 로그인한 최고관리자라도 출처가 없으면(다른 사이트가 유발한 요청) 거절한다.
+    const res = await p.request.get(`${BASE}${WITHHOLD}?from=2026-08-01&to=2026-08-31`, { headers: { Origin: 'https://evil.example' } });
+    r.ok('원천징수 CSV: 로그인 상태라도 다른 출처는 403', res.status() === 403, `status=${res.status()}`);
+  }
+  {
+    const res = await p.request.get(`${BASE}${PAYOUT}`, { headers: SAME_ORIGIN });
     r.ok('지급대행 CSV: 대상 미선택은 400', res.status() === 400, `status=${res.status()}`);
     r.ok('지급대행 CSV: 400 안내 문구', (await res.text()).includes('선택된 정산 요청이 없습니다'));
   }
   {
-    const res = await p.request.get(`${BASE}${WITHHOLD}?from=2026-08-01&to=2026-08-31`);
+    const res = await p.request.get(`${BASE}${WITHHOLD}?from=2026-08-01&to=2026-08-31`, { headers: SAME_ORIGIN });
     r.ok('원천징수 CSV: 최고관리자는 200', res.ok(), `status=${res.status()}`);
     const csv = await res.text();
     const miss = missingOf(csv.split('\n')[0] ?? '', [
@@ -53,7 +72,7 @@ try {
     r.ok('원천징수 CSV 는 캐시되지 않는다', (res.headers()['cache-control'] ?? '').includes('no-store'));
   }
   {
-    const res = await p.request.get(`${BASE}${WITHHOLD}?from=2026-02-31`);
+    const res = await p.request.get(`${BASE}${WITHHOLD}?from=2026-02-31`, { headers: SAME_ORIGIN });
     r.ok('원천징수 CSV: 달력에 없는 날짜는 400', res.status() === 400, `status=${res.status()}`);
     r.ok('원천징수 CSV: 날짜 오류 안내', (await res.text()).includes('달력에 있는 날짜'));
   }
@@ -64,7 +83,8 @@ try {
   r.ok('정산 관리 화면', s.includes('정산 관리'));
   r.ok('원장은 조회 전용 고지', s.includes('정산 원장은 조회 전용입니다'));
   {
-    const miss = missingOf(s, ['요청 대기', '검토중', '승인(지급 대기)', '지급 완료']);
+    // 자동 지급 전환으로 "요청 대기" 타일은 "접수" 로 바뀌었다.
+    const miss = missingOf(s, ['접수', '검토중', '승인(지급 대기)', '지급 완료']);
     r.ok('정산 상태 타일 4종', miss.length === 0, miss.join(','));
   }
   {

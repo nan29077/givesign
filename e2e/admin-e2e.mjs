@@ -32,10 +32,6 @@ const TITLES = Object.fromEntries([
   ['/admin/payments', '결제 관리'],
   ['/admin/refunds', '환불 관리'],
   ['/admin/risk', '한도·이상거래'],
-  ['/admin/youtube', '유튜브 연동 관리'],
-  ['/admin/streams', '방송·스트림 관리'],
-  ['/admin/tts', 'TTS 연동'],
-  ['/admin/overlay', '오버레이·TTS 관리'],
   ['/admin/settlements', '정산 관리'],
   ['/admin/holidays', '공휴일 관리'],
   ['/admin/fees', '수수료 정책'],
@@ -51,14 +47,18 @@ const TITLES = Object.fromEntries([
 ]);
 
 // 사이드바 그룹 제목. 메뉴 재편이 잦아 목록 자체보다 "그룹이 제대로 서 있는가"를 본다.
-const MENU_GROUPS = ['운영현황', '회원·사회복지기관', '거래·결제', '방송·오버레이', '정산·수수료', '콘텐츠·운영', '시스템·보안'];
+// ("거래·결제" → "후원·결제", "방송·오버레이" 그룹은 기능 삭제로 없어졌다)
+const MENU_GROUPS = ['운영현황', '회원·사회복지기관', '후원·결제', '정산·수수료', '콘텐츠·운영', '시스템·보안'];
+
+// 메시지페이(유튜브 방송 후원)에서 삭제한 관리자 화면
+const REMOVED = ['/admin/youtube', '/admin/streams', '/admin/tts', '/admin/overlay'];
 
 const POLICY_FIELDS = [
   'defaultAmount', 'minAmount', 'maxAmount',
   'payerDailyLimit', 'payerMonthlyLimit', 'perMerchantDailyLimit',
   'payerDailyMaxCount', 'velocityWindowSec', 'velocityMaxCount',
   'cooldownAfterCount', 'cooldownSec', 'failureLockThreshold',
-  'newPayerFirstDayLimit', 'manualReviewAmount', 'ttsMinAmount',
+  'newPayerFirstDayLimit', 'manualReviewAmount',
 ];
 
 try {
@@ -76,6 +76,7 @@ try {
     r.ok(`메뉴 그룹 ${MENU_GROUPS.length}종`, miss.length === 0, miss.join(','));
     r.ok('최고관리자에게는 문의 관리 메뉴가 보인다', nav.includes('문의 관리'));
     r.ok('사이드바에 권한이 표기된다', nav.includes('최고 관리자'));
+    r.ok('사이드바에 방송·오버레이·유튜브·TTS 메뉴가 없다', !/방송|오버레이|유튜브|TTS/.test(nav));
   }
 
   // ══════════════ 2. 전 화면 스모크 ══════════════
@@ -94,6 +95,13 @@ try {
     r.ok(`${path}${title ? ' — ' + title : ''}`, alive && okTitle, alive ? '제목 불일치' : '화면이 비었거나 오류');
   }
 
+  // 삭제된 화면은 메뉴에도 없고 주소로도 열리지 않는다.
+  for (const path of REMOVED) {
+    r.ok(`삭제된 메뉴 링크가 없다: ${path}`, !menuHrefs.includes(path));
+    const res = await p.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
+    r.ok(`삭제된 화면은 열리지 않는다(404): ${path}`, res?.status() === 404, `status=${res?.status()}`);
+  }
+
   // ══════════════ 3. 한도 정책 ══════════════
   await gotoReady(p, `${BASE}/admin/policies`);
   const pol = await bodyText(p);
@@ -101,6 +109,7 @@ try {
   for (const name of POLICY_FIELDS) {
     r.ok(`한도 필드 ${name}`, (await p.locator(`input[name=${name}]`).count()) > 0);
   }
+  r.ok('TTS 최소 금액 필드는 없다(TTS 삭제)', (await p.locator('input[name=ttsMinAmount]').count()) === 0 && !pol.includes('TTS'));
   r.ok('1인 1일 최대 건수 라벨', pol.includes('1인 1일 최대 건수'));
   r.ok('적용 범위 select', (await p.locator('select[name=scope]').count()) > 0);
   {
@@ -129,11 +138,12 @@ try {
   await gotoReady(p, `${BASE}/admin/merchants`);
   const cr = await bodyText(p);
   {
-    const miss = missingOf(cr, ['사회복지기관', '코드', '담당자', '1건 결제 금액', 'MO 번호', '상태', '심사 처리']);
+    const heads = (await p.locator('table th').allInnerTexts()).map((t) => t.trim());
+    const miss = missingOf(heads.join('|'), ['사회복지기관', '코드', '담당자', '후원 항목', 'MO 번호', '결제 건수', '상태', '심사 처리']);
     r.ok('사회복지기관 표 헤더', miss.length === 0, miss.join(','));
   }
   r.ok('시드 사회복지기관이 보인다', cr.includes(SEED.merchant1Name) && cr.includes(SEED.merchant1Code));
-  r.ok('공통 허용 범위 일괄 적용 카드', cr.includes('1건 결제 금액 허용 범위 공통 적용'));
+  r.ok('공통 허용 범위 일괄 적용 카드', cr.includes('후원 금액 허용 범위 공통 적용'));
   r.ok('검색 입력칸', (await p.locator('input[name=q]').count()) > 0);
 
   // ══════════════ 5. 수수료 정책 ══════════════
