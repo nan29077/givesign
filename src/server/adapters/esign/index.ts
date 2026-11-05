@@ -38,6 +38,8 @@ export interface ESignRequest {
     agreementDocId: string;
     purpose: 'SUPPORT_AGREEMENT' | 'VOLUNTEER_APPLICATION' | 'RECURRING_CHANGE';
     context: import('@/server/services/purpose-documents').MergeContext;
+    /** 서명 화면 본문(약정서 스냅샷 렌더 결과). 있으면 서식을 다시 머지하지 않고 이 본문을 쓴다. */
+    body?: string;
   };
 }
 
@@ -82,6 +84,7 @@ export const internalESignAdapter: ESignAdapter = {
       context: i.context,
       subject: { type: 'agreement_document', id: i.agreementDocId },
       dedupeKey: agreementSignDedupeKey(i.agreementDocId),
+      ...(i.body ? { bodyOverride: i.body } : {}),
     });
     if (!r.ok) return { ok: false, code: r.blocked ?? 'FAILED', message: r.reason, latencyMs: Date.now() - started };
     const { prisma } = await import('@/server/db');

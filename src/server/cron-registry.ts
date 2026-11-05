@@ -59,7 +59,7 @@ export const CRON_JOBS: CronDef[] = [
   {
     name: 'edoc', path: '/api/cron/edoc', schedule: '매일 03:00', eventBridge: 'cron(0 18 * * ? *)',
     intervalSec: 86_400, lockTtlSec: 600,
-    description: '전자문서 정액 만료·서명 요청 만료·미사용 글꼴 정리',
+    description: '전자문서 정액 만료·서명 요청 만료·끝난 봉투 결과 대사·미사용 글꼴 정리',
   },
   {
     name: 'monthly-notice', path: '/api/cron/monthly-notice', schedule: '매월 1일 10:00', eventBridge: 'cron(0 1 1 * ? *)',

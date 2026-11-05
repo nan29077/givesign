@@ -32,9 +32,16 @@ export const DOCUMENT_PURPOSES = [
   'VOLUNTEER_CONFIRMATION',
   /** 자원봉사 감사장(누적 시간 이정표) */
   'VOLUNTEER_THANKS',
-  /** 정기후원 변경·해지 신청서 */
+  /**
+   * 정기후원 변경·해지 신청서. **자동 발송 경로가 없다**(점검 A 낮음 — 결정: 문서화).
+   * 정기후원 변경은 후원자 본인이 마이페이지에서 하고 그 결과는 약정서 새 판(SUPPORT_AGREEMENT)으로 서명받는다.
+   * 이 서식은 기관이 서면 변경·해지 신청을 따로 받을 때 전자문서 센터에서 직접 보내는 용도로만 쓴다.
+   */
   'RECURRING_CHANGE',
 ] as const;
+
+/** 저니·소비자가 자동으로 보내지 않는 용도(기관이 전자문서 센터에서 직접 보낸다) */
+export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE'];
 export type DocumentPurpose = (typeof DOCUMENT_PURPOSES)[number];
 
 export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
@@ -76,6 +83,8 @@ export interface IssuePurposeDocumentInput {
   dedupeKey: string;
   /** false 면 만들기만 하고 안내 문자는 보내지 않는다 */
   notify?: boolean;
+  /** 본문을 서식 머지 대신 이 값으로(약정서 스냅샷 본문 — 내부 전자서명). 파일 서식 PDF 는 그대로 머지한다. */
+  bodyOverride?: string;
 }
 
 export type IssuePurposeDocumentResult =

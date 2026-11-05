@@ -191,18 +191,40 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     { merchantName: merchant.displayName, representative: merchant.representativeName ?? null },
     now,
   );
-  const body = renderTemplateBody(template, values);
+  const rendered = renderTemplateBody(template, values);
+  // 내부 전자서명 약정서: 서명 화면 본문은 약정서 스냅샷 본문이다(서명 대상 = 보관된 스냅샷).
+  const body = input.bodyOverride ? { text: input.bodyOverride, missing: [] as string[] } : rendered;
   const missing = [...body.missing];
 
-  // 파일 서식: 편집 글자에 머지 값을 채운 새 PDF(원본 불변). 열람 문서는 비공개, 서명 봉투는 서명 화면이 읽는 공개 객체.
-  let pdf: { object: string; hash: string; url: string | null } | null = null;
+  // 서명 요청은 무거운 PDF 렌더 전에 잔액부터 본다(렌더한 뒤 잔액 부족으로 버려지는 파일이 생기지 않게 — 점검 A-M2).
+  if (signature) {
+    const { assertSendable } = await import('./edoc');
+    const { EDocBillingError } = await import('./edoc-billing');
+    try {
+      await assertSendable(merchant.id);
+    } catch (e) {
+      if (e instanceof EDocBillingError) return { ok: false, reason: e.message, blocked: 'EDOC_BALANCE' };
+      throw e;
+    }
+  }
+
+  // 파일 서식: 편집 글자에 머지 값을 채운 새 PDF(원본 불변). 열람 문서·서명 봉투 모두 비공개 저장소(이름 등이 들어 있다 — 점검 A-M2).
+  // 서명 화면은 본인확인 뒤 권한 경로(/sign/[토큰]/pdf)로만 읽는다.
+  let pdf: { object: string; hash: string; created: boolean } | null = null;
   if (template.templateType === 'FILE') {
     const { renderMergedTemplatePdf } = await import('./pdf-form');
-    const merged = await renderMergedTemplatePdf(merchant.id, template, values, signature ? 'public' : 'private');
+    const merged = await renderMergedTemplatePdf(merchant.id, template, values, 'private');
     if (!merged.ok) return { ok: false, reason: merged.message, blocked: 'NO_TEMPLATE' };
-    pdf = { object: merged.pdf.objectName, hash: merged.pdf.hash, url: merged.pdf.url };
+    pdf = { object: merged.pdf.objectName, hash: merged.pdf.hash, created: merged.pdf.created };
     for (const m of merged.pdf.missing) if (!missing.includes(m)) missing.push(m);
   }
+  // 이 아래에서 발급이 이루어지지 않으면(중복·예외) 방금 만든 PDF 를 지운다.
+  const discard = async () => {
+    if (pdf?.created) {
+      const { discardPrivateObject } = await import('./edoc');
+      await discardPrivateObject(pdf.object);
+    }
+  };
 
   const snapshot: IssuedSnapshot = {
     v: 1,
@@ -239,7 +261,17 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     subjectId: input.subject?.id ?? null,
   };
 
-  if (signature) return issueForSignature(input, { base, template, payer, body: body.text, pdf });
+  if (signature) {
+    let r: IssuePurposeDocumentResult;
+    try {
+      r = await issueForSignature(input, { base, template, payer, body: body.text, pdf });
+    } catch (e) {
+      await discard();
+      throw e;
+    }
+    if (!r.ok || r.already) await discard();
+    return r;
+  }
 
   const token = generateToken(32);
   let issuedId: string;
@@ -250,6 +282,7 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     });
     issuedId = row.id;
   } catch (e) {
+    await discard();
     if (isUnique(e)) return (await alreadyIssued(dedupeKey)) ?? { ok: false, reason: '이미 처리 중인 발송입니다.' };
     throw e;
   }
@@ -265,7 +298,7 @@ async function issueForSignature(
     template: { id: string; name: string };
     payer: { id: string; displayName: string | null; phoneEnc: string };
     body: string;
-    pdf: { object: string; hash: string; url: string | null } | null;
+    pdf: { object: string; hash: string } | null;
   },
 ): Promise<IssuePurposeDocumentResult> {
   const { createEnvelope, EDocError, EDOC_SYSTEM_ACTOR } = await import('./edoc');
@@ -287,10 +320,15 @@ async function issueForSignature(
       title: ctx.template.name,
       signingOrder: 'PARALLEL',
       signers: [{ name: (input.context.donorName ?? ctx.payer.displayName ?? '후원자').slice(0, 30), phone, role: signerRoleFor(input.purpose) }],
-      override: { body: ctx.body, ...(ctx.pdf ? { pdfUrl: ctx.pdf.url, pdfHash: ctx.pdf.hash } : {}) },
+      override: { body: ctx.body, ...(ctx.pdf ? { pdfUrl: null, pdfObject: ctx.pdf.object, pdfHash: ctx.pdf.hash } : {}) },
       deferSend: input.notify === false,
     });
     envelopeId = r.envelopeId;
+    // 같은 봉투가 이미 있었다(같은 발송 키 재시도) — 새로 만든 PDF 는 그 봉투가 쓰지 않는다.
+    if (r.duplicated) {
+      const existing = await prisma.issuedDocument.findUnique({ where: { envelopeId }, select: { id: true } });
+      if (existing) return { ok: true, issuedId: existing.id, link: null, already: true, signature: true };
+    }
   } catch (e) {
     if (e instanceof EDocBillingError) return { ok: false, reason: e.message, blocked: 'EDOC_BALANCE' };
     if (e instanceof EDocError) return { ok: false, reason: e.message };
@@ -337,8 +375,15 @@ export async function loadIssuedByToken(token: string, opts: { record?: boolean 
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(token ?? '')) return { ok: false, reason: '유효하지 않은 링크입니다.' };
   const row = await prisma.issuedDocument.findUnique({ where: { tokenHash: tokenHash(token) } });
   if (!row || row.signature) return { ok: false, reason: '유효하지 않은 링크입니다. 가장 최근에 받은 문자의 링크를 열어 주세요.' };
-  const merchant = await prisma.merchantProfile.findUnique({ where: { id: row.merchantId }, select: { displayName: true } });
+  const [merchant, payer] = await Promise.all([
+    prisma.merchantProfile.findUnique({ where: { id: row.merchantId }, select: { displayName: true, status: true } }),
+    prisma.payerProfile.findUnique({ where: { id: row.payerId }, select: { onboardingStatus: true } }),
+  ]);
   if (row.archivedAt) return { ok: false, reason: '기관이 보관 처리한 문서입니다. 기관에 문의해 주세요.', merchantName: merchant?.displayName };
+  // 이용이 정지된 기관의 문서는 공개 링크로 열지 않는다(점검 A 낮음). 기관 정상화 뒤 다시 열린다.
+  if (!merchant || merchant.status !== 'APPROVED') return { ok: false, reason: '지금은 이 기관의 문서를 열 수 없습니다. 기관에 문의해 주세요.', merchantName: merchant?.displayName };
+  // 탈퇴한 후원자의 열람 링크는 닫는다(탈퇴 때 토큰도 지우지만, 그 전 링크가 남아 있을 수 있다).
+  if (!payer || payer.onboardingStatus === 'WITHDRAWN') return { ok: false, reason: '유효하지 않은 링크입니다.' };
   if (row.expiresAt && row.expiresAt <= new Date()) {
     return { ok: false, expired: true, reason: '열람 기간이 지난 링크입니다.', merchantName: merchant?.displayName };
   }
@@ -395,10 +440,13 @@ export async function resendIssuedDocument(input: { merchantId: string; id: stri
   if (!payer || payer.onboardingStatus === 'WITHDRAWN') throw new IssuedDocumentError('탈퇴한 후원자에게는 다시 보내지 않습니다.');
   const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: row.merchantId }, select: { displayName: true } });
   const token = generateToken(32);
-  await prisma.issuedDocument.update({
-    where: { id: row.id },
-    data: { tokenHash: tokenHash(token), expiresAt: addDays(new Date(), ISSUED_DOCUMENT_LINK_TTL_DAYS) },
+  // 재발송 선점: 읽은 때의 토큰·발송 시각 그대로일 때만 바꾼다. 동시에 두 번 눌러도 한 번만 보낸다(점검 A 낮음).
+  // sentAt 을 지금으로 미리 올려 10분 간격 검사가 뒤에 온 요청을 막는다. 문자가 실패하면 sendIssuedNotice 가 오류를 남긴다.
+  const claimed = await prisma.issuedDocument.updateMany({
+    where: { id: row.id, tokenHash: row.tokenHash, sentAt: row.sentAt, archivedAt: null },
+    data: { tokenHash: tokenHash(token), expiresAt: addDays(new Date(), ISSUED_DOCUMENT_LINK_TTL_DAYS), sentAt: new Date() },
   });
+  if (claimed.count !== 1) throw new IssuedDocumentError('방금 다른 요청으로 다시 보냈습니다. 목록을 새로 고쳐 주세요.');
   const ok = await sendIssuedNotice(row.id, row.payerId, row.merchantId, merchant.displayName, row.title, issuedDocumentUrl(token));
   return { ok };
 }
@@ -440,7 +488,26 @@ export async function syncIssuedFromEnvelope(envelopeId: string) {
   return { changed: r.count > 0 };
 }
 
-/** `document.signed` 소비자 */
+/**
+ * 후원자 탈퇴: 그 후원자의 열람 링크를 닫고(토큰 삭제) 진행 중인 서명 요청 봉투를 시스템 취소한다(점검 A 낮음).
+ * 발급 대장·스냅샷은 보존한다. 탈퇴 처리 뒤에 부른다(실패해도 탈퇴는 그대로 — 열람 화면도 탈퇴자를 다시 거른다).
+ */
+export async function closeDocumentsForWithdrawnPayer(payerId: string) {
+  const links = await prisma.issuedDocument.updateMany({ where: { payerId, tokenHash: { not: null } }, data: { tokenHash: null, expiresAt: new Date() } });
+  const open = await prisma.issuedDocument.findMany({ where: { payerId, status: 'REQUESTED', envelopeId: { not: null } }, select: { envelopeId: true } });
+  const { cancelEnvelopeBySystem } = await import('./edoc');
+  let canceled = 0;
+  for (const o of open) {
+    const r = await cancelEnvelopeBySystem(o.envelopeId!, '후원자 탈퇴').catch((e) => {
+      logger.warn('탈퇴 후원자 서명 요청 취소 실패', { envelopeId: o.envelopeId, message: (e as Error).message });
+      return { canceled: false };
+    });
+    if (r.canceled) canceled += 1;
+  }
+  return { linksClosed: links.count, envelopesCanceled: canceled };
+}
+
+/** `document.signed` · `document.closed` 소비자 */
 export async function handleDocumentSigned(ev: { subjectType: string; subjectId: string }) {
   if (ev.subjectType !== 'edoc_envelope') return 'SKIPPED' as const;
   const linked = await prisma.issuedDocument.count({ where: { envelopeId: ev.subjectId } })

@@ -175,6 +175,41 @@ async function createDocument(input: {
   return doc;
 }
 
+/** 약정 하나의 조건 변경(새 판)은 하루 이만큼까지만 받는다(서명 봉투·이용요금 소모 방지 — 점검 A-M1). */
+export const AGREEMENT_CHANGES_PER_DAY = 3;
+
+export class AgreementError extends Error {}
+
+/** 같은 약정의 오늘(최근 24시간) 새 판 수가 상한이면 막는다. 첫 판(약정 생성)은 세지 않는다. */
+export async function assertAgreementChangeAllowed(kind: AgreementKind, subjectId: string, now = new Date()) {
+  const n = await prisma.agreementDocument.count({
+    where: { kind, subjectId, supersedesId: { not: null }, createdAt: { gte: new Date(now.getTime() - 86_400_000) } },
+  });
+  if (n >= AGREEMENT_CHANGES_PER_DAY) {
+    throw new AgreementError(`약정 내용은 하루 ${AGREEMENT_CHANGES_PER_DAY}번까지 바꿀 수 있습니다. 내일 다시 바꿔 주세요.`);
+  }
+}
+
+/**
+ * 새 판이 생기면 이전 판의 서명 요청을 닫는다(지난 판에 서명할 수 없게 — 점검 A-M1).
+ *  - 내부 전자서명(봉투): 시스템 취소. 아무도 열기 전이면 이용요금을 되돌린다(기존 취소 규칙 그대로).
+ *  - 외부·mock 요청: 결과가 와도 반영하지 않도록 EXPIRED 로 닫는다.
+ */
+async function closePreviousSignature(prevId: string | null) {
+  if (!prevId) return;
+  const prev = await prisma.agreementDocument.findUnique({ where: { id: prevId }, select: { id: true, esignStatus: true, esignRequestId: true, esignProvider: true } });
+  if (!prev || prev.esignStatus !== 'REQUESTED') return;
+  if (prev.esignProvider === 'internal' && prev.esignRequestId) {
+    try {
+      const { cancelEnvelopeBySystem } = await import('./edoc');
+      await cancelEnvelopeBySystem(prev.esignRequestId, '약정 내용이 바뀌어 새 약정서로 다시 요청');
+    } catch (e) {
+      logger.warn('이전 판 서명 요청 취소 실패', { agreementDocId: prev.id, message: (e as Error).message });
+    }
+  }
+  await prisma.agreementDocument.updateMany({ where: { id: prev.id, esignStatus: 'REQUESTED' }, data: { esignStatus: 'EXPIRED' } });
+}
+
 /** 전자서명 요청 (켜져 있을 때만). 실패해도 문서는 그대로 남는다. */
 async function requestSignatureIfEnabled(docId: string) {
   if (!env.automation.esignEnabled) return null;
@@ -198,10 +233,14 @@ async function requestSignatureIfEnabled(docId: string) {
         agreementDocId: doc.id,
         purpose: KIND_PURPOSE[doc.kind] as 'SUPPORT_AGREEMENT' | 'VOLUNTEER_APPLICATION',
         context: contextFromSnapshot(snap),
+        // 서명 화면 본문 = 약정서 스냅샷 본문(서식을 다시 머지하지 않는다 — 그 사이 서식이 바뀌어도 서명 대상은 스냅샷이다. 점검 A 낮음)
+        body: renderAgreementText(snap),
       },
     });
     if (!res.ok || !res.data) {
       logger.warn('전자서명 요청 실패 — 동의 기록 약정서로 유지합니다', { docNo: doc.docNo, code: res.code });
+      // 잔액 부족은 기관이 고칠 수 있다 — 담당자에게 알린다(조용히 묻히지 않게 — 점검 A 낮음). 하루 한 번.
+      if (res.code === 'EDOC_BALANCE') await notifyBalanceBlocked(doc.merchantId, doc.title);
       return null;
     }
     await prisma.agreementDocument.update({
@@ -215,6 +254,25 @@ async function requestSignatureIfEnabled(docId: string) {
   }
 }
 
+async function notifyBalanceBlocked(merchantId: string, title: string) {
+  try {
+    const m = await prisma.merchantProfile.findUnique({ where: { id: merchantId }, select: { userId: true } });
+    if (!m) return;
+    const { kv } = await import('@/server/redis');
+    const first = await kv.setnx(`agreement-esign-balance:${merchantId}`, '1', 86_400).catch(() => true);
+    if (!first) return;
+    const { notifyUser } = await import('./notifications');
+    await notifyUser({
+      userId: m.userId,
+      title: '전자서명 요청을 보내지 못했습니다',
+      body: `${title} 서명 요청이 전자문서 이용 잔액 부족으로 나가지 않았습니다. 약정은 동의 기록으로 성립했습니다. 충전 뒤 약정서 화면에서 다시 요청해 주세요.`,
+      linkUrl: '/studio/document-billing',
+    });
+  } catch (e) {
+    logger.warn('잔액 부족 알림 실패', { merchantId, message: (e as Error).message });
+  }
+}
+
 async function notifyIssued(doc: { id: string; payerId: string; merchantId: string; title: string }, merchantName: string) {
   const link = `${env.baseUrl}/my/agreements/${doc.id}`;
   await sendMtForPayer(doc.payerId, tpl.tplAgreementIssued({ merchantName, title: doc.title, link }), null, doc.merchantId).catch((e) =>
@@ -223,7 +281,7 @@ async function notifyIssued(doc: { id: string; payerId: string; merchantId: stri
 }
 
 /** 정기후원 약정서를 만든다(약정 생성·변경 시). 현행 문서 ID 를 약정에 연결한다. */
-export async function issueRecurringAgreement(recurringId: string, meta: AgreementMeta = {}, opts: { notify?: boolean } = {}) {
+export async function issueRecurringAgreement(recurringId: string, meta: AgreementMeta = {}, opts: { notify?: boolean; change?: boolean } = {}) {
   const r = await prisma.recurringDonation.findUniqueOrThrow({
     where: { id: recurringId },
     include: {
@@ -267,6 +325,7 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
     // 기관 서식(후원 약정서) 본문 — 머지 필드를 채운 결과. 서식을 읽지 못하면 넣지 않는다.
     ...(form ? { form } : {}),
   };
+  if (opts.change) await assertAgreementChangeAllowed('RECURRING_PLEDGE', r.id);
   const doc = await createDocument({
     kind: 'RECURRING_PLEDGE',
     subjectId: r.id,
@@ -278,6 +337,7 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
     meta,
   });
   await prisma.recurringDonation.update({ where: { id: r.id }, data: { agreementDocId: doc.id } });
+  await closePreviousSignature(doc.supersedesId);
   await requestSignatureIfEnabled(doc.id);
   if (opts.notify !== false) await notifyIssued(doc, r.merchant.displayName);
   return doc;
@@ -332,6 +392,7 @@ export async function issueVolunteerAgreement(applicationId: string, meta: Agree
     meta,
   });
   await prisma.volunteerApplication.update({ where: { id: a.id }, data: { agreementDocId: doc.id } });
+  await closePreviousSignature(doc.supersedesId);
   await requestSignatureIfEnabled(doc.id);
   if (opts.notify) await notifyIssued(doc, a.merchant.displayName);
   return doc;

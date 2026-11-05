@@ -8,6 +8,7 @@ import { prisma } from '@/server/db';
 import { currentTermsDoc } from '@/server/services/terms';
 import { getSessionUser, destroySession, writeAudit } from '@/server/auth';
 import { purgeReceiptProfileForWithdrawal } from '@/server/services/receipts';
+import { closeDocumentsForWithdrawnPayer } from '@/server/services/issued-documents';
 import { revokePaymentMethod } from '@/server/services/payer-registration';
 import { requestRefund } from '@/server/services/refund';
 import { resolvePolicy } from '@/server/services/limits';
@@ -386,6 +387,10 @@ export async function withdrawAccount(_prev: PayerActionState, formData: FormDat
       });
       await tx.userSession.deleteMany({ where: { userId: user.id } });
     });
+    // 탈퇴자의 문서 열람 링크를 닫고 진행 중 서명 요청을 취소한다(실패해도 탈퇴는 그대로 — 열람 화면이 탈퇴자를 다시 거른다).
+    if (withdrawing) {
+      await closeDocumentsForWithdrawnPayer(withdrawing.id).catch(() => undefined);
+    }
     if (receiptProfileRemoved && withdrawing) {
       await writeAudit({ action: 'RECEIPT_PROFILE_DELETE', targetType: 'PayerReceiptProfile', targetId: withdrawing.id, actorUserId: user.id, after: { reason: '회원 탈퇴' } }).catch(() => undefined);
     }

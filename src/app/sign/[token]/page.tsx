@@ -15,6 +15,7 @@ import {
   envelopeValues,
   loadSigner,
   readPrefill,
+  snapshotPdfHref,
   verifyEnvelopeChain,
 } from '@/server/services/edoc';
 import { prisma } from '@/server/db';
@@ -91,7 +92,7 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
         {e.status !== 'COMPLETED' ? <div className="mb-3"><Notice tone="brand" title="서명했습니다">다른 서명자가 서명하면 완료됩니다. 완료되면 문자로 알려 드립니다.</Notice></div> : null}
         <EDocCertificate
           d={{
-            orgName: merchantName, title: full.title, envelopeId: full.id, snapshot, values, status: full.status, sentAt: full.sentAt, completedAt: full.completedAt,
+            orgName: merchantName, title: full.title, envelopeId: full.id, snapshot, pdfHref: snapshotPdfHref(snapshot, { signerToken: token }), values, status: full.status, sentAt: full.sentAt, completedAt: full.completedAt,
             snapshotHash: full.snapshotHash, documentHash: full.documentHash, lastEventHash: full.lastEventHash, chainOk: chain.ok, pdfCheck,
             signers: full.signers.map((x) => ({ order: x.order, roleLabel: edocRoleLabel[x.role], nameMasked: x.nameMasked, phoneMasked: x.phoneMasked, signedAt: x.signedAt, signIp: null, signatureUrl: x.signatureUrl, otpVerifiedAt: x.otpVerifiedAt })),
             events: full.events.filter((ev) => !['VALUES_VIEWED', 'OTP_SENT'].includes(ev.type)).map((ev) => ({ at: ev.createdAt, label: edocEventLabel[ev.type] ?? ev.type, who: ev.signerId ? who.get(ev.signerId) ?? '' : '', ip: null })),
@@ -110,9 +111,9 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
       <Card>
         <p className="mb-3 flex items-center gap-1.5 text-[12.5px] font-bold text-ink-500"><FileText size={16} strokeWidth={1.7} /> {snapshot.name}</p>
         {snapshot.body ? <div className="whitespace-pre-wrap rounded-2xl bg-ink-50 p-4 text-[13.5px] leading-[1.85] text-ink-800">{snapshot.body}</div> : null}
-        {snapshot.pdfUrl ? (
+        {snapshotPdfHref(snapshot, { signerToken: token }) ? (
           <div className="mt-3">
-            <PdfPreview url={snapshot.pdfUrl} downloadName={`${snapshot.name}.pdf`} />
+            <PdfPreview url={snapshotPdfHref(snapshot, { signerToken: token })!} downloadName={`${snapshot.name}.pdf`} />
           </div>
         ) : snapshot.fileUrl ? (
           <a href={snapshot.fileUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-bold text-brand-700 underline">
