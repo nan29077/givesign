@@ -73,7 +73,9 @@ export async function POST(req: Request) {
   }
 
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() } });
-  if (!user || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
+  // 계정이 없어도 verifyPassword 가 더미 해시와 비교해 응답 시간을 맞춘다(계정 열거 방지).
+  const passwordOk = await verifyPassword(parsed.data.password, user?.passwordHash ?? null);
+  if (!user || !passwordOk) {
     return fail('invalid', '이메일 또는 비밀번호가 올바르지 않습니다.', 401);
   }
   if (user.status !== 'ACTIVE') {

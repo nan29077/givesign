@@ -94,14 +94,13 @@ export async function requestPhoneVerification(
     return { ok: false, message: '인증번호 발송이 너무 잦습니다. 10분 후 다시 시도해 주세요.' };
   }
 
-  // 이미 다른 계정에 연결된 번호는 발송 전에 차단한다.
+  // 다른 계정에 연결된 번호인지는 여기서 알리지 않는다. 인증 전에 알려 주면 임의 번호가 회원에 연결돼
+  // 있는지 확인하는 수단이 된다(점검 B). 그 경우도 똑같이 인증번호를 보내고, 중복 여부는 번호를 받은
+  // 사람이 인증번호를 확인하는 단계(confirmPhoneVerification)에서만 알린다.
   const existing = await prisma.payerProfile.findUnique({
     where: { phoneHash: ph },
     select: { userId: true },
   });
-  if (existing?.userId && existing.userId !== user.id) {
-    return { ok: false, message: '이미 다른 계정에 연결된 번호입니다. 고객센터로 문의해 주세요.' };
-  }
   if (existing?.userId === user.id) {
     return { ok: false, message: '이미 이 계정에 연결된 번호입니다.' };
   }

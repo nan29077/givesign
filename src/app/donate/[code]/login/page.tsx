@@ -7,11 +7,12 @@ import { socialProviderStatus } from '@/server/adapters/social';
 import { isLocal } from '@/lib/env';
 import { OrgLogo } from '@/components/brand/org-logo';
 import { loadDonorContext, safeDonorNext } from '../_shell';
+import { DONOR_SOCIAL_ERRORS, donorSocialErrorMessage } from '@/server/services/donor-members';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: '후원 회원 로그인', robots: { index: false } };
 
-export default async function DonorLoginPage({ params, searchParams }: { params: Promise<{ code: string }>; searchParams: Promise<{ next?: string; error?: string; provider?: string; detail?: string }> }) {
+export default async function DonorLoginPage({ params, searchParams }: { params: Promise<{ code: string }>; searchParams: Promise<{ next?: string; error?: string; provider?: string }> }) {
   const { code } = await params;
   const sp = await searchParams;
   const ctx = await loadDonorContext(code);
@@ -19,13 +20,14 @@ export default async function DonorLoginPage({ params, searchParams }: { params:
   const next = safeDonorNext(ctx.org.code, sp.next, `${base}/my`);
   if (ctx.viewer) redirect(next);
   const providerLabel = sp.provider === 'naver' ? '네이버' : sp.provider === 'kakao' ? '카카오' : '간편';
+  // 쿼리스트링 문구(detail)는 그리지 않는다. 고정 코드만 정해진 문구로 바꾼다(피싱 문구 삽입 방지).
   const error =
     sp.error === 'social_not_ready'
       ? `${providerLabel} 로그인은 아직 API 연결 전입니다. 이메일로 로그인하거나 가입해 주세요.`
-      : sp.error === 'social_error'
-        ? (sp.detail?.slice(0, 120) ?? '간편 로그인에 실패했습니다.')
-        : sp.error === 'social_unknown'
-          ? '지원하지 않는 간편 로그인입니다.'
+      : sp.error === 'social_unknown'
+        ? '지원하지 않는 간편 로그인입니다.'
+        : sp.error
+          ? (donorSocialErrorMessage(sp.error) ?? DONOR_SOCIAL_ERRORS.social_error)
           : null;
   const ready = { kakao: socialProviderStatus('kakao').ready, naver: socialProviderStatus('naver').ready };
 

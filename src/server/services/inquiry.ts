@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { generateToken, tokenHash } from '@/lib/crypto';
 
 /**
  * 1:1 문의 공통 로직.
@@ -9,6 +10,27 @@ import { prisma } from '@/server/db';
 
 /** 게스트 문의 스레드를 식별하는 httpOnly 쿠키 이름. */
 export const INQUIRY_GUEST_COOKIE = 'givesign_inquiry';
+
+/**
+ * 게스트 문의 토큰 발급. 쿠키에는 원문(32바이트 난수)을, DB(guest_token)에는 해시만 둔다.
+ * 예전에는 ULID(앞 48비트가 시각)를 원문 그대로 저장했다(점검 B). DB 가 새도 바로 쓸 수 없게 한다.
+ */
+export function newGuestInquiryToken(): { token: string; stored: string } {
+  const token = generateToken(32);
+  return { token, stored: tokenHash(token) };
+}
+
+/** 예전 방식(ULID 원문 저장)으로 발급된 쿠키인지. 이미 나간 쿠키는 만료(1년)까지 그대로 인정한다. */
+const LEGACY_ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/** 쿠키 토큰으로 게스트 문의 스레드를 찾는다. */
+export async function findGuestInquiry(cookieToken: string | null | undefined) {
+  if (!cookieToken) return null;
+  const byHash = await prisma.supportInquiry.findUnique({ where: { guestToken: tokenHash(cookieToken) } });
+  if (byHash) return byHash;
+  if (LEGACY_ULID.test(cookieToken)) return prisma.supportInquiry.findUnique({ where: { guestToken: cookieToken } });
+  return null;
+}
 
 /** 문의를 읽음 처리한다 (관리자 상세 화면 진입 시 사용). 호출부에서 관리자 인증을 보장해야 한다. */
 export async function markInquiryRead(inquiryId: string): Promise<void> {
@@ -29,10 +51,7 @@ export async function markInquiryRead(inquiryId: string): Promise<void> {
 export async function claimGuestInquiry(userId: string, guestToken: string | null): Promise<string | null> {
   if (!guestToken) return null;
 
-  const guestThread = await prisma.supportInquiry.findUnique({
-    where: { guestToken },
-    select: { id: true, userId: true },
-  });
+  const guestThread = await findGuestInquiry(guestToken);
   // 이미 다른 계정이 가져갔거나 존재하지 않으면 승계하지 않는다.
   if (!guestThread || guestThread.userId) return null;
 

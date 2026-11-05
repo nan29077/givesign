@@ -7,6 +7,7 @@ import { generateToken, tokenHash } from '@/lib/crypto';
 import { addDays } from '@/lib/datetime';
 import type { UserRole, MerchantStatus } from '@/generated/prisma/enums';
 import { clientIpFrom } from '@/server/rate-limit';
+import { logger } from '@/lib/logger';
 
 /**
  * 세션 기반 인증.
@@ -38,12 +39,29 @@ export async function hashPassword(plain: string) {
   return bcrypt.hash(plain, 10);
 }
 
-export async function verifyPassword(plain: string, hash: string | null) {
-  if (!hash) return false;
+/** 계정이 없거나 비밀번호가 없는 계정에도 같은 시간이 걸리도록 비교에 쓰는 더미 해시(계정 존재 여부 노출 방지). */
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('givesign-login-dummy', 10);
+
+export async function verifyPassword(plain: string, hash: string | null | undefined) {
+  if (!hash) {
+    // 해시가 없을 때 바로 false 를 돌려주면 응답 시간으로 계정 존재 여부가 드러난다(점검 B).
+    await bcrypt.compare(plain, DUMMY_PASSWORD_HASH);
+    return false;
+  }
   return bcrypt.compare(plain, hash);
 }
 
 export async function createSession(userId: string) {
+  // 이 브라우저에 남아 있던 이전 세션 토큰은 덮어쓰기 전에 폐기한다. 쿠키만 바꾸면 이전 토큰의
+  // 세션 행이 만료일까지 유효하게 남는다(점검 B). 읽을 수 없는 맥락이면 건너뛴다.
+  try {
+    const prev = (await cookies()).get(SESSION_COOKIE)?.value;
+    if (prev) {
+      await prisma.userSession.updateMany({ where: { tokenHash: tokenHash(prev), revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+  } catch (e) {
+    logger.warn('이전 세션 폐기 실패', { message: (e as Error).message });
+  }
   const token = generateToken(32);
   const h = await headers();
   await prisma.userSession.create({

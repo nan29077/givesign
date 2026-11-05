@@ -2,7 +2,6 @@ import { env } from '@/lib/env';
 import { NextResponse } from 'next/server';
 import {
   SOCIAL_PROVIDERS,
-  SOCIAL_LABEL,
   socialProviderStatus,
   getSocialAdapter,
   SocialNotConfiguredError,
@@ -64,7 +63,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
     const message =
       e instanceof SocialNotConfiguredError
         ? 'social_not_ready'
-        : `social_error&detail=${encodeURIComponent(`${SOCIAL_LABEL[provider]} 연동이 준비되지 않았습니다.`)}`;
+        : // 문구 원문(detail)은 주소에 싣지 않는다. 받는 화면이 코드로만 문구를 고른다.
+          'social_error';
     logger.warn('소셜 로그인 시작 실패', { provider, message: (e as Error).message });
     return NextResponse.redirect(new URL(`${backTo}?error=${message}&provider=${provider}`, req.url), 303);
   }

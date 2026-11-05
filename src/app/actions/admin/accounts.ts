@@ -524,6 +524,9 @@ export async function reissueMerchantCode(_prev: AdminActionState, fd: FormData)
         data: { id: newId(), merchantId, code: nextCode, active: true, issuedAt: now },
       }),
       prisma.merchantProfile.update({ where: { id: merchantId }, data: { code: nextCode } }),
+      // 기관 후원회원 세션 쿠키 이름이 기관 코드별(givesign_donor_<코드>)이라 코드가 바뀌면 기존 쿠키는
+      // 더 이상 읽히지 않는다. 남은 세션 행을 만료일까지 두지 않고 함께 폐기한다(점검 B).
+      prisma.donorSession.updateMany({ where: { merchantId, revokedAt: null }, data: { revokedAt: now } }),
     ]);
 
     await writeAudit({
@@ -536,7 +539,7 @@ export async function reissueMerchantCode(_prev: AdminActionState, fd: FormData)
     });
     revalidatePath('/admin/codes');
     revalidatePath(`/admin/merchants/${merchantId}`);
-    return `${before.displayName} 님의 코드를 ${nextCode} 로 재발급했습니다. 기존 링크(/c/${before.code})는 더 이상 동작하지 않습니다.`;
+    return `${before.displayName} 님의 코드를 ${nextCode} 로 재발급했습니다. 기존 링크(/c/${before.code})는 더 이상 동작하지 않고, 이 기관 후원페이지에 로그인해 있던 후원 회원은 모두 다시 로그인해야 합니다.`;
   });
 }
 

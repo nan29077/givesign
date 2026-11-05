@@ -35,7 +35,33 @@ const LOGIN_FAIL_MAX = 8;
 /** 존재하지 않는 이메일에도 같은 시간이 걸리도록 비교에 쓰는 더미 해시(계정 존재 여부 노출 방지). */
 const DUMMY_HASH = bcrypt.hashSync('givesign-donor-dummy', 10);
 
-export class DonorMemberError extends Error {}
+export class DonorMemberError extends Error {
+  /** 화면 이동(쿼리스트링)으로 전달할 때 쓰는 고정 코드. 문구 원문을 주소에 싣지 않는다. */
+  constructor(message: string, readonly code?: DonorSocialErrorCode) {
+    super(message);
+  }
+}
+
+/**
+ * 간편 로그인 실패 코드 → 화면 문구. 기관 후원 로그인 화면은 이 표에 있는 코드만 문구로 바꿔 보여 준다.
+ * 쿼리스트링의 임의 문구를 그대로 그리면 정품 도메인 위에 피싱 문구를 띄울 수 있다(점검 B).
+ */
+export const DONOR_SOCIAL_ERRORS = {
+  social_error: '간편 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+  social_expired: '로그인 요청이 만료되었습니다. 다시 시도해 주세요.',
+  social_profile: '간편 로그인 정보를 받지 못했습니다. 다시 시도해 주세요.',
+  social_suspended: '이용이 정지된 회원입니다. 기관 또는 고객센터로 문의해 주세요.',
+  social_withdrawn: '탈퇴한 회원입니다. 다시 가입해 주세요.',
+  social_email_taken:
+    '이 기관에 같은 이메일로 가입한 회원이 있어 간편 로그인 계정을 자동으로 합치지 않았습니다. 그 이메일로 가입한 적이 있다면 이메일과 비밀번호로 로그인해 주세요. 가입한 적이 없는데 이 안내가 보인다면 다른 사람이 내 이메일로 먼저 가입했을 수 있으니 기관 또는 고객센터로 알려 주세요. (기브싸인은 아직 이메일 인증 메일을 보내지 않아 가입 이메일의 소유를 확인하지 못합니다)',
+} as const;
+export type DonorSocialErrorCode = keyof typeof DONOR_SOCIAL_ERRORS;
+
+/** 쿼리스트링 코드를 고정 문구로. 표에 없는 값은 null(호출부가 기본 문구를 쓴다). */
+export function donorSocialErrorMessage(code: string | undefined | null): string | null {
+  if (!code) return null;
+  return Object.prototype.hasOwnProperty.call(DONOR_SOCIAL_ERRORS, code) ? DONOR_SOCIAL_ERRORS[code as DonorSocialErrorCode] : null;
+}
 
 export function donorCookieName(code: string) {
   return `givesign_donor_${normalizeMerchantCode(code).replace(/[^A-Z0-9]/g, '')}`;
@@ -205,15 +231,15 @@ export async function loginDonorWithSocial(
   org: { id: string; code: string },
   profile: { provider: DonorSocialProvider; providerUserId: string; email?: string; name?: string },
 ) {
-  if (!profile.providerUserId) throw new DonorMemberError('간편 로그인 정보를 받지 못했습니다. 다시 시도해 주세요.');
+  if (!profile.providerUserId) throw new DonorMemberError(DONOR_SOCIAL_ERRORS.social_profile, 'social_profile');
   const hash = socialUserHash(org.id, profile.provider, profile.providerUserId);
   const linked = await prisma.donorSocialAccount.findUnique({
     where: { merchantId_provider_providerUserHash: { merchantId: org.id, provider: profile.provider, providerUserHash: hash } },
     include: { member: { select: { id: true, status: true } } },
   });
   if (linked) {
-    if (linked.member.status === 'SUSPENDED') throw new DonorMemberError('이용이 정지된 회원입니다. 기관 또는 고객센터로 문의해 주세요.');
-    if (linked.member.status !== 'ACTIVE') throw new DonorMemberError('탈퇴한 회원입니다. 다시 가입해 주세요.');
+    if (linked.member.status === 'SUSPENDED') throw new DonorMemberError(DONOR_SOCIAL_ERRORS.social_suspended, 'social_suspended');
+    if (linked.member.status !== 'ACTIVE') throw new DonorMemberError(DONOR_SOCIAL_ERRORS.social_withdrawn, 'social_withdrawn');
     await prisma.donorSocialAccount.update({ where: { id: linked.id }, data: { lastLoginAt: new Date() } });
     await issueSession(linked.member.id, org);
     return { memberId: linked.member.id, created: false };
@@ -221,7 +247,9 @@ export async function loginDonorWithSocial(
   const label = profile.provider === 'kakao' ? '카카오' : '네이버';
   const email = profile.email ? normalizeEmail(profile.email) : `${profile.provider}+${hash.slice(0, 16)}@social.givesign.local`;
   const taken = await prisma.donorMember.findUnique({ where: { merchantId_email: { merchantId: org.id, email } }, select: { id: true } });
-  if (taken) throw new DonorMemberError(`이 기관에 같은 이메일로 가입한 회원이 있습니다. 이메일로 로그인해 주세요. (${label} 계정은 자동으로 합치지 않습니다)`);
+  // 같은 이메일의 회원이 있으면 합치지 않는다. 이메일 소유 확인(인증 메일)이 없어 그 회원이 진짜 주인인지,
+  // 사업자 쪽 이메일이 검증된 것인지 알 수 없기 때문이다. 대신 선점 가능성까지 사실대로 안내한다.
+  if (taken) throw new DonorMemberError(DONOR_SOCIAL_ERRORS.social_email_taken, 'social_email_taken');
   const id = newId();
   await prisma.$transaction([
     prisma.donorMember.create({
@@ -291,8 +319,8 @@ export async function requestDonorPhoneOtp(member: DonorViewer, rawPhone: string
     kv.incr(`donor:otp-send:p:${ph}`, OTP_SEND_WINDOW_SEC),
   ]);
   if (byMember > OTP_SEND_MAX || byPhone > OTP_SEND_MAX) throw new DonorMemberError('인증번호 발송이 너무 잦습니다. 10분 후 다시 시도해 주세요.');
-  const taken = await prisma.donorMember.findFirst({ where: { merchantId: member.merchantId, phoneHash: ph, id: { not: member.id } }, select: { id: true } });
-  if (taken) throw new DonorMemberError('이 기관의 다른 회원이 이미 인증한 번호입니다. 기관 또는 고객센터로 문의해 주세요.');
+  // 이 기관의 다른 회원이 이미 인증한 번호인지는 여기서 알리지 않는다(인증 전 회원 여부 탐지 방지, 점검 B).
+  // 번호를 받은 사람이 인증번호를 확인하는 단계(confirmDonorPhoneOtp)에서만 알린다.
 
   const code = generateNumericCode(6);
   const adapter = getMtAdapter();
@@ -322,6 +350,8 @@ export async function confirmDonorPhoneOtp(member: DonorViewer, rawCode: string)
   }
   await kv.del(otpKey(member.id));
   await kv.del(otpTryKey(member.id));
+  const taken = await prisma.donorMember.findFirst({ where: { merchantId: member.merchantId, phoneHash: rec.ph, id: { not: member.id } }, select: { id: true } });
+  if (taken) throw new DonorMemberError('이 기관의 다른 회원이 이미 인증한 번호입니다. 기관 또는 고객센터로 문의해 주세요.');
   try {
     await prisma.donorMember.update({
       where: { id: member.id },
