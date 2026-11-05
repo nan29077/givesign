@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { DonorShell } from '@/components/public/donor-shell';
 import { DonorSignupForm, DonorSocialButtons } from '@/components/public/donor-auth-forms';
 import { socialProviderStatus } from '@/server/adapters/social';
+import { mailIsLive } from '@/server/adapters/mail';
 import { OrgLogo } from '@/components/brand/org-logo';
 import { loadDonorContext, safeDonorNext } from '../_shell';
 
@@ -30,7 +31,7 @@ export default async function DonorSignupPage({ params, searchParams }: { params
           <DonorSocialButtons code={ctx.org.code} ready={{ kakao: socialProviderStatus('kakao').ready, naver: socialProviderStatus('naver').ready }} />
         </div>
         <div className="mt-6">
-          <DonorSignupForm code={ctx.org.code} next={next} color={ctx.color} orgName={ctx.org.displayName} />
+          <DonorSignupForm code={ctx.org.code} next={next} color={ctx.color} orgName={ctx.org.displayName} mailLive={mailIsLive()} />
         </div>
         <p className="mt-5 text-center text-[13px] text-ink-500">
           이미 회원이신가요?{' '}

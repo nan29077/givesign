@@ -5,6 +5,7 @@ import { resetMockPaymentState } from '@/server/adapters/payment';
 import { resetMockPayoutState } from '@/server/adapters/payout';
 import { clearMockOutbox, readMockOutbox, setMockMtFailure } from '@/server/adapters/mt';
 import { clearMockAlimtalkOutbox } from '@/server/adapters/alimtalk';
+import { clearMockMailOutbox } from '@/server/adapters/mail';
 import { clearMtTemplateOverrideCache } from '@/server/services/mt-templates';
 import { clearMemoryKv } from '@/server/redis';
 
@@ -24,6 +25,8 @@ export async function resetDb() {
     // 실행 순서에 따라 결과가 달라진다. (public_holiday 는 마이그레이션이 넣는 기준 데이터라 제외)
     'mt_message_template', 'support_message', 'support_inquiry', 'edoc_plan',
     'domain_event', 'cron_heartbeat',
+    // 2026-11-06 7단계 (FK 없음)
+    'donor_email_token',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서
@@ -40,6 +43,7 @@ export async function resetDb() {
   resetMockPayoutState();
   clearMockOutbox();
   clearMockAlimtalkOutbox();
+  clearMockMailOutbox();
   setMockMtFailure(null);
   // mt_message_template 을 비웠으므로 프로세스 캐시도 함께 버린다.
   // 남겨 두면 앞 테스트가 저장한 커스텀 본문이 TTL 동안 계속 적용된다.

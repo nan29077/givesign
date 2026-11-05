@@ -11,6 +11,7 @@ import { logger } from '@/lib/logger';
 import { getMtAdapter } from '@/server/adapters/mt';
 import { applyMtTemplateOverride, tplPhoneLinkVerify } from '@/server/services/mt-templates';
 import { PAID_STATUSES } from '@/components/studio/shared';
+import { sendDonorEmailVerification } from './mail';
 import type { DonorMemberStatus } from '@/generated/prisma/enums';
 
 /**
@@ -160,6 +161,8 @@ export async function signupDonorMember(
     throw e;
   }
   await issueSession(id, org);
+  // 메일 공급자가 실연동일 때만 이메일 인증 링크를 보낸다(아니면 지금처럼 보내지 않는다). 실패해도 가입은 유지한다.
+  await sendDonorEmailVerification(org, id).catch((e) => logger.error('후원 회원 인증 메일 준비 실패', { message: (e as Error).message }));
   return id;
 }
 

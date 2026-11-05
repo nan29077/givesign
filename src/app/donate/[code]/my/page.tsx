@@ -20,8 +20,9 @@ const channelText: Record<string, string> = { MO: '문자', WEB: '웹', RECURRIN
  * 기관 후원 회원 마이페이지. 이 기관 후원만 보여 준다.
  * 후원 내역 연결은 휴대폰 인증으로 한다(문자 후원의 후원자 식별 기준이 휴대폰 번호다).
  */
-export default async function DonorMyPage({ params }: { params: Promise<{ code: string }> }) {
+export default async function DonorMyPage({ params, searchParams }: { params: Promise<{ code: string }>; searchParams: Promise<{ email?: string }> }) {
   const { code } = await params;
+  const { email: emailResult } = await searchParams;
   const ctx = await loadDonorContext(code);
   const base = `/donate/${ctx.org.code}`;
   if (!ctx.viewer) redirect(`${base}/login?next=${encodeURIComponent(`${base}/my`)}`);
@@ -36,6 +37,8 @@ export default async function DonorMyPage({ params }: { params: Promise<{ code: 
           <div className="min-w-0">
             <p className="truncate text-[18px] font-black text-ink-900">{me.name}님</p>
             <p className="truncate text-[12.5px] text-ink-500">{me.email}</p>
+            {emailResult === 'verified' ? <p className="text-[11.5px] font-bold text-brand-700">이메일 인증을 완료했습니다.</p> : null}
+            {emailResult === 'expired' || emailResult === 'invalid' ? <p className="text-[11.5px] font-bold text-danger-500">{emailResult === 'expired' ? '이메일 인증 링크가 만료되었습니다.' : '이메일 인증 링크를 확인할 수 없습니다.'}</p> : null}
             <p className="mt-0.5 text-[11.5px] font-bold" style={{ color: ctx.color }}>{ctx.org.displayName} 후원 회원</p>
           </div>
         </section>

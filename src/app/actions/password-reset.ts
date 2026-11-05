@@ -20,6 +20,8 @@ export interface ResetRequestState {
   message?: string;
   /** 로컬(APP_ENV=local)에서만 채워지는 개발용 링크 */
   devLink?: string;
+  /** 메일 공급자 실연동 여부. true 일 때만 "메일로 보냈습니다" 문구를 쓴다. */
+  mailLive?: boolean;
   values?: { email: string };
 }
 
@@ -52,7 +54,7 @@ export async function requestPasswordResetAction(
   }
 
   const result = await requestPasswordReset(parsed.data, ip);
-  return { submitted: result.accepted, devLink: result.devLink, values };
+  return { submitted: result.accepted, devLink: result.devLink, mailLive: result.mailLive, values };
 }
 
 export interface ResetConfirmState {
