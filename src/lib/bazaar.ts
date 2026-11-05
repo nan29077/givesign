@@ -92,7 +92,7 @@ export const BLOCKED_KEYWORDS = [
   '소주', '맥주', '와인', '위스키', '막걸리', '보드카', '전통주', '사케', '고량주', '샴페인', '브랜디', '리큐르', '데킬라', '하이볼',
 ];
 /** 금지어가 들어 있어도 술 자체가 아닌 용품(잔·오프너 등)은 막지 않는다. */
-const BLOCKED_KEYWORD_EXCEPTIONS = ['와인잔', '와인글라스', '와인오프너', '와인셀러', '와인랙', '맥주잔', '맥주컵', '소주잔', '위스키잔', '하이볼잔', '샴페인잔', '무알코올', '무알콜'];
+const BLOCKED_KEYWORD_EXCEPTIONS = ['와인잔', '와인글라스', '와인오프너', '와인셀러', '와인랙', '맥주잔', '맥주컵', '소주잔', '위스키잔', '하이볼잔', '샴페인잔'];
 
 export function blockedKeyword(text: string): string | null {
   let t = text.replace(/\s+/g, '');
