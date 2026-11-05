@@ -18,6 +18,12 @@ import { personalInfoHit, validateScriptJson } from '@/server/adapters/content/l
 import type { ContentBrief } from '@/server/adapters/content/brief';
 import { filterContent } from '@/server/services/content-filter';
 import { kv } from '@/server/redis';
+import { mockSnsAdapter } from '@/server/adapters/sns';
+import { liveSnsAdapter, SNS_AUTH_EXPIRED } from '@/server/adapters/sns/live';
+import { goLink, recordContentClick } from '@/server/services/content-clicks';
+import { captionProblem, composePlatformCaption, LINK_TOKEN, PLATFORM_CAPTION_RULES } from '@/server/services/content-captions';
+import { captionLinkReserve, processContentQueue, PUBLISHING_STALE_MS, renderPlatformPost, resolveUnknownPublish, schedulePublish } from '@/server/services/content';
+import { refreshIfNeeded, SocialTokenExpiredError, SocialTokenRefreshTransientError } from '@/server/services/social-oauth';
 
 /**
  * 2026-11-06 정밀 점검 — 콘텐츠·SNS·알림톡·봉사 영역 회귀 테스트.
@@ -286,5 +292,243 @@ describe('낮음: 콘텐츠 LLM 응답 실명 검사 · AI 초안 속도 제한 
     vi.spyOn(kv, 'incr').mockRejectedValue(new Error('redis down'));
     await expect(draftCampaign(fx.merchantId)).rejects.toThrow(AiDraftError);
     await expect(draftCampaign(fx.merchantId)).rejects.toThrow(/한도를 확인할 수 없어/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 콘텐츠 · SNS
+// ---------------------------------------------------------------------------
+const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#28634e"/></svg>';
+
+function liveSocial() {
+  AUTO.socialProvider = 'live';
+  AUTO.socialPublishEnabled = true;
+  Object.assign(S, {
+    googleClientId: 'g-client', googleClientSecret: 'g-secret',
+    metaAppId: 'meta-app', metaAppSecret: 'meta-secret', metaGraphVersion: 'v26.0',
+    tiktokClientKey: 'tt-key', tiktokClientSecret: 'tt-secret',
+    stateSecret: 'test-state-secret',
+  });
+}
+
+async function channel(platform: 'YOUTUBE' | 'INSTAGRAM' | 'FACEBOOK', over: Partial<{ mock: boolean; expiresAt: Date | null; refreshTokenEnc: string | null; externalId: string }> = {}) {
+  return prisma.socialChannel.create({
+    data: {
+      id: newId(), merchantId: fx.merchantId, platform, accountName: '기관 채널', status: 'CONNECTED', mock: over.mock ?? false, connectedBy: fx.merchantUserId,
+      accessTokenEnc: over.mock ? null : encrypt('ACCESS-OLD'), externalId: over.externalId ?? 'ACC-1',
+      refreshTokenEnc: over.refreshTokenEnc === undefined ? encrypt('REFRESH-1') : over.refreshTokenEnc,
+      expiresAt: over.expiresAt === undefined ? null : over.expiresAt,
+    },
+  });
+}
+
+async function item(kind: 'IMAGE_SQUARE' | 'SHORTFORM' = 'IMAGE_SQUARE', status = 'SCHEDULED', caption = '후원하기: {링크}\nAI 생성 콘텐츠') {
+  return prisma.contentItem.create({
+    data: {
+      id: newId(), merchantId: fx.merchantId, kind, status: status as 'SCHEDULED', title: '캠페인', provider: 'mock', createdBy: fx.merchantUserId,
+      caption, scenes: [{ caption: 'a', durationSec: 5, svg }], aiLabeled: true, regNoIncluded: true,
+    },
+  });
+}
+
+async function scheduled(itemId: string, platform: 'YOUTUBE' | 'INSTAGRAM' | 'FACEBOOK', mock = true) {
+  return prisma.contentPublish.create({ data: { id: newId(), itemId, platform, status: 'SCHEDULED', mock, scheduledAt: new Date(Date.now() - 1000) } });
+}
+
+describe('A-M8 게시 성공 뒤 기록 실패 · 조건부 실패 처리', () => {
+  it('공급자 성공 뒤 성공 기록이 실패해도 예약으로 되돌리지 않는다(UNKNOWN) — 다음 배치가 다시 올리지 않는다', async () => {
+    await channel('INSTAGRAM', { mock: true });
+    const it1 = await item();
+    const pub = await scheduled(it1.id, 'INSTAGRAM');
+    const publish = vi.spyOn(mockSnsAdapter, 'publish');
+    const real = prisma.contentPublish.updateMany.bind(prisma.contentPublish);
+    const spy = vi.spyOn(prisma.contentPublish, 'updateMany').mockImplementation(((args: Parameters<typeof real>[0]) => {
+      const d = (args as { data?: { status?: string } }).data;
+      if (d?.status === 'PUBLISHED') return Promise.reject(new Error('DB 연결 끊김')) as never;
+      return real(args) as never;
+    }) as never);
+    const r = await processContentQueue();
+    spy.mockRestore();
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(r.retried).toBe(0);
+    const after = await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } });
+    expect(after.status).toBe('UNKNOWN');
+    expect(after.error).toMatch(/게시됨으로 표시/);
+    await processContentQueue(new Date(Date.now() + 3600_000));
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('공급자 실패 사이에 행이 다른 경로로 바뀌었으면 fail() 이 덮지 않는다(PUBLISHING 일 때만)', async () => {
+    await channel('INSTAGRAM', { mock: true });
+    const it1 = await item();
+    const pub = await scheduled(it1.id, 'INSTAGRAM');
+    vi.spyOn(mockSnsAdapter, 'publish').mockImplementation(async () => {
+      await prisma.contentPublish.update({ where: { id: pub.id }, data: { status: 'PUBLISHED', publishedAt: new Date() } });
+      return { ok: false, code: 'X', message: '응답 시간 초과' };
+    });
+    const r = await processContentQueue();
+    expect(r.retried).toBe(0);
+    expect((await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } })).status).toBe('PUBLISHED');
+  });
+});
+
+describe('A-M9 멈춘 게시는 UNKNOWN → 담당자가 다시 게시 / 게시됨으로 표시', () => {
+  it('자동 재게시 없이 UNKNOWN, 예약으로 덮이지 않고, 두 동작은 UNKNOWN 일 때만 된다', async () => {
+    await channel('INSTAGRAM', { mock: true });
+    await channel('FACEBOOK', { mock: true });
+    const it1 = await item();
+    const p1 = await prisma.contentPublish.create({ data: { id: newId(), itemId: it1.id, platform: 'INSTAGRAM', status: 'PUBLISHING', attempts: 1, scheduledAt: new Date() } });
+    const p2 = await prisma.contentPublish.create({ data: { id: newId(), itemId: it1.id, platform: 'FACEBOOK', status: 'PUBLISHING', attempts: 1, scheduledAt: new Date() } });
+    const stale = new Date(Date.now() - PUBLISHING_STALE_MS - 60_000);
+    await prisma.$executeRaw`UPDATE content_publish SET updated_at = ${stale} WHERE id IN (${p1.id}, ${p2.id})`;
+    const publish = vi.spyOn(mockSnsAdapter, 'publish');
+    const r = await processContentQueue();
+    expect(r.recovered).toBe(2);
+    expect(publish).not.toHaveBeenCalled();
+    expect((await prisma.contentPublish.findUniqueOrThrow({ where: { id: p1.id } })).status).toBe('UNKNOWN');
+    // 예약을 다시 눌러도 UNKNOWN 은 건드리지 않는다
+    await prisma.contentItem.update({ where: { id: it1.id }, data: { status: 'APPROVED' } });
+    expect(await schedulePublish(fx.merchantId, it1.id, ['INSTAGRAM'], new Date())).toEqual([]);
+    // 다른 기관은 못 바꾼다
+    await expect(resolveUnknownPublish('other', p1.id, 'REPUBLISH')).rejects.toThrow(/찾을 수 없/);
+    // 다시 게시 → SCHEDULED(시도 0) → 배치가 올린다
+    expect(await resolveUnknownPublish(fx.merchantId, p1.id, 'REPUBLISH')).toBe('SCHEDULED');
+    expect(await prisma.contentPublish.findUniqueOrThrow({ where: { id: p1.id } })).toMatchObject({ status: 'SCHEDULED', attempts: 0, error: null });
+    await expect(resolveUnknownPublish(fx.merchantId, p1.id, 'REPUBLISH')).rejects.toThrow(/결과 미확인/);
+    expect((await processContentQueue()).published).toBe(1);
+    // 게시됨으로 표시(주소는 https 만)
+    await expect(resolveUnknownPublish(fx.merchantId, p2.id, 'MARK_PUBLISHED', { url: 'javascript:alert(1)' })).rejects.toThrow(/https/);
+    expect(await resolveUnknownPublish(fx.merchantId, p2.id, 'MARK_PUBLISHED', { url: 'https://www.facebook.com/P/1' })).toBe('PUBLISHED');
+    expect(await prisma.contentPublish.findUniqueOrThrow({ where: { id: p2.id } })).toMatchObject({ status: 'PUBLISHED', url: 'https://www.facebook.com/P/1' });
+    expect((await prisma.contentItem.findUniqueOrThrow({ where: { id: it1.id } })).status).toBe('PUBLISHED');
+  });
+});
+
+describe('A-M10 캡션 꼬리(AI 표시·모집등록번호·링크)는 잘리지 않는다', () => {
+  const footer = 'AI 생성 콘텐츠 · 기부금품 모집등록 2026-서울-00999';
+  it('실제 링크로 바꾼 뒤에도 한도 안이고 꼬리가 그대로 남는다(모든 플랫폼)', () => {
+    const link = goLink('01JZ0000000000000000000000');
+    expect(captionLinkReserve()).toBeGreaterThanOrEqual(link.length);
+    for (const platform of ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'TIKTOK', 'NAVER_BLOG', 'KAKAO_CHANNEL'] as const) {
+      const rule = PLATFORM_CAPTION_RULES[platform];
+      const body = '가'.repeat(rule.maxChars + 500);
+      const post = composePlatformCaption(platform, { title: '제목', body, tags: ['나눔'], footer }, captionLinkReserve());
+      const text = post.text.replace(LINK_TOKEN, link);
+      expect(captionProblem(platform, { title: post.title, text })).toBeNull();
+      expect(text.endsWith(footer)).toBe(true);
+      expect(text).toContain(link);
+    }
+  });
+
+  it('유튜브 설명은 글자가 아니라 UTF-8 5,000바이트로 맞춘다(한글 1자 = 3바이트)', () => {
+    const post = composePlatformCaption('YOUTUBE', { title: '제목', body: '한'.repeat(3000), tags: [], footer }, captionLinkReserve());
+    const text = post.text.replace(LINK_TOKEN, goLink('01JZ0000000000000000000000'));
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(5000);
+    expect(text.endsWith(footer)).toBe(true);
+    expect(composePlatformCaption('YOUTUBE', { body: '<b>강조</b>', tags: [], footer }).text).not.toMatch(/[<>]/);
+  });
+
+  it('렌더 캡션: 저장된 캡션이 링크 치환 뒤 길어지면 본문만 다시 줄인다', async () => {
+    const long = { INSTAGRAM: { title: null, text: `${'나'.repeat(2150)}\n\n후원하기: {링크}\n\n${footer}` } };
+    const it1 = await prisma.contentItem.create({
+      data: { id: newId(), merchantId: fx.merchantId, kind: 'IMAGE_SQUARE', status: 'APPROVED', title: 't', provider: 'mock', createdBy: fx.merchantUserId, caption: `x\n후원하기: {링크}\n${footer}`, platformCaptions: long, aiLabeled: true, regNoIncluded: true },
+    });
+    const post = await renderPlatformPost(it1, 'INSTAGRAM', { publishId: '01JZ0000000000000000000000' });
+    expect(captionProblem('INSTAGRAM', post)).toBeNull();
+    expect(post.text.endsWith(footer)).toBe(true);
+    expect(post.text).toContain('/go/01JZ0000000000000000000000');
+  });
+
+  it('어댑터는 자르지 않는다 — 한도를 넘는 캡션은 공급자를 부르지 않고 CAPTION_TOO_LONG', async () => {
+    liveSocial();
+    const r = await liveSnsAdapter.publish({ platform: 'INSTAGRAM', accessToken: 't', accountId: 'IG', caption: '가'.repeat(2201), title: 't', assets: [svg], kind: 'IMAGE_SQUARE' });
+    expect(r).toMatchObject({ ok: false, code: 'CAPTION_TOO_LONG' });
+    const y = await liveSnsAdapter.publish({ platform: 'YOUTUBE', accessToken: 't', caption: '한'.repeat(1700), title: 't', assets: [], kind: 'SHORTFORM', videoUrl: 'https://cdn.example/v.mp4' });
+    expect(y).toMatchObject({ ok: false, code: 'CAPTION_TOO_LONG' });
+    expect(y.message).toMatch(/바이트/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('A-M11 토큰 갱신 일시 오류는 채널을 만료시키지 않는다', () => {
+  it('503 → 연결 유지·알림 없음·이번 시도만 실패 / invalid_grant → EXPIRED', async () => {
+    liveSocial();
+    const ch = await channel('YOUTUBE', { expiresAt: new Date(Date.now() - 1000) });
+    on('POST', 'https://oauth2.googleapis.com/token', () => json({ error: { code: 503, message: 'Backend Error', status: 'UNAVAILABLE' } }, 503));
+    await expect(refreshIfNeeded(ch)).rejects.toThrow(SocialTokenRefreshTransientError);
+    const after = await prisma.socialChannel.findUniqueOrThrow({ where: { id: ch.id } });
+    expect(after.status).toBe('CONNECTED');
+    expect(after.lastError).toMatch(/일시 오류/);
+    expect(await prisma.notification.count({ where: { userId: fx.merchantUserId } })).toBe(0);
+    // 네트워크 오류도 같다
+    responders.length = 0;
+    on('POST', 'https://oauth2.googleapis.com/token', () => { throw new TypeError('fetch failed'); });
+    await expect(refreshIfNeeded(ch)).rejects.toThrow(SocialTokenRefreshTransientError);
+    expect((await prisma.socialChannel.findUniqueOrThrow({ where: { id: ch.id } })).status).toBe('CONNECTED');
+    // 게시 배치에서는 재시도로 돈다(만료로 닫지 않음)
+    const it1 = await item('SHORTFORM');
+    await prisma.contentItem.update({ where: { id: it1.id }, data: { videoUrl: 'https://cdn.example/v.mp4' } });
+    const pub = await scheduled(it1.id, 'YOUTUBE', false);
+    expect((await processContentQueue()).retried).toBe(1);
+    expect((await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } })).status).toBe('SCHEDULED');
+    // 인증 실패는 만료
+    responders.length = 0;
+    on('POST', 'https://oauth2.googleapis.com/token', () => json({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }, 400));
+    await expect(refreshIfNeeded(ch)).rejects.toThrow(SocialTokenExpiredError);
+    expect((await prisma.socialChannel.findUniqueOrThrow({ where: { id: ch.id } })).status).toBe('EXPIRED');
+  });
+});
+
+describe('A-M12 게시 중 토큰 폐기(AUTH_EXPIRED)', () => {
+  it('채널을 만료로 바꾸고 기관에 알리며 재시도 없이 실패로 닫는다', async () => {
+    liveSocial();
+    await channel('FACEBOOK', { externalId: 'PAGE1', refreshTokenEnc: null });
+    const it1 = await item();
+    const pub = await scheduled(it1.id, 'FACEBOOK', false);
+    vi.spyOn(liveSnsAdapter, 'publish').mockResolvedValue({ ok: false, code: SNS_AUTH_EXPIRED, message: '페이스북 사진 실패: Error validating access token' });
+    const r = await processContentQueue();
+    expect(r).toMatchObject({ failed: 1, retried: 0 });
+    const after = await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } });
+    expect(after).toMatchObject({ status: 'FAILED', attempts: 1 });
+    expect(after.error).toMatch(/다시 연결/);
+    const ch = await prisma.socialChannel.findFirstOrThrow({ where: { merchantId: fx.merchantId, platform: 'FACEBOOK' } });
+    expect(ch.status).toBe('EXPIRED');
+    expect(await prisma.notification.count({ where: { userId: fx.merchantUserId } })).toBe(1);
+    expect((await prisma.contentItem.findUniqueOrThrow({ where: { id: it1.id } })).status).toBe('APPROVED');
+  });
+});
+
+describe('낮음: 예약 대상 · 클릭 집계', () => {
+  it('영상 없는 숏폼은 영상 플랫폼에 예약하지 않는다', async () => {
+    await channel('YOUTUBE', { mock: true });
+    const it1 = await item('SHORTFORM', 'APPROVED');
+    await expect(schedulePublish(fx.merchantId, it1.id, ['YOUTUBE'], new Date())).rejects.toThrow(/영상 파일이 없어/);
+    await prisma.contentItem.update({ where: { id: it1.id }, data: { videoUrl: '/api/media/v.mp4' } });
+    expect(await schedulePublish(fx.merchantId, it1.id, ['YOUTUBE'], new Date())).toEqual(['YOUTUBE']);
+  });
+
+  it('실연동으로 바꾼 뒤 mock 시절 연결 채널은 예약 대상이 아니다', async () => {
+    await channel('INSTAGRAM', { mock: true });
+    const it1 = await item('IMAGE_SQUARE', 'APPROVED');
+    liveSocial();
+    await expect(schedulePublish(fx.merchantId, it1.id, ['INSTAGRAM'], new Date())).rejects.toThrow(/mock 시절 연결/);
+    // 이미 예약돼 있던 건은 공급자를 부르지 않고 재시도 없이 실패로 닫는다
+    const pub = await scheduled(it1.id, 'INSTAGRAM', true);
+    expect((await processContentQueue()).failed).toBe(1);
+    expect((await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } })).error).toMatch(/다시 연결/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('다음앱 인앱 브라우저는 세고 Daumoa 수집기는 제외, IP 를 모르면 UA 로 나눠 센다', async () => {
+    const it1 = await item('IMAGE_SQUARE', 'PUBLISHED');
+    const pub = await prisma.contentPublish.create({ data: { id: newId(), itemId: it1.id, platform: 'INSTAGRAM', status: 'PUBLISHED', scheduledAt: new Date() } });
+    const daumApp = 'Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36 DaumApps/8.6.0 DaumDevice/mobile';
+    expect((await recordContentClick({ publishId: pub.id, ip: '1.1.1.1', userAgent: daumApp })).found && true).toBe(true);
+    expect(await recordContentClick({ publishId: pub.id, ip: '2.2.2.2', userAgent: 'Mozilla/5.0 (compatible; Daumoa/4.0)' })).toMatchObject({ counted: false, reason: 'bot' });
+    const ua = (n: number) => `Mozilla/5.0 (iPhone; CPU iPhone OS 17_${n} like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148`;
+    expect(await recordContentClick({ publishId: pub.id, ip: null, userAgent: ua(1) })).toMatchObject({ counted: true });
+    expect(await recordContentClick({ publishId: pub.id, ip: null, userAgent: ua(2) })).toMatchObject({ counted: true });
+    expect(await recordContentClick({ publishId: pub.id, ip: null, userAgent: ua(2) })).toMatchObject({ counted: false, reason: 'duplicate' });
+    expect((await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } })).clicks).toBe(3);
   });
 });

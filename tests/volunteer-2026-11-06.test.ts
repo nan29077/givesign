@@ -218,6 +218,39 @@ describe('[2] 출석·불참', () => {
   });
 });
 
+describe('[2-1] 2026-11-06 점검 낮음 — 시작 전 출석 · 보관과 동시 신청', () => {
+  it('같은 날이라도 회차 시작 전에는 출석·불참을 받지 않는다', async () => {
+    const p = await openPosting();
+    const s = await addShift(fx.merchantId, p.id, { date: daysFromToday(2), startTime: '09:00', endTime: '11:00', capacity: 5 });
+    const a = await newPayer();
+    const appId = await applyVolunteer({ ...base, payerId: a.id, merchantId: fx.merchantId, postingId: p.id, shiftId: s.id });
+    await decideVolunteer({ merchantId: fx.merchantId, applicationId: appId, decision: 'APPROVE', userId: fx.merchantUserId });
+    // 오늘 회차인데 한 시간 뒤 시작
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() + 3600_000) } });
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow(/시작 시각/);
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: false, userId: fx.merchantUserId })).rejects.toThrow(/시작 시각/);
+    // 시작 뒤에는 된다
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId, now: new Date(Date.now() + 3600_000 + 60_000) })).resolves.toBeTruthy();
+  });
+
+  it('회차 보관과 신청이 동시에 와도 "보관된 회차에 진행 중 신청" 이 남지 않는다', async () => {
+    const p = await openPosting();
+    for (let i = 0; i < 4; i += 1) {
+      const s = await addShift(fx.merchantId, p.id, { date: daysFromToday(3 + i), startTime: '10:00', endTime: '12:00', capacity: 5 });
+      const py = await newPayer();
+      await Promise.allSettled([
+        applyVolunteer({ ...base, payerId: py.id, merchantId: fx.merchantId, postingId: p.id, shiftId: s.id }),
+        setShiftArchived(fx.merchantId, s.id, true),
+      ]);
+      const after = await prisma.volunteerShift.findUniqueOrThrow({ where: { id: s.id } });
+      const live = await prisma.volunteerApplication.count({ where: { shiftId: s.id, status: { in: ['RECEIVED', 'APPROVED'] } } });
+      // 둘 중 하나만 이긴다: 보관됐으면 진행 중 신청이 없고, 신청이 들어갔으면 보관되지 않았다
+      expect(after.archivedAt !== null && live > 0).toBe(false);
+      expect(after.appliedCount).toBe(live);
+    }
+  });
+});
+
 describe('[3] D-1 안내 대상 계산 (발송하지 않음)', () => {
   it('그 KST 날짜 00:00~24:00 에 시작하는 회차의 승인 신청만 고른다', async () => {
     const p = await openPosting();
