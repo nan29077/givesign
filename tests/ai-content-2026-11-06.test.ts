@@ -5,6 +5,7 @@ import path from 'node:path';
 import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import { campaignSchema } from '@/lib/fundraising';
+import { llmConfig } from '@/lib/env';
 import { saveCampaign, setCampaignStatus } from '@/server/services/fundraising';
 import {
   anthropicAdapter,
@@ -182,11 +183,11 @@ describe('[1] LLM 어댑터', () => {
     // 콘텐츠 어댑터도 같은 이유로 실패하고 호출하지 않는다
     process.env.CONTENT_PROVIDER = 'llm';
     expect(getContentAdapter().info().missingCredentials).toEqual(['ANTHROPIC_API_KEY']);
-    expect(openaiAdapter({ ...({} as never), openaiKey: '', model: '' } as never).info().missingCredentials).toEqual(['OPENAI_API_KEY', 'LLM_MODEL']);
+    expect(openaiAdapter({ ...llmConfig(), openaiKey: '', model: '' }).info().missingCredentials).toEqual(['OPENAI_API_KEY', 'LLM_MODEL']);
   });
 
   it('completeJson: 규칙 위반이면 사유를 붙여 1회 재요청하고, 두 번 모두 어기면 실패한다. 429 는 한 번 더 시도한다', async () => {
-    const adapter = anthropicAdapter({ ...({} as never), anthropicKey: 'k', model: 'm', timeoutMs: 1000, krwPer1kInput: 0, krwPer1kOutput: 0 } as never);
+    const adapter = anthropicAdapter({ ...llmConfig(), anthropicKey: 'k', model: 'm', timeoutMs: 1000, krwPer1kInput: 0, krwPer1kOutput: 0 });
     const validate = (d: Record<string, unknown>) => (d.n === 2 ? { ok: true as const, value: 2 } : { ok: false as const, reason: 'n 은 2' });
     const attempts: boolean[] = [];
     fakeFetch([anthropicText('설명 {"n":1} 끝'), anthropicText('```json\n{"n":2}\n```')]);
