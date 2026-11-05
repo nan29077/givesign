@@ -169,8 +169,16 @@ export async function sendAlimtalk(to: string, route: AlimtalkRoute, text: strin
   const adapter = getAlimtalkAdapter();
   try {
     const res = await adapter.send({ to, senderKey: route.senderKey, templateCode: route.kakaoTemplateCode, text });
-    return { ok: res.ok, provider: adapter.info().provider, messageId: res.data?.providerMessageId ?? null, code: res.code ?? null, message: res.message ?? null };
+    return {
+      ok: res.ok,
+      provider: adapter.info().provider,
+      messageId: res.data?.providerMessageId ?? null,
+      // 접수만 된 건(솔라피)은 전달 결과를 alimtalk-reports 배치가 확인한다(2026-11-06 점검 A-5).
+      pendingReport: res.ok ? Boolean(res.data?.pendingReport) : false,
+      code: res.code ?? null,
+      message: res.message ?? null,
+    };
   } catch (e) {
-    return { ok: false, provider: adapter.info().provider, messageId: null, code: 'EXCEPTION', message: (e as Error).message };
+    return { ok: false, provider: adapter.info().provider, messageId: null, pendingReport: false, code: 'EXCEPTION', message: (e as Error).message };
   }
 }

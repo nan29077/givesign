@@ -77,6 +77,9 @@ export const pointStatusLabel: Record<DeliveryStatus, { text: string; tone: Tone
   SENT: { text: '지급 완료', tone: 'success' },
   FAILED: { text: '지급 보류', tone: 'danger' },
   SKIPPED: { text: '지급 대상 아님', tone: 'neutral' },
+  // 지급 상태에는 쓰지 않는 값(문자 전달 결과용). Record 완전성 때문에 둔다.
+  ACCEPTED: { text: '지급 대기', tone: 'warning' },
+  UNKNOWN: { text: '지급 대기', tone: 'warning' },
 };
 
 /** 실물 주문의 배송·반품 상태. 목록 필터와 상세 뱃지가 같은 값을 본다. */
@@ -109,6 +112,10 @@ export const deliveryStatusLabel: Record<DeliveryStatus, { text: string; tone: T
   SENT: { text: '성공', tone: 'success' },
   FAILED: { text: '실패', tone: 'danger' },
   SKIPPED: { text: '건너뜀', tone: 'neutral' },
+  /** 알림톡 접수 — 카카오 전달 결과 확인 중(실패하면 문자로 대체) */
+  ACCEPTED: { text: '접수(전달 확인 중)', tone: 'warning' },
+  /** 접수 뒤 결과를 끝내 받지 못함 — 담당자 확인 */
+  UNKNOWN: { text: '결과 미확인', tone: 'warning' },
 };
 
 export const moResultLabel: Record<MoProcessResult, { text: string; tone: Tone }> = {

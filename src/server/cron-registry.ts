@@ -41,6 +41,11 @@ export const CRON_JOBS: CronDef[] = [
     description: '실패한 파트너 웹훅 재전송(백오프)',
   },
   {
+    name: 'alimtalk-reports', path: '/api/cron/alimtalk-reports', schedule: '5분마다', eventBridge: 'rate(5 minutes)',
+    intervalSec: 300, lockTtlSec: 240,
+    description: '알림톡 전달 결과 확인(솔라피) — 수신 완료 확정, 명시적 실패는 문자로 1회 대체, 2시간 무응답은 결과 미확인',
+  },
+  {
     name: 'content', path: '/api/cron/content', schedule: '1시간마다', eventBridge: 'cron(0 * * * ? *)',
     intervalSec: 3600, lockTtlSec: 900,
     description: '콘텐츠 자율 생성(캘린더)·멈춘 생성 재개·SNS 예약 게시·지표 수집',
