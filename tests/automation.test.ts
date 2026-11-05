@@ -114,7 +114,7 @@ describe('[1] 문자 예약어 — 정기·봉사', () => {
     const paid = await inboundAndPay(moPayload({ to: fx.moNumber, from: fx.payerPhone, text: '정기적으로 응원해요' }), fx.merchantId);
     expect(paid.chargeId).toBeTruthy();
     const ch = await prisma.charge.findUniqueOrThrow({ where: { id: paid.chargeId! } });
-    expect(ch.source).toBeNull(); // MO 경로는 결제 건에 source 를 강제로 넣지 않는다(문자 유입은 수신 기록이 원천)
+    expect(ch.source).toBe('SMS'); // 문자 후원은 유입 경로 SMS 로 기록한다(점검 2026-11-05 C, 깔때기 '경로 미상' 방지)
   });
 
   it('정기 요청 후 약정을 마치지 않은 사람이 재안내 대상에 잡히고, 약정하면 빠진다', async () => {

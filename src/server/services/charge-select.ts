@@ -5,6 +5,7 @@ import { openCampaigns } from './fundraising';
 import { resolveSecureLink, consumeSecureLink } from './secure-link';
 import { checkLimits, resolvePolicy } from './limits';
 import { startPinAuthorization, setStatus } from './charge-flow';
+import { failPreparedCharge } from './payment-recovery';
 import {
   buildOptionText, effectiveDelivery, giveText, loadShippingPolicy, optionAddPrice, parseImages,
   parseOptions, quoteShipping,
@@ -519,7 +520,22 @@ export async function confirmChargeAmount(input: {
   // 여기까지 오면 1회용 링크는 이미 소진됐다(위 consumeSecureLink).
   // PIN 발급이 실패하면 같은 링크로는 다시 시도할 수 없으므로,
   // 후원자가 다음에 무엇을 해야 하는지 반드시 알려 준다.
-  const pin = await startPinAuthorization(charge.id, { notify: false });
+  //
+  // 링크를 소진하고 금액을 확정(RECEIVED)한 뒤라, 여기서 예외가 밖으로 나가면 결제가 RECEIVED 고아로 남는다.
+  // 승인 요청 전 단계(결제 거래 없음)의 예외이므로 출금 없는 실패로 닫는다.
+  // (결제 거래가 생긴 뒤라면 실패로 닫지 않는다 — 정리 배치가 대사 큐로 올린다)
+  let pin: Awaited<ReturnType<typeof startPinAuthorization>>;
+  try {
+    pin = await startPinAuthorization(charge.id, { notify: false });
+  } catch (e) {
+    logger.error('PIN 인증 시작 중 예외 — 결제를 실패로 닫습니다', { chargeId: charge.id, message: (e as Error).message });
+    const failed = await failPreparedCharge(charge.id, 'PIN 인증 준비 중 오류(출금 없음)').catch(() => false);
+    pin = {
+      ok: false,
+      status: failed ? 'PAYMENT_FAILED' : 'RECEIVED',
+      message: 'PIN 인증창을 준비하지 못했습니다. 결제는 진행되지 않았습니다.',
+    };
+  }
   if (!pin.ok || !pin.pinUrl) {
     const guide = '이 링크는 1회용이라 다시 쓸 수 없습니다. 사회복지기관 번호로 문자를 다시 보내 주세요.';
     const base = pin.message ?? 'PIN 인증창을 생성하지 못했습니다.';

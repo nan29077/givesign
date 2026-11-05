@@ -51,7 +51,29 @@ export const HECTO_SPEC = {
   pinAuthPath: '/v3/APIPayAuth.do',
   /** 성공 응답 코드 */
   successCode: '0000',
+  /**
+   * 거래결과조회 상태값(outStatCd / outTrStat).
+   * TODO(계약 후): 연동규격서의 실제 실패 코드를 `failed` 에 넣는다.
+   * 여기에 없는 값(빈 값·필드명 불일치 포함)은 PENDING(결과 미확인 → 대사)으로 본다.
+   * 명시적 실패 코드만 FAILED 로 둬야 "돈은 빠졌는데 실패" 가 생기지 않는다.
+   */
+  inquiryStatus: {
+    approved: ['TS02', 'APPROVED', '0000'],
+    canceled: ['TS03', 'CANCELED'],
+    pending: ['TS01', 'PENDING'],
+    failed: ['FAILED', 'FAIL'],
+  },
 } as const;
+
+/** 거래결과조회 상태값 → InquiryStatus. 알 수 없는/빈 값은 PENDING(대사 대상)이다. */
+export function mapHectoInquiryStatus(raw: unknown): InquiryStatus {
+  const stat = raw == null ? '' : String(raw).trim().toUpperCase();
+  const m = HECTO_SPEC.inquiryStatus;
+  if ((m.approved as readonly string[]).includes(stat)) return 'APPROVED';
+  if ((m.canceled as readonly string[]).includes(stat)) return 'CANCELED';
+  if ((m.failed as readonly string[]).includes(stat)) return 'FAILED';
+  return 'PENDING';
+}
 
 const TIMEOUT_MS = 20_000;
 
@@ -459,15 +481,8 @@ export const hectoPaymentAdapter: PaymentAdapter = {
       return { ok: true, data: { status: 'PENDING' }, raw: res.json as Record<string, unknown> };
     }
 
-    const stat = String(res.json.outStatCd ?? res.json.outTrStat ?? '');
-    const status: InquiryStatus =
-      stat === 'TS02' || stat === 'APPROVED' || stat === '0000'
-        ? 'APPROVED'
-        : stat === 'TS03' || stat === 'CANCELED'
-          ? 'CANCELED'
-          : stat === 'TS01' || stat === 'PENDING'
-            ? 'PENDING'
-            : 'FAILED';
+    // 상태 필드가 없거나 규격과 다른 값이면 FAILED 로 단정하지 않는다(→ PENDING → UNKNOWN 대사).
+    const status: InquiryStatus = mapHectoInquiryStatus(res.json.outStatCd ?? res.json.outTrStat);
 
     const amountRaw = res.json.outTrPrice ?? res.json.trPrice;
     let amount: bigint | undefined;

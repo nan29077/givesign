@@ -7,6 +7,7 @@ import { expireStalePinSessions } from '@/server/services/pin-authorization';
 import { expireStaleConfirmations, expireStaleAmountSelections } from '@/server/services/charge-confirm';
 import { purgeExpiredIdempotencyKeys } from '@/server/services/idempotency';
 import { purgeExpiredResetTokens } from '@/server/services/password-reset';
+import { closeOrphanPreparedCharges, escalateStalePaymentTransactions } from '@/server/services/payment-recovery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,11 +26,16 @@ export const dynamic = 'force-dynamic';
  *  2-1) expireStaleAmountSelections — 금액선택 링크(SELECT_AMOUNT) 만료 건을 자동 취소한다.
  *  3) purgeExpiredIdempotencyKeys — 만료된 멱등키를 지운다.
  *  4) purgeExpiredResetTokens     — 만료된 비밀번호 재설정 토큰을 지운다.
+ *  5) escalateStalePaymentTransactions — 결과가 기록되지 않은 채 오래된 결제 거래(REQUESTED·TIMEOUT)를
+ *                                   UNKNOWN 으로 올려 관리자 대사 큐로 보낸다(실패로 확정하지 않는다).
+ *  6) closeOrphanPreparedCharges  — 결제 거래 없이 RECEIVED·PENDING_PIN(진행 중 세션 없음)에 남은
+ *                                   고아 결제를 출금 없는 실패로 닫는다.
  *
  * 원칙
  *  - 인증은 fail-closed. 비밀이 없으면 로컬에서만 통과한다.
  *  - 각 작업은 서로 독립이다. 하나가 실패해도 나머지는 계속 수행하고, 결과를 각각 돌려준다.
  *  - 출금을 일으키는 일은 하지 않는다. 만료 취소는 결제 이전 단계의 상태 전이일 뿐이다.
+ *    출금이 있었을 수 있는 건은 실패로 닫지 않고 대사 큐로만 보낸다.
  *  - 겹쳐 도는 것을 막기 위해 짧은 실행 잠금을 잡는다. (setStatus 는 원자적 선점이 아니라
  *    동시에 두 번 돌면 같은 건에 상태 로그가 두 줄 남을 수 있다)
  */
@@ -98,8 +104,10 @@ export async function GET(req: Request) {
     const amountSelections = await step('만료 금액선택 링크 취소', () => expireStaleAmountSelections());
     const idempotencyKeys = await step('만료 멱등키 삭제', () => purgeExpiredIdempotencyKeys());
     const resetTokens = await step('만료 재설정 토큰 삭제', () => purgeExpiredResetTokens());
+    const staleTransactions = await step('결과 미기록 결제 거래 대사 큐 이관', () => escalateStalePaymentTransactions());
+    const orphanCharges = await step('고아 결제(승인 요청 전) 자동 취소', () => closeOrphanPreparedCharges());
 
-    const steps = { pinSessions, confirmations, amountSelections, idempotencyKeys, resetTokens };
+    const steps = { pinSessions, confirmations, amountSelections, idempotencyKeys, resetTokens, staleTransactions, orphanCharges };
     const allOk = Object.values(steps).every((s) => s.ok);
     // 본문의 ok:false 만으로는 스케줄러·알람이 실패를 알아채지 못한다.
     // 한 단계라도 실패하면 상태 코드로도 드러낸다(EventBridge/CloudWatch 가 본문을 보지 않는다).
