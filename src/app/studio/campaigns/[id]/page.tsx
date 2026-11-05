@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, DataRow, Notice } from '@/components/ui';
 import { campaignProgress, campaignStatusLabel, kstToday } from '@/lib/fundraising';
 import { formatNumber, formatWon } from '@/lib/money';
+import { aiDraftAvailability } from '@/server/services/ai-drafts';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +50,7 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
           </div>
         </Card>
       ) : null}
-      <CampaignForm initial={c} today={kstToday()} />
+      <CampaignForm initial={c} today={kstToday()} ai={aiDraftAvailability()} />
       <div className="mt-5">
         <Notice tone="neutral" title="문자 키워드는 이렇게 동작합니다">
           후원자가 기관 수신번호로 <span className="font-mono">{c?.code ?? '키워드'} 응원합니다</span> 처럼 보내면 키워드를 떼어 낸 나머지가 후원 메시지로 남고, 결제 성공 시 이 캠페인 모금액에 집계됩니다.

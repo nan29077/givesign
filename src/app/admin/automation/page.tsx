@@ -17,6 +17,8 @@ import { formatKst, kstMonthKey } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { monthRange } from '@/server/services/monthly-notice';
 import { stalePublishingBefore } from '@/server/services/content';
+import { getLlmAdapter } from '@/server/adapters/llm';
+import { AI_FEATURE_LABEL, aiUsageThisMonth, type AiFeature } from '@/server/services/ai-usage';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +66,7 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
     { name: '알림톡', enabled: env.automation.alimtalkEnabled, mock: alimtalkIsMock(), provider: env.automation.alimtalkProvider },
     { name: 'SNS 게시', enabled: env.automation.socialPublishEnabled, mock: snsIsMock(), provider: env.automation.socialProvider },
     { name: '전자서명', enabled: env.automation.esignEnabled, mock: getESignAdapter().info().mode === 'mock', provider: env.automation.esignProvider },
-    { name: '콘텐츠 생성', enabled: true, mock: getContentAdapter().info().mode === 'mock', provider: env.automation.contentProvider },
+    { name: '콘텐츠 생성', enabled: true, mock: getContentAdapter().info().mode === 'mock', provider: getContentAdapter().info().provider },
   ];
   return (
     <>
@@ -118,6 +120,7 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
 
       {tab === 'content' ? (
         <div className="space-y-4">
+          <AiCostPanel />
           <Table>
             <thead><tr><Th>기관</Th><Th>이번 달 생성</Th><Th>비용</Th></tr></thead>
             <tbody>
@@ -203,5 +206,37 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
         </Table>
       ) : null}
     </>
+  );
+}
+
+/** 콘텐츠 탭 — LLM 공급자·모델·이번 달 AI 비용(ai_usage 합) */
+async function AiCostPanel() {
+  const llm = getLlmAdapter().info();
+  const usage = await aiUsageThisMonth();
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="LLM 공급자" value={llm.mode === 'mock' ? 'mock' : llm.provider} sub={llm.missingCredentials.length ? `설정 없음: ${llm.missingCredentials.join(', ')}` : undefined} tone={llm.mode === 'mock' ? 'warning' : llm.missingCredentials.length ? 'danger' : 'success'} />
+        <StatTile label="모델" value={llm.model || '-'} />
+        <StatTile label="이번 달 AI 비용" value={formatWon(BigInt(usage.total))} sub="ai_usage 합계 (단가 환경변수 기준)" />
+        <StatTile label="이번 달 AI 호출" value={`${formatNumber(usage.rows.reduce((a, r) => a + r._count._all, 0))}회`} />
+      </div>
+      {usage.rows.length ? (
+        <Table>
+          <thead><tr><Th>기능</Th><Th>호출</Th><Th>입력 토큰</Th><Th>출력 토큰</Th><Th>비용</Th></tr></thead>
+          <tbody>
+            {usage.rows.map((r) => (
+              <tr key={r.feature}>
+                <Td>{AI_FEATURE_LABEL[r.feature as AiFeature] ?? r.feature}</Td>
+                <Td className="tabular-nums">{formatNumber(r._count._all)}</Td>
+                <Td className="tabular-nums">{formatNumber(r._sum.inputTokens ?? 0)}</Td>
+                <Td className="tabular-nums">{formatNumber(r._sum.outputTokens ?? 0)}</Td>
+                <Td className="tabular-nums">{formatWon(BigInt(r._sum.costKrw ?? 0))}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      ) : null}
+    </div>
   );
 }

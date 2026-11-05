@@ -10,8 +10,14 @@ import { SvgThumb } from '@/components/content/scene-player';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { getContentAdapter, TONE_LABEL, type Tone } from '@/server/adapters/content';
-import { CONTENT_KIND_LABEL, CONTENT_STATUS_LABEL, contentConversions, getContentSetting, monthlyUsage } from '@/server/services/content';
+import { CONTENT_KIND_LABEL, CONTENT_KIND_SHORT, CONTENT_KINDS, CONTENT_STATUS_LABEL, contentConversions, getContentSetting, monthlyUsage } from '@/server/services/content';
+import { calendarBlockers, calendarPreview, DEFAULT_CALENDAR_KINDS, effectiveDays, WEEKDAY_LABEL } from '@/server/services/content-calendar';
+import { aiDraftAvailability, getCachedInsight } from '@/server/services/ai-drafts';
+import { kindFormat } from '@/server/adapters/content';
+import { PLATFORM_LABEL, PLATFORMS } from '@/server/adapters/sns';
 import { requestContentAction, saveContentSettingAction } from '@/app/actions/automation';
+import { contentInsightFormAction } from '@/app/actions/ai-drafts';
+import { kstDateKey } from '@/lib/datetime';
 import type { ContentStatus } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +44,16 @@ export default async function StudioContentPage({ searchParams }: { searchParams
     monthlyUsage(merchantId),
     prisma.contentItem.groupBy({ by: ['status'], where: { merchantId }, _count: { _all: true } }),
   ]);
-  const conv = await contentConversions(merchantId, items.map((i) => i.id));
+  const [conv, preview, blockers, insight] = await Promise.all([
+    contentConversions(merchantId, items.map((i) => i.id)),
+    calendarPreview(merchantId),
+    calendarBlockers(merchantId),
+    getCachedInsight(merchantId),
+  ]);
+  const ai = aiDraftAvailability();
+  const insightToday = insight?.dayKey === kstDateKey();
+  const calendarKinds = setting.kinds.length ? setting.kinds : DEFAULT_CALENDAR_KINDS;
+  const usedDays = new Set(effectiveDays(setting));
   const c = (s: string) => counts.find((x) => x.status === s)?._count._all ?? 0;
   const totalConv = [...conv.values()].reduce((a, v) => ({ donations: a.donations + v.donations, amount: a.amount + v.amount, pledges: a.pledges + v.pledges, volunteers: a.volunteers + v.volunteers }), { donations: 0, amount: 0n, pledges: 0, volunteers: 0 });
   const mock = getContentAdapter().info().mode === 'mock';
@@ -81,7 +96,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
               </div>
               <Field label="형식 (여러 개 선택)">
                 <div className="flex flex-wrap gap-2">
-                  {(['SHORTFORM', 'IMAGE_SQUARE', 'IMAGE_STORY'] as const).map((k, idx) => (
+                  {CONTENT_KINDS.map((k, idx) => (
                     <label key={k} className="cursor-pointer rounded-xl border border-ink-200 px-3 py-2 text-[13px] font-bold has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
                       <input type="checkbox" name="kind" value={k} defaultChecked={idx === 0} className="sr-only" />{CONTENT_KIND_LABEL[k]}
                     </label>
@@ -98,8 +113,91 @@ export default async function StudioContentPage({ searchParams }: { searchParams
             <Field label="기본 분위기"><Select name="tone" defaultValue={setting.tone}>{(Object.keys(TONE_LABEL) as Tone[]).map((t) => <option key={t} value={t}>{TONE_LABEL[t]}</option>)}</Select></Field>
             <Field label="쓰지 않을 단어 (쉼표로 구분)"><Input name="bannedWords" defaultValue={setting.bannedWords.join(', ')} placeholder="예: 불쌍한, 가엾은" /></Field>
             <Field label="기본 해시태그"><Input name="hashtags" defaultValue={setting.hashtags.map((t) => `#${t}`).join(' ')} placeholder="#우리동네복지관 #나눔" /></Field>
-            <Checkbox name="autoApprove" defaultChecked={setting.autoApprove} label="자동 승인" description="켜면 생성 직후 승인까지 진행합니다(모집등록번호가 있을 때만). 기본은 담당자 승인입니다." />
+            <Checkbox name="autoApprove" defaultChecked={setting.autoApprove} label="자동 승인" description="켜면 생성 직후 금지어·링크·AI 표시 검사를 통과한 콘텐츠를 승인까지 진행합니다(모집등록번호가 있을 때만). 게시 예약은 아래 캘린더의 자동 예약을 켰을 때만 합니다. 기본은 담당자 승인입니다." />
+
+            <div className="mt-2 border-t border-ink-100 pt-4">
+              <h3 className="text-[14px] font-black text-ink-900">콘텐츠 캘린더 (자율 생성)</h3>
+              <p className="mt-1 text-[12px] leading-relaxed text-ink-400">정한 요일·시각(KST)마다 진행 중인 캠페인으로 콘텐츠를 스스로 만듭니다. 진행률이 낮고 마감이 가까운 캠페인부터 돌아가며 고르고, 형식은 고른 순서대로 돌립니다. 월 생성 한도 안에서만 만듭니다.</p>
+              <Checkbox name="calendarEnabled" defaultChecked={setting.calendarEnabled} label="캘린더 켜기" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="주당 건수 (1~7)"><Input type="number" name="weeklyCount" min={1} max={7} defaultValue={setting.weeklyCount} /></Field>
+                <Field label="게시 시각 (KST)">
+                  <Select name="postHour" defaultValue={String(setting.postHour)}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}</Select>
+                </Field>
+              </div>
+              <Field label="요일" hint="비워 두면 주당 건수에 맞춰 고르게 고릅니다. 주당 건수보다 많이 고르면 그중 고르게 씁니다.">
+                <div className="flex flex-wrap gap-1.5">
+                  {WEEKDAY_LABEL.map((d, i) => (
+                    <label key={d} className="cursor-pointer rounded-lg border border-ink-200 px-2.5 py-1.5 text-[12.5px] font-bold has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
+                      <input type="checkbox" name="day" value={i} defaultChecked={setting.days.includes(i)} className="sr-only" />{d}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+              <Field label="만들 형식 (돌아가며)">
+                <div className="flex flex-wrap gap-1.5">
+                  {CONTENT_KINDS.map((k) => (
+                    <label key={k} className="cursor-pointer rounded-lg border border-ink-200 px-2.5 py-1.5 text-[12.5px] font-bold has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
+                      <input type="checkbox" name="calendarKind" value={k} defaultChecked={calendarKinds.includes(k)} className="sr-only" />{CONTENT_KIND_SHORT[k]}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+              <Field label="자동 게시 플랫폼" hint="연결된 채널 중 형식을 올릴 수 있는 곳에만 예약합니다.">
+                <div className="flex flex-wrap gap-1.5">
+                  {PLATFORMS.map((p) => (
+                    <label key={p} className="cursor-pointer rounded-lg border border-ink-200 px-2.5 py-1.5 text-[12.5px] font-bold has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
+                      <input type="checkbox" name="calendarPlatform" value={p} defaultChecked={setting.platforms.includes(p)} className="sr-only" />{PLATFORM_LABEL[p]}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+              <Checkbox name="autoSchedule" defaultChecked={setting.autoSchedule} label="승인되면 슬롯 시각으로 자동 예약" description="자동 승인이면 생성 직후, 아니면 담당자가 승인하는 순간 예약합니다(슬롯이 아직 미래일 때). SNS 자동 게시가 열려 있어야 합니다." />
+            </div>
           </ActionForm></div>
+        </Card>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+        <Card>
+          <h2 className="text-[16px] font-black text-ink-900">다음 4주 캘린더</h2>
+          {setting.calendarEnabled && blockers.length ? (
+            <div className="mt-3 space-y-2">{blockers.map((b) => <Notice key={b.code} tone="warning" title="캘린더가 만들지 않는 이유">{b.message}</Notice>)}</div>
+          ) : null}
+          {!setting.calendarEnabled ? <p className="mt-2 text-[13px] text-ink-400">캘린더가 꺼져 있습니다. 켜면 아래 시각마다 만듭니다 (미리보기).</p> : null}
+          <p className="mt-2 text-[12px] text-ink-400">요일 {[...usedDays].map((d) => WEEKDAY_LABEL[d]).join('·')} · {String(setting.postHour).padStart(2, '0')}:00 · 생성은 슬롯 7일 전부터 1시간마다 한 건씩</p>
+          {preview.length === 0 ? (
+            <p className="mt-3 text-[13px] text-ink-400">다가오는 슬롯이 없습니다.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-ink-100">
+              {preview.map((p) => (
+                <li key={p.at.toISOString()} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[13px]">
+                  <span className="font-bold text-ink-900">{p.label} <Badge className="ml-1">{CONTENT_KIND_SHORT[p.kind]}</Badge></span>
+                  <span className="text-[12px] text-ink-500">
+                    {p.slot?.itemId ? <Link href={`/studio/content/${p.slot.itemId}`} className="font-bold text-brand-700">{CONTENT_STATUS_LABEL[p.slot.status] ?? (p.slot.status === 'SCHEDULED' ? '게시 예약' : p.slot.status)}</Link> : p.slot ? (p.slot.status === 'FAILED' ? '생성 실패' : '만드는 중') : p.withinLookahead ? '곧 생성' : '예정'}
+                    {p.slot?.note ? <span className="ml-2 text-ink-400">{p.slot.note}</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card>
+          <h2 className="text-[16px] font-black text-ink-900">콘텐츠 성과 요약 (최근 30일)</h2>
+          {insight ? (
+            <div className="mt-3 space-y-2 text-[13px] leading-relaxed text-ink-700">
+              <p className="whitespace-pre-wrap">{insight.summary}</p>
+              <ul className="list-disc space-y-1 pl-5 text-ink-600">{insight.suggestions.map((x, i) => <li key={i}>{x}</li>)}</ul>
+              <p className="text-[11.5px] text-ink-400">AI 생성 요약 · {insight.dayKey} 기준. 숫자는 콘텐츠 전환 기록에서 나왔습니다.</p>
+            </div>
+          ) : <p className="mt-2 text-[13px] text-ink-400">아직 만든 요약이 없습니다.</p>}
+          <div className="mt-3">
+            {ai.available ? (
+              insightToday ? <p className="text-[12px] text-ink-400">요약은 하루 한 번 만듭니다.</p> : (
+                <ActionForm action={contentInsightFormAction} submitLabel="오늘 요약 만들기" variant="secondary" size="sm" pendingLabel="만드는 중" />
+              )
+            ) : <p className="text-[12px] text-ink-400">{ai.message}</p>}
+          </div>
         </Card>
       </div>
 
@@ -118,15 +216,16 @@ export default async function StudioContentPage({ searchParams }: { searchParams
             const cv = conv.get(it.id)!;
             return (
               <Link key={it.id} href={`/studio/content/${it.id}`} className="card block p-3 transition hover:-translate-y-0.5">
-                <SvgThumb svg={it.coverSvg} format={it.kind === 'IMAGE_SQUARE' ? 'SQUARE' : 'STORY'} className="w-full" />
+                <SvgThumb svg={it.coverSvg} format={kindFormat(it.kind)} className="w-full" />
                 <div className="mt-2 flex flex-wrap gap-1">
                   <Badge tone={STATUS_TONE[it.status]}>{CONTENT_STATUS_LABEL[it.status]}</Badge>
-                  <Badge>{it.kind === 'SHORTFORM' ? '숏폼' : it.kind === 'IMAGE_SQUARE' ? '정사각' : '스토리'}</Badge>
+                  <Badge>{CONTENT_KIND_SHORT[it.kind]}</Badge>
+                  {it.createdBy === 'CALENDAR' ? <Badge tone="brand">캘린더</Badge> : null}
                 </div>
                 <p className="mt-1.5 line-clamp-2 text-[12.5px] font-bold text-ink-900">{it.campaignId ? campaignTitle.get(it.campaignId) ?? it.title : it.title}</p>
                 <p className="mt-0.5 text-[11px] text-ink-400">{formatKst(it.createdAt, false)}</p>
                 {cv.donations || cv.pledges || cv.volunteers ? <p className="mt-1 text-[11.5px] font-bold text-brand-700">후원 {cv.donations} · 약정 {cv.pledges} · 봉사 {cv.volunteers}</p> : null}
-                {it.publishes.length ? <p className="mt-0.5 text-[11px] text-ink-500">{it.publishes.map((p) => p.platform === 'YOUTUBE' ? '유튜브' : p.platform === 'INSTAGRAM' ? '인스타' : '페북').join(' · ')}</p> : null}
+                {it.publishes.length ? <p className="mt-0.5 text-[11px] text-ink-500">{it.publishes.map((p) => PLATFORM_LABEL[p.platform]).join(' · ')}</p> : null}
               </Link>
             );
           })}
