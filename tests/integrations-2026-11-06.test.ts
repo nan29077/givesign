@@ -418,7 +418,8 @@ describe('[3] SNS 게시 요청 형태', () => {
     const after = await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } });
     expect(after).toMatchObject({ status: 'PUBLISHED', mock: false, externalPostId: 'PAGE1_P1', url: 'https://www.facebook.com/PAGE1_P1', views: 42, likes: 7 });
     const msg = formOf(calls.find((c) => c.url.endsWith('/PAGE1/photos'))!).get('message')!;
-    expect(msg).toContain(`/donate/`);
+    // 실제 게시 캡션은 클릭을 세는 기브싸인 짧은 링크(/go/게시 id)를 쓴다(6단계 연결).
+    expect(msg).toContain(`/go/${pub.id}`);
     expect(msg).not.toContain('{링크}');
     expect(formOf(calls[0]!).get('access_token')).toBe('ACCESS-OLD');
   });
