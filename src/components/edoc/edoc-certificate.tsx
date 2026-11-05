@@ -1,4 +1,4 @@
-import { ShieldCheck } from 'lucide-react';
+import { FileText, ShieldCheck } from 'lucide-react';
 import { formatKst } from '@/lib/datetime';
 import type { EDocSnapshot } from '@/server/services/edoc';
 
@@ -19,6 +19,8 @@ export interface CertificateData {
   documentHash: string | null;
   lastEventHash: string | null;
   chainOk: boolean;
+  /** 파일 서식: 스냅샷 PDF 를 저장소에서 다시 읽어 pdfHash 와 대조한 결과(열람 때 1회). 파일 서식이 아니면 없음. */
+  pdfCheck?: 'ok' | 'mismatch' | 'missing' | null;
   signers: Array<{ order: number; roleLabel: string; nameMasked: string; phoneMasked: string; signedAt: Date | null; signIp: string | null; signatureUrl: string | null; otpVerifiedAt: Date | null }>;
   events: Array<{ at: Date; label: string; who: string; ip: string | null }>;
 }
@@ -33,6 +35,19 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
       </header>
 
       {d.snapshot.body ? <div className="mt-5 whitespace-pre-wrap text-[13.5px] leading-[1.85] text-ink-800">{d.snapshot.body}</div> : null}
+
+      {d.snapshot.pdfUrl ? (
+        <section className="mt-5 rounded-xl border border-ink-200 p-3 text-[13px]">
+          <p className="flex items-center gap-1.5 font-bold text-ink-700"><FileText size={16} strokeWidth={1.7} /> 서명한 서식 파일 · {d.snapshot.fileName ?? d.snapshot.name}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-ink-500">
+            보낼 때 고정한 서식 PDF 입니다.{' '}
+            <a href={`${d.snapshot.pdfUrl}?name=${encodeURIComponent(`${d.snapshot.name}.pdf`)}`} className="font-bold text-brand-700 underline print:no-underline">
+              서식 PDF 내려받기
+            </a>
+          </p>
+          <p className="mt-0.5 hidden break-all font-mono text-[10.5px] text-ink-400 print:block">{d.snapshot.pdfUrl}</p>
+        </section>
+      ) : null}
 
       {d.snapshot.fields.length ? (
         <table className="mt-5 w-full border-collapse text-[13px]">
@@ -69,6 +84,12 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
           <div><dt className="inline font-bold text-ink-600">서식 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.snapshotHash}</dd></div>
           {d.snapshot.pdfHash ? (
             <div><dt className="inline font-bold text-ink-600">서식 PDF 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.snapshot.pdfHash}</dd></div>
+          ) : null}
+          {d.pdfCheck ? (
+            <div>
+              <dt className="inline font-bold text-ink-600">서식 PDF 대조 </dt>
+              <dd className="inline">{d.pdfCheck === 'ok' ? '저장된 파일과 해시 일치' : d.pdfCheck === 'mismatch' ? '불일치 — 저장된 파일이 보낼 때와 다릅니다. 기관에 문의하세요' : '파일을 찾을 수 없어 대조하지 못했습니다'}</dd>
+            </div>
           ) : null}
           {d.documentHash ? <div><dt className="inline font-bold text-ink-600">완료본 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.documentHash}</dd></div> : null}
           {d.lastEventHash ? <div><dt className="inline font-bold text-ink-600">감사추적 끝값 </dt><dd className="inline break-all font-mono text-ink-500">{d.lastEventHash}</dd></div> : null}

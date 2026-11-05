@@ -5,7 +5,7 @@ import { prisma } from '@/server/db';
 import { PageHeader } from '@/components/layout/console-shell';
 import { PrintButton } from '@/components/receipts/print-button';
 import { EDocCertificate } from '@/components/edoc/edoc-certificate';
-import { edocEventLabel, edocRoleLabel, envelopeValues, readSnapshot, verifyEnvelopeChain } from '@/server/services/edoc';
+import { checkSnapshotPdf, edocEventLabel, edocRoleLabel, envelopeValues, readSnapshot, verifyEnvelopeChain } from '@/server/services/edoc';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,8 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
     include: { merchant: { select: { displayName: true } }, signers: { orderBy: { order: 'asc' } }, events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
   });
   if (!e) notFound();
-  const [values, chain] = await Promise.all([envelopeValues(e.id), verifyEnvelopeChain(e.id)]);
+  const snapshot = readSnapshot(e.snapshotEnc);
+  const [values, chain, pdfCheck] = await Promise.all([envelopeValues(e.id), verifyEnvelopeChain(e.id), checkSnapshotPdf(snapshot)]);
   await writeAudit({ adminUserId: user.id, action: 'EDOC_CERTIFICATE_VIEW', targetType: 'edoc_envelope', targetId: e.id });
   const who = new Map(e.signers.map((s) => [s.id, `${edocRoleLabel[s.role]} ${s.nameMasked}`]));
   return (
@@ -32,7 +33,7 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
           orgName: e.merchant.displayName,
           title: e.title,
           envelopeId: e.id,
-          snapshot: readSnapshot(e.snapshotEnc),
+          snapshot,
           values,
           status: e.status,
           sentAt: e.sentAt,
@@ -41,6 +42,7 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
           documentHash: e.documentHash,
           lastEventHash: e.lastEventHash,
           chainOk: chain.ok,
+          pdfCheck,
           signers: e.signers.map((s) => ({ order: s.order, roleLabel: edocRoleLabel[s.role], nameMasked: s.nameMasked, phoneMasked: s.phoneMasked, signedAt: s.signedAt, signIp: s.signIp, signatureUrl: s.signatureUrl, otpVerifiedAt: s.otpVerifiedAt })),
           events: e.events.filter((ev) => ev.type !== 'VALUES_VIEWED').map((ev) => ({ at: ev.createdAt, label: edocEventLabel[ev.type] ?? ev.type, who: ev.signerId ? who.get(ev.signerId) ?? '' : '', ip: ev.ip })),
         }}

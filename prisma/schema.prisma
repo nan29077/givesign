@@ -2891,6 +2891,8 @@ model EDocSigner {
   declineReason String?          @map("decline_reason")
   valuesEnc     String?          @map("values_enc")
   signatureUrl  String?          @map("signature_url")
+  /// 서명 이미지 바이트의 SHA-256. 완료본 해시에 들어간다(저장소 파일 교체를 알아본다). 이전 서명은 비어 있다.
+  signatureSha256 String?        @map("signature_sha256")
   signIp        String?          @map("sign_ip")
   signAgent     String?          @map("sign_agent")
   remindCount   Int              @default(0) @map("remind_count")

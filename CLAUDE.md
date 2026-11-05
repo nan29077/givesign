@@ -189,7 +189,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **원본 PDF 는 고치지 않는다.** 수정은 `pdfLayout`(`@/lib/pdf-form` PdfLayout) 기록으로만 두고, 서버가 원본 위에 덮개 + 새 글자를 그려 결과 PDF(`renderedPdfUrl`)를 **새 파일로** 남긴다. 이전 결과 파일을 덮어쓰거나 지우지 않는다(발송된 서명 요청 스냅샷 `pdfUrl`/`pdfHash` 가 가리킨다).
 - 글꼴은 ① 원본 글꼴 객체 재사용(ToUnicode 역매핑) ② 기관이 올린 같은 이름 글꼴 ③ 원본에 통째로 든 글꼴 ④ PDF 표준 글꼴 ⑤ 같은 계열·굵기 대체 글꼴(`assets/fonts`, Noto CJK KR 파생, OFL) 순으로 고른다. **글자 크기·색·방향은 항상 원본에서 읽은 값**이다. 대체 글꼴을 쓴 수정은 화면에 원인 글자와 함께 표시한다.
 - 덮은 자리의 원래 글자는 내용 스트림에서도 지운다(`pdf-form/strip.ts`) — 복사·검색에 옛 값(약정 금액 등)이 남지 않게. 해석할 수 없는 쪽은 덮기만 하고 결과에 그 쪽을 알린다.
-- 기관이 올린 글꼴(TTF·OTF)은 공개 주소로 서빙하지 않는다(`/api/media` 허용 확장자에 없음). 서버 렌더링에서만 읽는다.
+- 기관이 올린 글꼴(TTF·OTF)은 공개 주소로 서빙하지 않는다(`/api/media` 허용 확장자에 없음). 비공개 저장소(`putPrivateObject`: S3 `S3_PRIVATE_PREFIX`, 로컬 `var/private`)에 두고 `document_font_asset` 대장으로 기관 소유·한도(20개·150MB)를 관리하며, 렌더할 때 그 기관 글꼴만 읽는다. 쓰이지 않는 글꼴은 `/api/cron/edoc` 가 정리한다.
+- 저장소 파일은 주소 문자열이 아니라 **객체 이름**으로 다룬다(`objectNameFromUrl` = `mediaUrl` 의 역함수, `S3_PUBLIC_BASE` 주소도 받는다). 덮개 아래 글자를 다 지우지 못했을 수 있는 쪽(폭 모르는 글꼴·양식 XObject)도 `coverOnlyPages` 로 알린다. 상세: docs/2026-11-05_점검_D_조치.md.
 - `assets/fonts/*.ttf` 는 위치표를 긴 형식 + 글자 데이터 짝수 길이로 저장해 두었다. fontkit 의 부분집합 생성이 짧은 위치표에서 홀수 길이 글자를 깨뜨리기 때문이다. 글꼴을 바꾸면 같은 조건으로 다시 저장한다.
 - **등록 화면에서 바로 미리보기·편집한다.** 파일을 올리면 같은 폼 안에 편집기(`DocumentFileEditorField` → `PdfFormEditor`)가 열리고, 편집 기록은 hidden `pdfLayoutJson` 으로 서식 등록·저장 때 함께 저장된다(`applyPdf`). 같은 기록이면 결과를 다시 만들지 않는다. 넓은 화면 편집 `/studio/documents/[id]/edit` 는 기록만 따로 저장한다.
 - 서식 행이 생기기 전 미리보기·등록은 업로드 응답의 서명 토큰(`signBasePdf`, 기관·파일·24시간)으로 이 기관이 올린 바탕 PDF 인지 확인한다. 바탕 PDF 주소만으로는 미리보기·등록할 수 없다.

@@ -566,9 +566,10 @@ export async function ensureDocumentSubmission(chargeId: string): Promise<
 
   const template = await prisma.documentTemplate.findFirst({
     where: { id: charge.product!.documentTemplateId!, merchantId: charge.merchantId },
-    select: { id: true, name: true },
   });
   if (!template) return { ok: false, reason: '연결된 문서 서식을 찾을 수 없습니다.' };
+  // 요청(작성 링크 발급) 당시 서식을 고정한다. 나중에 서식을 고쳐도 이 문서는 이 내용으로 보인다.
+  const snap = buildTemplateSnapshot(template, 'request');
 
   // 후원자 연락처는 결제 건에 붙은 후원자 프로필에서 가져온다(제출자 확인용 마스킹 값).
   const payerPhone = await payerPhoneOf(chargeId);
@@ -587,6 +588,8 @@ export async function ensureDocumentSubmission(chargeId: string): Promise<
         payerNameMasked: charge.displayName ? maskName(charge.displayName) : null,
         payerPhoneEnc: payerPhone ? encrypt(payerPhone) : null,
         payerPhoneMasked: payerPhone ? maskPhone(payerPhone) : null,
+        templateSnapshotEnc: snap.enc,
+        templateSnapshotHash: snap.sha256,
       },
       select: { id: true },
     });
@@ -644,18 +647,78 @@ export interface DocumentContext {
   /** 제출한 뒤 다시 열었을 때 보여 줄 값. 제출 전에는 빈 객체다. */
   values: Record<string, string>;
   signatureUrl: string | null;
+  /** 스냅샷 JSON 의 SHA-256(요청 당시 서식 확인값). 스냅샷이 없으면 없다. */
   documentHash?: string;
+  snapshotState: TemplateSnapshotState;
+  snapshotCapturedOn?: 'request' | 'submit';
 }
 
-/** Standalone requests retain the exact template sent, even after template edits. */
-export async function documentTemplateSnapshot(submissionId: string, fallback: DocumentTemplate) {
-  const saved = await prisma.systemSetting.findUnique({ where: { key: `givesign:edoc:snapshot:${submissionId}` } });
-  if (!saved) return { template: fallback, sha256: undefined };
-  const value = saved.value as { encrypted: string; sha256: string };
-  const raw = decrypt(value.encrypted);
-  if (createHash('sha256').update(raw).digest('hex') !== value.sha256) throw new Error('문서 원본 확인에 실패했습니다.');
-  const frozen = JSON.parse(raw) as DocumentTemplate;
-  return { template: { ...fallback, ...frozen }, sha256: value.sha256 };
+// ---------------------------------------------------------------------------
+// 서식 스냅샷 (결제 연동 문서 /doc/[token])
+// ---------------------------------------------------------------------------
+
+/** 스냅샷에 담는 서식 값(화면을 그리는 데 쓰는 것만). */
+const SNAPSHOT_KEYS = [
+  'name', 'description', 'templateType', 'body', 'fields', 'fileUrl', 'fileName', 'requireSignature',
+  'basePdfUrl', 'basePdfHash', 'renderedPdfUrl', 'renderedPdfHash',
+] as const;
+type SnapshotTemplate = Pick<DocumentTemplate, (typeof SNAPSHOT_KEYS)[number]>;
+
+interface TemplateSnapshotJson {
+  v: 1;
+  templateId: string;
+  /** 'request' = 작성 링크를 만들 때, 'submit' = 이 기능 이전에 만든 링크라 제출할 때 고정 */
+  capturedOn: 'request' | 'submit';
+  capturedAt: string;
+  template: SnapshotTemplate;
+}
+
+/** 서식 스냅샷을 만든다: JSON 을 암호화하고 그 SHA-256 을 확인값으로 둔다. */
+export function buildTemplateSnapshot(t: DocumentTemplate, capturedOn: 'request' | 'submit', now = new Date()) {
+  const template = Object.fromEntries(SNAPSHOT_KEYS.map((k) => [k, t[k] ?? null])) as SnapshotTemplate;
+  const json = JSON.stringify({ v: 1, templateId: t.id, capturedOn, capturedAt: now.toISOString(), template } satisfies TemplateSnapshotJson);
+  return { enc: encrypt(json), sha256: createHash('sha256').update(json).digest('hex') };
+}
+
+export type TemplateSnapshotState = 'frozen' | 'missing' | 'mismatch';
+
+/** 화면에 적을 서식 스냅샷 상태(사실대로). */
+export function templateSnapshotText(state: TemplateSnapshotState, capturedOn?: 'request' | 'submit'): string {
+  if (state === 'frozen') {
+    return capturedOn === 'submit'
+      ? '제출할 때 고정한 서식입니다(이 문서는 작성 링크를 만들 때의 서식 확인값이 없어, 후원자가 제출하며 본 서식을 고정했습니다). 이후 서식 변경은 반영되지 않습니다.'
+      : '작성 요청을 발급한 시점에 고정한 서식입니다. 이후 서식 변경은 이 문서에 반영되지 않습니다.';
+  }
+  if (state === 'mismatch') {
+    return '고정해 둔 서식의 확인값이 맞지 않아 현재 서식으로 보여 줍니다. 요청 당시 서식과 다를 수 있으니 운영팀에 알려 주세요.';
+  }
+  return '요청 당시 서식 확인값 없음 — 이 기능 이전에 발급한 문서라 현재 서식으로 보여 줍니다. 요청 당시 내용과 다를 수 있습니다.';
+}
+
+/**
+ * 제출 건이 가리키는 서식: 스냅샷이 있으면 그것(요청·제출 당시 서식), 없으면 현재 서식.
+ *  - missing : 이 기능 이전에 만든 문서. 현재 서식으로 보여 주되 화면에 "요청 당시 서식 확인값 없음" 을 적는다.
+ *  - mismatch: 스냅샷이 확인값과 맞지 않는다(복호화 실패 포함). 현재 서식으로 보여 주고 사실대로 알린다.
+ */
+export async function documentTemplateSnapshot(
+  row: { id: string; templateSnapshotEnc: string | null; templateSnapshotHash: string | null },
+  fallback: DocumentTemplate,
+): Promise<{ template: DocumentTemplate; sha256: string | undefined; state: TemplateSnapshotState; capturedOn?: 'request' | 'submit' }> {
+  if (!row.templateSnapshotEnc || !row.templateSnapshotHash) return { template: fallback, sha256: undefined, state: 'missing' };
+  try {
+    const raw = decrypt(row.templateSnapshotEnc);
+    if (createHash('sha256').update(raw).digest('hex') !== row.templateSnapshotHash) throw new Error('hash');
+    const frozen = JSON.parse(raw) as TemplateSnapshotJson;
+    return {
+      template: { ...fallback, ...frozen.template },
+      sha256: row.templateSnapshotHash,
+      state: 'frozen',
+      capturedOn: frozen.capturedOn,
+    };
+  } catch (e) {
+    logger.error('문서 서식 스냅샷 확인 실패', { submissionId: row.id, message: (e as Error).message });
+    return { template: fallback, sha256: undefined, state: 'mismatch' };
+  }
 }
 
 export async function loadDocumentContext(
@@ -677,7 +740,7 @@ export async function loadDocumentContext(
     return { ok: false, reason: '작성 기간이 지났습니다. 사회복지기관에 문의해 주세요.' };
   }
 
-  const snapshot = await documentTemplateSnapshot(row.id, row.template);
+  const snapshot = await documentTemplateSnapshot(row, row.template);
   const template = snapshot.template;
   const fields = parseDocumentFields(template.fields);
 
@@ -699,6 +762,8 @@ export async function loadDocumentContext(
       fields,
       requireSignature: template.requireSignature,
       documentHash: snapshot.sha256,
+      snapshotState: snapshot.state,
+      snapshotCapturedOn: snapshot.capturedOn,
       status: row.status,
       expiresAt: row.expiresAt,
       submittedAt: row.submittedAt,
@@ -786,7 +851,9 @@ export function validateValues(
  * 화면에서 캔버스로 그린 PNG data URL 만 받는다. 후원자(비로그인)가 올리는 값이라
  * 형식·용량을 서버에서 다시 판정한다(/api/upload 는 사회복지기관 로그인이 필요해 쓸 수 없다).
  */
-export async function storeSignature(dataUrl: string): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+export async function storeSignature(
+  dataUrl: string,
+): Promise<{ ok: true; url: string; sha256: string } | { ok: false; message: string }> {
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl.trim());
   if (!m) return { ok: false, message: '서명을 다시 그려 주세요.' };
   let buf: Buffer;
@@ -801,7 +868,8 @@ export async function storeSignature(dataUrl: string): Promise<{ ok: true; url: 
     return { ok: false, message: '서명을 다시 그려 주세요.' };
   }
   const url = await putObject(newObjectName('png'), buf, 'image/png');
-  return { ok: true, url };
+  // 저장소 파일이 바뀌어도 알 수 있게 이미지 바이트의 SHA-256 을 함께 돌려준다(전자문서 완료본 해시에 넣는다).
+  return { ok: true, url, sha256: createHash('sha256').update(buf).digest('hex') };
 }
 
 export interface SubmitDocumentInput {
@@ -843,10 +911,18 @@ export async function submitDocument(
     if (stored.ok) signatureUrl = stored.url;
   }
 
+  // 이 기능 이전에 만든 링크(스냅샷 없음)는 제출하는 지금 후원자가 본 서식을 고정한다.
+  let lateSnapshot: { enc: string; sha256: string } | null = null;
+  if (ctx.snapshotState === 'missing') {
+    const current = await prisma.documentSubmission.findUnique({ where: { id: ctx.submissionId }, select: { template: true } });
+    if (current) lateSnapshot = buildTemplateSnapshot(current.template, 'submit');
+  }
+
   // 제출 선점: DRAFT 일 때만 바뀐다. 같은 링크로 두 번 눌러도 한 번만 제출된다.
   const claimed = await prisma.documentSubmission.updateMany({
     where: { id: ctx.submissionId, status: 'DRAFT' },
     data: {
+      ...(lateSnapshot ? { templateSnapshotEnc: lateSnapshot.enc, templateSnapshotHash: lateSnapshot.sha256 } : {}),
       status: 'SUBMITTED',
       submittedAt: new Date(),
       valuesEnc: encrypt(JSON.stringify(checked.values)),

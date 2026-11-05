@@ -528,9 +528,15 @@ export function tplEDocVerify(code: string): TemplateOutput {
   return verifyTemplate(MT_TEMPLATE.EDOC_SIGN_VERIFY, '전자문서 본인확인', code);
 }
 
-/** 전자문서 서명 요청. reminder 면 재안내 문구를 쓴다. */
-export function tplEDocSignRequest(input: { merchantName: string; title: string; link: string; dueDate: string; reminder?: boolean }): TemplateOutput {
-  const head = input.reminder ? '서명을 아직 마치지 않으셨습니다.' : '서명 요청이 도착했습니다.';
+/**
+ * 전자문서 서명 요청. reminder 면 재안내 문구, ready 면 동시 서명에서 첫 서명자가 작성을 마쳤다는 안내를 쓴다.
+ */
+export function tplEDocSignRequest(input: { merchantName: string; title: string; link: string; dueDate: string; reminder?: boolean; ready?: boolean }): TemplateOutput {
+  const head = input.ready
+    ? '첫 번째 서명자가 내용 작성을 마쳐 이제 서명할 수 있습니다.'
+    : input.reminder
+      ? '서명을 아직 마치지 않으셨습니다.'
+      : '서명 요청이 도착했습니다.';
   const text = withLink(
     `[기브싸인] ${input.merchantName} 「${input.title}」 ${head} ${input.dueDate}까지 내용을 확인하고 서명해 주세요. 서명:`,
     input.link,

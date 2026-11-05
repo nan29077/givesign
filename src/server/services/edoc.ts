@@ -4,7 +4,7 @@ import { kv, consumeAttempt } from '@/server/redis';
 import { newId } from '@/lib/id';
 import { env, isLocal } from '@/lib/env';
 import { logger } from '@/lib/logger';
-import { addDays, formatKst } from '@/lib/datetime';
+import { addDays, formatKst, kstStartOfMonth } from '@/lib/datetime';
 import {
   decrypt, encrypt, generateNumericCode, generateToken, hmac, maskName, maskPhone, normalizePhone, phoneHash, safeEqual, tokenHash,
 } from '@/lib/crypto';
@@ -94,7 +94,6 @@ export const edocEventLabel: Record<string, string> = {
   CANCELLED: '발송 취소',
   EXPIRED: '기한 만료',
   VALUES_VIEWED: '기관 담당자 입력값 열람',
-  CERTIFICATE_VIEWED: '완료 확인서 열람',
 };
 
 const OPEN_STATUSES: EDocEnvelopeStatus[] = ['SENT', 'IN_PROGRESS'];
@@ -121,6 +120,18 @@ export interface EDocSnapshot {
   requireSignature: boolean;
 }
 
+/**
+ * 스냅샷 PDF 를 저장소에서 다시 읽어 발송 당시 해시와 대조한다(완료 확인서 열람 때 1회).
+ * 파일 서식이 아니거나 해시가 없는 이전 봉투면 null.
+ */
+export async function checkSnapshotPdf(snapshot: EDocSnapshot): Promise<'ok' | 'mismatch' | 'missing' | null> {
+  if (!snapshot.pdfUrl || !snapshot.pdfHash) return null;
+  const { readMediaPdf } = await import('@/server/services/pdf-form');
+  const bytes = await readMediaPdf(snapshot.pdfUrl).catch(() => null);
+  if (!bytes) return 'missing';
+  return createHash('sha256').update(bytes).digest('hex') === snapshot.pdfHash ? 'ok' : 'mismatch';
+}
+
 export function readSnapshot(enc: string): EDocSnapshot {
   const raw = JSON.parse(decrypt(enc)) as EDocSnapshot;
   return { ...raw, fields: parseDocumentFields(raw.fields) };
@@ -144,11 +155,18 @@ export const readSignerValues = readJsonEnc;
 // ---------------------------------------------------------------- 감사추적 해시 체인
 
 /** 키 순서와 무관하게 같은 문자열을 만든다(jsonb 는 키 순서를 바꾼다). */
-function stableJson(v: unknown): string {
+/**
+ * jsonb 왕복과 같은 결과가 나오게 맞춘다: 값이 undefined 인 키는 빼고(jsonb 에 저장되지 않는다),
+ * 유한하지 않은 숫자는 null 로 본다(JSON 으로 저장하면 null 이 된다). 배열 안 undefined 도 null.
+ */
+export function stableJson(v: unknown): string {
   if (v === null || v === undefined) return 'null';
+  if (typeof v === 'number') return Number.isFinite(v) ? JSON.stringify(v) : 'null';
+  if (v instanceof Date) return JSON.stringify(v.toISOString());
   if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
   if (typeof v === 'object') {
-    return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(',')}}`;
+    const obj = v as Record<string, unknown>;
+    return `{${Object.keys(obj).filter((k) => obj[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${stableJson(obj[k])}`).join(',')}}`;
   }
   return JSON.stringify(v);
 }
@@ -158,6 +176,12 @@ const genesis = (envelopeId: string) => sha(`givesign:edoc:genesis:${envelopeId}
 
 function eventHash(e: { prevHash: string; id: string; envelopeId: string; signerId: string | null; type: string; actor: string; createdAt: Date; detail: unknown }) {
   return sha([e.prevHash, e.id, e.envelopeId, e.signerId ?? '', e.type, e.actor, e.createdAt.toISOString(), stableJson(e.detail ?? null)].join('|'));
+}
+
+/** 봉투 행을 잠그고 현재 상태를 돌려준다(상태 전이 경합 방지). */
+async function lockEnvelope(tx: Tx, envelopeId: string): Promise<EDocEnvelopeStatus | null> {
+  const rows = await tx.$queryRaw<Array<{ status: EDocEnvelopeStatus }>>`SELECT status FROM edoc_envelope WHERE id = ${envelopeId} FOR UPDATE`;
+  return rows[0]?.status ?? null;
 }
 
 export async function appendEvent(
@@ -218,24 +242,32 @@ export function signUrl(token: string) {
   return `${env.baseUrl}/sign/${token}`;
 }
 
-/** 서명자에게 새 링크를 만들어 보낸다(이전 링크는 무효). 문자 실패는 봉투 상태를 바꾸지 않는다(사후 처리). */
-async function issueAndSend(signerId: string, opts: { actor: string; reminder?: boolean }) {
+/**
+ * 서명자에게 새 링크를 만들어 보낸다(이전 링크는 무효). 문자 실패는 봉투 상태를 바꾸지 않는다(사후 처리).
+ *
+ * 문자 발송에 실패하면 새 토큰을 이전 토큰으로 되돌린다 — 새 링크는 전달되지 않았으므로, 이전 링크라도
+ * 살아 있어야 서명자가 문서를 열 수 있다. 재안내 횟수·시각(remindCount/lastRemindedAt)은 **발송에 성공한
+ * 뒤에만** 올린다(실패한 재안내가 5회 한도·1시간 간격을 소진하지 않게).
+ *
+ * @param opts.notice 'ready' — 동시 서명에서 첫 서명자가 작성을 마쳤다는 안내(재안내 횟수에 넣지 않는다)
+ */
+async function issueAndSend(signerId: string, opts: { actor: string; reminder?: boolean; notice?: 'ready' }) {
   const signer = await prisma.eDocSigner.findUniqueOrThrow({
     where: { id: signerId },
     include: { envelope: { include: { merchant: { select: { id: true, displayName: true } } } } },
   });
   const token = generateToken(32);
+  const newHash = tokenHash(token);
+  const prevHash = signer.tokenHash;
   const now = new Date();
-  await prisma.$transaction(async (tx) => {
-    await tx.eDocSigner.update({
-      where: { id: signerId },
-      data: {
-        tokenHash: tokenHash(token),
-        sentAt: signer.sentAt ?? now,
-        status: signer.status === 'WAITING' ? 'SENT' : signer.status,
-        ...(opts.reminder ? { remindCount: { increment: 1 }, lastRemindedAt: now } : {}),
-      },
-    });
+  await prisma.eDocSigner.update({
+    where: { id: signerId },
+    data: {
+      tokenHash: newHash,
+      sentAt: signer.sentAt ?? now,
+      // 순서 대기였던 서명자는 링크를 보내는 순간 "발송" 이다. 문자가 실패해도 SENT 로 두어 재안내할 수 있게 한다.
+      status: signer.status === 'WAITING' ? 'SENT' : signer.status,
+    },
   });
   const phone = decrypt(signer.phoneEnc);
   const tpl = tplEDocSignRequest({
@@ -244,6 +276,7 @@ async function issueAndSend(signerId: string, opts: { actor: string; reminder?: 
     link: signUrl(token),
     dueDate: formatKst(signer.envelope.expiresAt, false).slice(0, 10),
     reminder: opts.reminder,
+    ready: opts.notice === 'ready',
   });
   let ok = false;
   let mtId: string | null = null;
@@ -254,15 +287,25 @@ async function issueAndSend(signerId: string, opts: { actor: string; reminder?: 
   } catch (e) {
     logger.error('전자문서 서명 요청 문자 실패', { signerId, message: (e as Error).message });
   }
+  let restored = false;
+  if (ok) {
+    if (opts.reminder) {
+      await prisma.eDocSigner.update({ where: { id: signerId }, data: { remindCount: { increment: 1 }, lastRemindedAt: now } });
+    }
+  } else {
+    // 그 사이 다른 발송이 토큰을 다시 바꾸지 않았을 때만 되돌린다.
+    const r = await prisma.eDocSigner.updateMany({ where: { id: signerId, tokenHash: newHash }, data: { tokenHash: prevHash } });
+    restored = r.count === 1;
+  }
   await prisma.$transaction((tx) =>
     appendEvent(tx, signer.envelopeId, {
       type: ok ? (opts.reminder ? 'REMINDED' : 'SENT') : 'SEND_FAILED',
       actor: opts.actor,
       signerId,
-      detail: { to: signer.phoneMasked, mtId },
+      detail: { to: signer.phoneMasked, mtId, ...(opts.notice ? { notice: opts.notice } : {}), ...(!ok ? { previousLinkKept: restored } : {}) },
     }),
   );
-  return { ok, token: isLocal && getMtAdapter().info().provider === 'mock' ? token : undefined };
+  return { ok, token: ok && isLocal && getMtAdapter().info().provider === 'mock' ? token : undefined };
 }
 
 export interface CreateEnvelopeInput {
@@ -483,8 +526,14 @@ export async function cancelEnvelope(input: { merchantId: string; envelopeId: st
     if (claimed.count !== 1) throw new EDocError('진행 중인 서명 요청만 취소할 수 있습니다.');
     const signers = await tx.eDocSigner.findMany({ where: { envelopeId: e.id }, select: { viewedAt: true, otpVerifiedAt: true } });
     const untouched = signers.every((s) => !s.viewedAt && !s.otpVerifiedAt);
-    const refund = untouched ? await refundEnvelope(tx, { merchantId: input.merchantId, envelopeId: e.id, actorId: input.actorId }) : { refunded: false as const };
-    await appendEvent(tx, e.id, { type: 'CANCELLED', actor: `staff:${input.actorId}`, detail: { reason, refunded: refund.refunded } });
+    const refund: { refunded: boolean; reason?: string } = untouched
+      ? await refundEnvelope(tx, { merchantId: input.merchantId, envelopeId: e.id, actorId: input.actorId })
+      : { refunded: false, reason: 'OPENED' };
+    await appendEvent(tx, e.id, {
+      type: 'CANCELLED',
+      actor: `staff:${input.actorId}`,
+      detail: { reason, refunded: refund.refunded, ...(refund.reason ? { noRefund: refund.reason } : {}) },
+    });
     return { refunded: refund.refunded };
   });
 }
@@ -495,7 +544,9 @@ export async function remindSigner(input: { merchantId: string; envelopeId: stri
   if (!OPEN_STATUSES.includes(e.status)) throw new EDocError('진행 중인 서명 요청만 다시 보낼 수 있습니다.');
   if (e.expiresAt <= new Date()) throw new EDocError('서명 기한이 지났습니다.');
   const s = e.signers.find((x) => x.id === input.signerId);
-  if (!s || (s.status !== 'SENT' && s.status !== 'VIEWED')) throw new EDocError('서명을 기다리는 서명자에게만 다시 보낼 수 있습니다.');
+  // 순차 서명에서 앞사람이 모두 서명했는데 링크 발송이 끝나지 못해 순서 대기에 남은 서명자도 다시 보낼 수 있다.
+  const stuckWaiting = !!s && s.status === 'WAITING' && e.signers.filter((x) => x.order < s.order).every((x) => x.status === 'SIGNED');
+  if (!s || (s.status !== 'SENT' && s.status !== 'VIEWED' && !stuckWaiting)) throw new EDocError('서명을 기다리는 서명자에게만 다시 보낼 수 있습니다.');
   if (s.remindCount >= EDOC_REMIND_MAX) throw new EDocError(`재안내는 최대 ${EDOC_REMIND_MAX}회까지 보낼 수 있습니다.`);
   if (s.lastRemindedAt && Date.now() - s.lastRemindedAt.getTime() < REMIND_GAP_MS) throw new EDocError('재안내는 1시간에 한 번 보낼 수 있습니다.');
   return issueAndSend(s.id, { actor: `staff:${input.actorId}`, reminder: true });
@@ -529,6 +580,8 @@ export type SignerLoad =
       isPrimary: boolean;
       canSign: boolean;
       waitingReason: string | null;
+      /** 취소·만료·거절로 끝났거나 아직 차례가 아니어서 인증번호를 보낼 필요가 없는 상태 */
+      closed: boolean;
     };
 
 async function findSigner(token: string) {
@@ -552,13 +605,26 @@ export async function loadSigner(token: string): Promise<SignerLoad> {
   const e = signer.envelope;
   const isPrimary = e.signers[0]?.id === signer.id;
   let waitingReason: string | null = null;
-  if (e.status === 'CANCELLED') waitingReason = '기관이 이 서명 요청을 취소했습니다.';
-  else if (e.status === 'EXPIRED' || (OPEN_STATUSES.includes(e.status) && e.expiresAt <= new Date())) waitingReason = '서명 기한이 지났습니다. 기관에 다시 요청해 주세요.';
-  else if (e.status === 'DECLINED') waitingReason = '서명자 중 한 명이 서명을 거절해 진행이 멈췄습니다.';
-  else if (signer.status === 'WAITING') waitingReason = '앞 순서 서명자가 서명한 뒤에 서명할 수 있습니다.';
-  else if (!isPrimary && e.signingOrder === 'PARALLEL' && e.signers[0]?.status !== 'SIGNED') waitingReason = '첫 번째 서명자가 내용을 작성한 뒤에 서명할 수 있습니다. 작성이 끝나면 다시 열어 주세요.';
+  let closed = false;
+  if (e.status === 'CANCELLED') {
+    waitingReason = '기관이 이 서명 요청을 취소했습니다.';
+    closed = true;
+  } else if (e.status === 'EXPIRED' || (OPEN_STATUSES.includes(e.status) && e.expiresAt <= new Date())) {
+    waitingReason = '서명 기한이 지났습니다. 기관에 다시 요청해 주세요.';
+    closed = true;
+  } else if (e.status === 'DECLINED') {
+    waitingReason = '서명자 중 한 명이 서명을 거절해 진행이 멈췄습니다.';
+    closed = true;
+  } else if (signer.status === 'WAITING') {
+    waitingReason = '앞 순서 서명자가 서명한 뒤에 서명할 수 있습니다.';
+    closed = true;
+  } else if (!isPrimary && e.signingOrder === 'PARALLEL' && e.signers[0]?.status !== 'SIGNED') {
+    waitingReason = '첫 번째 서명자가 내용을 작성한 뒤에 서명할 수 있습니다. 작성이 끝나면 문자로 알려 드립니다.';
+  }
+  // 이미 서명한 사람·완료된 문서는 완료본을 다시 볼 수 있어야 한다.
+  if (signer.status === 'SIGNED' || e.status === 'COMPLETED') closed = false;
   const canSign = !waitingReason && (signer.status === 'SENT' || signer.status === 'VIEWED');
-  return { ok: true, signer, snapshot: readSnapshot(e.snapshotEnc), merchantName: e.merchant.displayName, isPrimary, canSign, waitingReason };
+  return { ok: true, signer, snapshot: readSnapshot(e.snapshotEnc), merchantName: e.merchant.displayName, isPrimary, canSign, waitingReason, closed };
 }
 
 // 본인확인(문자 인증번호)
@@ -587,6 +653,8 @@ export function accessCookieName(signerId: string) {
 export async function requestSignerOtp(token: string, meta: { ip?: string; userAgent?: string }) {
   const loaded = await loadSigner(token);
   if (!loaded.ok) throw new EDocError(loaded.reason);
+  // 끝난 문서(취소·만료·거절)·차례가 아닌 문서로는 인증번호 문자를 보내지 않는다(비용·수신자 피로).
+  if (loaded.closed) throw new EDocError(loaded.waitingReason ?? '지금은 인증번호를 보낼 수 없는 문서입니다.');
   const s = loaded.signer;
   const sent = await kv.incr(`edoc:otp-send:${s.id}`, OTP_SEND_WINDOW_SEC);
   if (sent > OTP_SEND_MAX) throw new EDocError('인증번호 요청이 너무 잦습니다. 30분 뒤 다시 시도해 주세요.');
@@ -632,12 +700,21 @@ export async function confirmSignerOtp(token: string, rawCode: string, meta: { i
   return { signerId: s.id, proof: accessProof(s.id, s.tokenHash, exp), maxAge: EDOC_ACCESS_TTL_SEC };
 }
 
-/** 문서 완료본 해시: 스냅샷 해시 + 서명자별(순서·역할·입력값·서명 이미지·서명 시각) */
-function documentHashOf(snapshotHash: string, signers: Array<{ id: string; order: number; role: string; valuesEnc: string | null; signatureUrl: string | null; signedAt: Date | null }>) {
+/**
+ * 문서 완료본 해시: 스냅샷 해시 + 서명자별(순서·역할·입력값·서명 이미지 주소와 **이미지 내용 해시**·서명 시각).
+ * 이미지 내용 해시가 없는 이전 서명은 그 키를 넣지 않는다(stableJson 이 undefined 키를 뺀다).
+ */
+function documentHashOf(
+  snapshotHash: string,
+  signers: Array<{ id: string; order: number; role: string; valuesEnc: string | null; signatureUrl: string | null; signatureSha256?: string | null; signedAt: Date | null }>,
+) {
   return sha(
     stableJson({
       snapshot: snapshotHash,
-      signers: signers.map((s) => ({ id: s.id, order: s.order, role: s.role, values: readJsonEnc(s.valuesEnc), signature: s.signatureUrl, signedAt: s.signedAt?.toISOString() ?? null })),
+      signers: signers.map((s) => ({
+        id: s.id, order: s.order, role: s.role, values: readJsonEnc(s.valuesEnc), signature: s.signatureUrl,
+        signatureSha256: s.signatureSha256 ?? undefined, signedAt: s.signedAt?.toISOString() ?? null,
+      })),
     }),
   );
 }
@@ -673,28 +750,37 @@ export async function signAsSigner(input: {
     // 선점: 서명 전 상태일 때만 바뀐다(두 번 눌러도 한 번만 서명).
     const claimed = await tx.eDocSigner.updateMany({
       where: { id: s.id, status: { in: ['SENT', 'VIEWED'] }, envelope: { status: { in: OPEN_STATUSES } } },
-      data: { status: 'SIGNED', signedAt: now, valuesEnc, signatureUrl: stored.url, signIp: input.ip ?? null, signAgent: input.userAgent?.slice(0, 300) ?? null },
+      data: { status: 'SIGNED', signedAt: now, valuesEnc, signatureUrl: stored.url, signatureSha256: stored.sha256, signIp: input.ip ?? null, signAgent: input.userAgent?.slice(0, 300) ?? null },
     });
     if (claimed.count !== 1) throw new EDocError('이미 처리한 문서입니다.');
+    // 봉투 행을 잠근 뒤 상태를 다시 본다. 선점 조건은 취소 트랜잭션이 커밋되기 전 스냅샷에서 통과할 수 있다.
+    const locked = await lockEnvelope(tx, s.envelopeId);
+    if (!locked || !OPEN_STATUSES.includes(locked)) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
     await appendEvent(tx, s.envelopeId, {
       type: 'SIGNED',
       actor: `signer:${s.id}`,
       signerId: s.id,
       ip: input.ip,
       userAgent: input.userAgent,
-      detail: { role: s.role, signature: sha(stored.url), values: valuesEnc ? sha(valuesEnc) : null },
+      detail: { role: s.role, signature: sha(stored.url), signatureSha256: stored.sha256, values: valuesEnc ? sha(valuesEnc) : null },
     });
     const all = await tx.eDocSigner.findMany({ where: { envelopeId: s.envelopeId }, orderBy: { order: 'asc' } });
     if (all.every((x) => x.status === 'SIGNED')) {
       const env_ = await tx.eDocEnvelope.findUniqueOrThrow({ where: { id: s.envelopeId }, select: { snapshotHash: true } });
       const documentHash = documentHashOf(env_.snapshotHash, all);
-      await tx.eDocEnvelope.update({ where: { id: s.envelopeId }, data: { status: 'COMPLETED', completedAt: now, documentHash } });
+      const done = await tx.eDocEnvelope.updateMany({
+        where: { id: s.envelopeId, status: { in: OPEN_STATUSES } },
+        data: { status: 'COMPLETED', completedAt: now, documentHash },
+      });
+      if (done.count !== 1) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
       await appendEvent(tx, s.envelopeId, { type: 'COMPLETED', actor: 'system', detail: { documentHash } });
-      return { completed: true as const, next: null };
+      return { completed: true as const, next: null, ready: [] as string[] };
     }
     await tx.eDocEnvelope.updateMany({ where: { id: s.envelopeId, status: 'SENT' }, data: { status: 'IN_PROGRESS' } });
     const next = all.find((x) => x.status === 'WAITING');
-    return { completed: false as const, next: next?.id ?? null };
+    // 동시 서명: 첫 서명자가 작성·서명하면 나머지 서명자에게 "이제 서명할 수 있다" 고 알린다.
+    const ready = isPrimary ? all.filter((x) => x.id !== s.id && (x.status === 'SENT' || x.status === 'VIEWED')).map((x) => x.id) : [];
+    return { completed: false as const, next: next?.id ?? null, ready };
   });
 
   // 사후 처리(문자·알림). 실패해도 서명 결과는 그대로다.
@@ -707,6 +793,12 @@ export async function signAsSigner(input: {
       await notifyUser({ userId: e.merchant.userId, title: '전자문서 서명이 완료되었습니다', body: `「${e.title}」 서명자 ${e.signers.length}명이 모두 서명했습니다.`, linkUrl: `/studio/e-documents/${e.id}` });
     } else if (outcome.next && e.signingOrder === 'SEQUENTIAL') {
       await issueAndSend(outcome.next, { actor: 'system' });
+    } else if (e.signingOrder === 'PARALLEL') {
+      for (const id of outcome.ready) {
+        await issueAndSend(id, { actor: 'system', notice: 'ready' }).catch((err) =>
+          logger.error('전자문서 작성 완료 안내 실패', { signerId: id, message: (err as Error).message }),
+        );
+      }
     }
   } catch (err) {
     logger.error('전자문서 서명 후 처리 실패', { envelopeId: s.envelopeId, message: (err as Error).message });
@@ -719,6 +811,9 @@ export async function declineAsSigner(input: { token: string; proof: string | un
   if (!loaded.ok) throw new EDocError(loaded.reason);
   const s = loaded.signer;
   if (!checkAccessProof(s.id, s.tokenHash, input.proof)) throw new EDocError('본인확인이 만료되었습니다. 인증번호를 다시 받아 주세요.');
+  // 기한이 지난 문서는 거절도 할 수 없다(만료 배치 전이라도 EXPIRED 가 되어야 할 문서다).
+  if (loaded.signer.envelope.expiresAt <= new Date()) throw new EDocError('서명 기한이 지났습니다. 기관에 다시 요청해 주세요.');
+  if (loaded.closed) throw new EDocError(loaded.waitingReason ?? '이미 처리한 문서입니다.');
   const reason = input.reason.trim().slice(0, 200);
   if (!reason) throw new EDocError('거절 사유를 적어 주세요. 기관이 확인합니다.');
   await prisma.$transaction(async (tx) => {
@@ -727,7 +822,13 @@ export async function declineAsSigner(input: { token: string; proof: string | un
       data: { status: 'DECLINED', declinedAt: new Date(), declineReason: reason },
     });
     if (claimed.count !== 1) throw new EDocError('이미 처리한 문서입니다.');
-    await tx.eDocEnvelope.update({ where: { id: s.envelopeId }, data: { status: 'DECLINED' } });
+    // 봉투 잠금 뒤 상태 조건으로만 바꾼다(그 사이 취소·만료됐으면 덮어쓰지 않고 되돌린다).
+    await lockEnvelope(tx, s.envelopeId);
+    const moved = await tx.eDocEnvelope.updateMany({
+      where: { id: s.envelopeId, status: { in: OPEN_STATUSES }, expiresAt: { gt: new Date() } },
+      data: { status: 'DECLINED' },
+    });
+    if (moved.count !== 1) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
     await appendEvent(tx, s.envelopeId, { type: 'DECLINED', actor: `signer:${s.id}`, signerId: s.id, ip: input.ip, userAgent: input.userAgent, detail: { reason } });
   });
   try {
@@ -748,7 +849,7 @@ export async function envelopeValues(envelopeId: string) {
 
 export async function edocStats(merchantId?: string) {
   const where = merchantId ? { merchantId } : {};
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const monthStart = kstStartOfMonth(new Date());
   const [byStatus, thisMonth] = await Promise.all([
     prisma.eDocEnvelope.groupBy({ by: ['status'], where, _count: { _all: true } }),
     prisma.eDocEnvelope.count({ where: { ...where, createdAt: { gte: monthStart } } }),

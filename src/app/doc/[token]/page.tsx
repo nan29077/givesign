@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { CircleCheck, CircleX, FileSignature, Hourglass } from 'lucide-react';
 import { Badge, Card, CardTitle, DataRow, Notice } from '@/components/ui';
 import { Logo } from '@/components/brand/logo';
-import { loadDocumentContext, type DocumentContext } from '@/server/services/documents';
+import { loadDocumentContext, templateSnapshotText, type DocumentContext } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { DocumentForm } from './document-form';
 import { DocumentPrintButton } from '@/components/public/document-print-button';
@@ -67,7 +67,13 @@ function Body({ ctx, token }: { ctx: DocumentContext; token: string }) {
   return (
     <div className="space-y-3">
       {done && <DocumentPrintButton />}
-      {ctx.documentHash && <p className="break-all rounded-xl bg-white p-3 text-[10px] text-ink-400">요청 당시 문서 SHA-256 · {ctx.documentHash}</p>}
+      {ctx.documentHash ? (
+        <p className="break-all rounded-xl bg-white p-3 text-[10px] text-ink-400">
+          {ctx.snapshotCapturedOn === 'submit' ? '제출 당시' : '요청 당시'} 서식 SHA-256 · {ctx.documentHash}
+        </p>
+      ) : (
+        <p className="rounded-xl bg-white p-3 text-[10.5px] leading-relaxed text-ink-400">{templateSnapshotText(ctx.snapshotState)}</p>
+      )}
       <Card>
         <div className="flex items-center gap-2">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-700">
