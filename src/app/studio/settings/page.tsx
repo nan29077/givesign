@@ -1,4 +1,7 @@
 import { notFound } from 'next/navigation';
+import { AiDraftButton } from '@/components/studio/ai-draft-button';
+import { draftThanksAction } from '@/app/actions/ai-drafts';
+import { aiDraftAvailability } from '@/server/services/ai-drafts';
 import { formatMoNumber } from '@/lib/mo-number';
 import Link from 'next/link';
 import { featureGoodsEnabled } from '@/lib/env';
@@ -87,6 +90,7 @@ export default async function StudioSettingsPage({
   // 배송 정책은 상품 기능(FEATURE_GOODS)을 켠 기관에만 보인다(점검 M-18).
   const TABS = featureGoodsEnabled() ? ALL_TABS : ALL_TABS.filter((t) => t.key !== 'shipping');
   const tab: Tab = TABS.some((t) => t.key === requested) ? (requested as Tab) : 'amount';
+  const thanksAi = aiDraftAvailability();
 
   const [merchant, products, moNumbers, policy, apiKeys, shippingRow, callLogs, mtTemplates, webhooks, deliveries] =
     await Promise.all([
@@ -471,6 +475,7 @@ export default async function StudioSettingsPage({
               defaultValue={merchant.thanksMtMessage ?? ''}
               placeholder={'{후원자}님 감사합니다! {금액} 결제 잘 받았어요. 남겨주신 말: {메시지}'}
               variables={THANKS_MT_VARIABLES}
+              aiDraft={<AiDraftButton action={draftThanksAction} available={thanksAi.available} unavailableMessage={thanksAi.message} label="AI 초안 (치환자만 사용)" />}
               preview={thanksPreview}
               defaultPreview={thanksDefaultPreview}
               notice={

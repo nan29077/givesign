@@ -6,19 +6,13 @@ import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, Field, Input, Notice } from '@/components/ui';
 import { ActionForm } from '@/components/studio/action-form';
 import { formatKst } from '@/lib/datetime';
-import { PLATFORM_LABEL, snsIsMock } from '@/server/adapters/sns';
+import { PLATFORM_GUIDE as GUIDE, PLATFORM_KINDS, PLATFORM_LABEL, PLATFORMS, snsIsMock } from '@/server/adapters/sns';
+import { CONTENT_KIND_SHORT } from '@/server/services/content';
 import { connectChannelAction } from '@/app/actions/automation';
-import type { SocialPlatform } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
-const GUIDE: Record<SocialPlatform, { need: string; review: string }> = {
-  YOUTUBE: { need: '기관 유튜브 채널 (쇼츠 업로드)', review: '기브싸인 앱의 YouTube Data API 규정 감사. 감사 전에는 API 로 올린 영상이 비공개로 묶여 기관이 직접 공개로 바꿔야 합니다.' },
-  INSTAGRAM: { need: '인스타그램 비즈니스(또는 크리에이터) 계정 + 연결된 페이스북 페이지', review: '메타 앱 검수(콘텐츠 게시 권한). 계정당 24시간 50건까지 게시됩니다.' },
-  FACEBOOK: { need: '기관 페이스북 페이지 관리자 권한', review: '메타 앱 검수(페이지 게시 권한).' },
-};
-
-/** SNS 채널 연결 — 기관이 등록한 유튜브·인스타그램·페이스북으로 승인된 콘텐츠를 게시한다. */
+/** SNS 채널 연결 — 기관이 등록한 유튜브·인스타그램·페이스북·틱톡·네이버 블로그·카카오 채널로 승인된 콘텐츠를 게시한다. */
 export default async function StudioChannelsPage() {
   if (!featureContentEnabled()) notFound();
   const { merchantId } = await requireMerchant();
@@ -40,7 +34,7 @@ export default async function StudioChannelsPage() {
         </Notice>
       )}
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
-        {(['YOUTUBE', 'INSTAGRAM', 'FACEBOOK'] as SocialPlatform[]).map((p) => {
+        {PLATFORMS.map((p) => {
           const c = by.get(p);
           const on = c?.status === 'CONNECTED';
           return (
@@ -54,6 +48,7 @@ export default async function StudioChannelsPage() {
               {on ? <p className="mt-2 text-[13px] text-ink-700"><b>{c!.accountName}</b> · {formatKst(c!.connectedAt, false)} {c!.mock ? <Badge tone="warning" className="ml-1">mock</Badge> : null}</p> : null}
               <p className="mt-3 text-[12.5px] leading-relaxed text-ink-500"><b>필요</b> {GUIDE[p].need}</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500"><b>심사</b> {GUIDE[p].review}</p>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500"><b>형식</b> {PLATFORM_KINDS[p].map((k) => CONTENT_KIND_SHORT[k]).join(' · ')}</p>
               <div className="mt-4">
                 {on ? (
                   <ActionForm action={connectChannelAction} submitLabel="연결 해제" variant="ghost" size="sm" confirmMessage="연결을 해제하면 예약된 게시가 실패로 처리됩니다.">
@@ -63,7 +58,7 @@ export default async function StudioChannelsPage() {
                 ) : mock ? (
                   <ActionForm action={connectChannelAction} submitLabel="계정 등록 (mock)" size="sm">
                     <input type="hidden" name="platform" value={p} />
-                    <Field label="계정 이름"><Input name="accountName" placeholder={p === 'YOUTUBE' ? '햇살복지관 채널' : '@sunshine_welfare'} /></Field>
+                    <Field label="계정 이름"><Input name="accountName" placeholder={p === 'YOUTUBE' || p === 'NAVER_BLOG' || p === 'KAKAO_CHANNEL' ? '햇살복지관' : '@sunshine_welfare'} /></Field>
                   </ActionForm>
                 ) : (
                   <p className="text-[12.5px] text-ink-500">{PLATFORM_LABEL[p]} 로그인 연동이 준비되면 여기서 연결합니다.</p>

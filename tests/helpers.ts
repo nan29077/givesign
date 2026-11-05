@@ -24,6 +24,7 @@ export async function resetDb() {
     // 실행 순서에 따라 결과가 달라진다. (public_holiday 는 마이그레이션이 넣는 기준 데이터라 제외)
     'mt_message_template', 'support_message', 'support_inquiry', 'edoc_plan',
     'domain_event', 'cron_heartbeat', 'approval_request', 'journey_setting', 'journey_run', 'issued_document',
+    'content_slot', 'ai_usage', 'ai_cache',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서

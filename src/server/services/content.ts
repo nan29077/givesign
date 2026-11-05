@@ -5,18 +5,25 @@ import { logger } from '@/lib/logger';
 import { kstMonthKey } from '@/lib/datetime';
 import { attributionQuery } from '@/lib/attribution';
 import { prisma } from '@/server/db';
+import { Prisma } from '@/generated/prisma/client';
 import { emitDomainEventSafe } from './events';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import {
   getContentAdapter,
+  kindFormat,
   renderSceneSvg,
   type ContentBrief,
+  type ScriptUsage,
   type Tone,
 } from '@/server/adapters/content';
-import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_SRC } from '@/server/adapters/sns';
+import { loadSharp } from '@/server/adapters/content/video';
+import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_LABEL, PLATFORM_SRC } from '@/server/adapters/sns';
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
+import { getObject, objectNameFromUrl } from '@/server/uploads';
 import { campaignStats } from './fundraising';
 import { monthRange } from './monthly-notice';
+import { recordAiUsage } from './ai-usage';
+import { adaptCaption, composeFromVariant, LINK_TOKEN, postToText, type PlatformPost } from './content-captions';
 
 /**
  * 콘텐츠 자동 생성 → 검토 → 승인 → (SNS 게시) 파이프라인.
@@ -35,7 +42,20 @@ export const CONTENT_KIND_LABEL: Record<ContentKind, string> = {
   SHORTFORM: '숏폼 (9:16 · 30~60초)',
   IMAGE_SQUARE: '캠페인 이미지 (정사각)',
   IMAGE_STORY: '캠페인 이미지 (스토리 9:16)',
+  CARD_NEWS: '카드뉴스 (4:5 · 5~7장)',
+  IMAGE_FEED: '피드 이미지 (4:5 · 1장)',
 };
+
+/** 목록 배지용 짧은 이름 */
+export const CONTENT_KIND_SHORT: Record<ContentKind, string> = {
+  SHORTFORM: '숏폼',
+  IMAGE_SQUARE: '정사각',
+  IMAGE_STORY: '스토리',
+  CARD_NEWS: '카드뉴스',
+  IMAGE_FEED: '피드',
+};
+
+export const CONTENT_KINDS: ContentKind[] = ['SHORTFORM', 'CARD_NEWS', 'IMAGE_FEED', 'IMAGE_SQUARE', 'IMAGE_STORY'];
 
 export const CONTENT_STATUS_LABEL: Record<string, string> = {
   DRAFT: '작성 중',
@@ -66,6 +86,10 @@ export interface Scene {
   caption: string;
   durationSec: number;
   svg: string;
+  /** 카드뉴스 구간 이름 */
+  label?: string;
+  /** 진행률 막대 (0~100) */
+  progress?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,17 +98,43 @@ export interface Scene {
 
 export async function getContentSetting(merchantId: string) {
   const row = await prisma.merchantContentSetting.findUnique({ where: { merchantId } });
-  return row ?? { merchantId, tone: 'WARM', bannedWords: [] as string[], autoApprove: false, monthlyLimit: 30, hashtags: [] as string[], updatedAt: new Date(0) };
+  return row ?? {
+    merchantId, tone: 'WARM', bannedWords: [] as string[], autoApprove: false, monthlyLimit: 30, hashtags: [] as string[],
+    calendarEnabled: false, weeklyCount: 3, days: [1, 3, 5], postHour: 19, kinds: [] as ContentKind[], platforms: [] as SocialPlatform[], autoSchedule: false,
+    updatedAt: new Date(0),
+  };
+}
+
+export interface CalendarSettingInput {
+  calendarEnabled: boolean;
+  weeklyCount: number;
+  days: number[];
+  postHour: number;
+  kinds: ContentKind[];
+  platforms: SocialPlatform[];
+  autoSchedule: boolean;
 }
 
 export async function saveContentSetting(
   merchantId: string,
-  input: { tone: string; bannedWords: string[]; autoApprove: boolean; hashtags: string[] },
+  input: { tone: string; bannedWords: string[]; autoApprove: boolean; hashtags: string[]; calendar?: CalendarSettingInput },
 ) {
   const tone = TONES.includes(input.tone as Tone) ? input.tone : 'WARM';
   const banned = input.bannedWords.map((w) => w.trim()).filter(Boolean).slice(0, 50);
   const tags = input.hashtags.map((t) => t.replace(/^#/, '').trim()).filter((t) => /^[\p{L}\p{N}_]{1,30}$/u.test(t)).slice(0, 10);
-  const data = { tone, bannedWords: banned, autoApprove: input.autoApprove, hashtags: tags };
+  const c = input.calendar;
+  const calendar = c
+    ? {
+        calendarEnabled: c.calendarEnabled,
+        weeklyCount: Math.min(7, Math.max(1, Math.round(Number(c.weeklyCount) || 3))),
+        days: [...new Set(c.days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b),
+        postHour: Math.min(23, Math.max(0, Math.round(Number(c.postHour) || 0))),
+        kinds: [...new Set(c.kinds.filter((k) => CONTENT_KINDS.includes(k)))],
+        platforms: [...new Set(c.platforms.filter((p) => Object.hasOwn(PLATFORM_LABEL, p)))],
+        autoSchedule: c.autoSchedule,
+      }
+    : {};
+  const data = { tone, bannedWords: banned, autoApprove: input.autoApprove, hashtags: tags, ...calendar };
   return prisma.merchantContentSetting.upsert({
     where: { merchantId },
     create: { merchantId, ...data },
@@ -123,8 +173,39 @@ function formatMo(n: string) {
   return n;
 }
 
-function aiFooter(regNo: string | null) {
+export function aiFooter(regNo: string | null) {
   return regNo ? `AI 생성 콘텐츠 · 기부금품 모집등록 ${regNo}` : 'AI 생성 콘텐츠';
+}
+
+/**
+ * 기관 로고(기관 정보 > 기관 로고)를 장면 SVG 에 넣을 data: URI 로. 자체 저장소·/assets 이미지만,
+ * sharp 로 144px PNG 로 줄인다(장면마다 들어가므로 작게). 못 읽으면 로고 없이 그린다.
+ */
+const logoCache = new Map<string, string | null>();
+export async function logoDataUri(avatarUrl: string | null | undefined): Promise<string | null> {
+  if (!avatarUrl) return null;
+  if (logoCache.has(avatarUrl)) return logoCache.get(avatarUrl)!;
+  let buf: Buffer | null = null;
+  try {
+    const name = objectNameFromUrl(avatarUrl);
+    if (name) buf = await getObject(name);
+    else if (/^\/assets\/[\w\-/]+\.(png|jpe?g|webp|svg)$/i.test(avatarUrl) && !avatarUrl.includes('..')) {
+      const { promises: fs } = await import('node:fs');
+      const path = await import('node:path');
+      buf = await fs.readFile(path.join(process.cwd(), 'public', avatarUrl));
+    }
+  } catch {
+    buf = null;
+  }
+  let uri: string | null = null;
+  if (buf && buf.length < 5 * 1024 * 1024) {
+    const sharp = await loadSharp();
+    const png = sharp ? await sharp(buf).resize(144, 144, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } } as Record<string, unknown>).png().toBuffer().catch(() => null) : null;
+    if (png) uri = `data:image/png;base64,${png.toString('base64')}`;
+  }
+  if (logoCache.size > 200) logoCache.clear();
+  logoCache.set(avatarUrl, uri);
+  return uri;
 }
 
 export async function requestContent(input: { merchantId: string; campaignId: string; kind: ContentKind; userId: string; tone?: string }) {
@@ -196,14 +277,17 @@ async function touchItem(itemId: string) {
  * 게시 전 문구 검사(담당자 수정·자동 승인 공통). 통과하면 null, 아니면 사유.
  * 금지어 · 장면 자막 길이 · {링크} · "AI 생성 콘텐츠" 표시.
  */
-export function contentDraftViolation(input: { bannedWords: string[]; captions: string[]; caption: string; hashtags?: string[] }): string | null {
-  for (const c of [...input.captions, input.caption, ...(input.hashtags ?? [])]) {
+export function contentDraftViolation(input: { bannedWords: string[]; captions: string[]; caption: string; hashtags?: string[]; platformCaptions?: string[] }): string | null {
+  for (const c of [...input.captions, input.caption, ...(input.hashtags ?? []), ...(input.platformCaptions ?? [])]) {
     const hit = input.bannedWords.find((w) => w && c.includes(w));
     if (hit) return `금지어가 들어 있습니다: ${hit}`;
   }
   if (input.captions.some((c) => c.length > 120)) return '장면 자막은 120자 이내로 적어 주세요.';
   if (!input.caption.includes('{링크}')) return '캡션에서 {링크} 를 지우면 후원 링크가 빠집니다. {링크} 를 남겨 주세요.';
   if (!input.caption.includes('AI 생성 콘텐츠')) return '캡션의 "AI 생성 콘텐츠" 표시는 지울 수 없습니다.';
+  for (const p of input.platformCaptions ?? []) {
+    if (!p.includes('{링크}') || !p.includes('AI 생성 콘텐츠')) return '플랫폼별 캡션에 후원 링크나 "AI 생성 콘텐츠" 표시가 빠졌습니다.';
+  }
   return null;
 }
 
@@ -215,11 +299,11 @@ async function recordJob(itemId: string, step: Step, provider: string, status: '
   });
 }
 
-export async function buildBrief(merchantId: string, campaignId: string, toneOverride?: Tone): Promise<{ brief: ContentBrief; color: string }> {
+export async function buildBrief(merchantId: string, campaignId: string, toneOverride?: Tone): Promise<{ brief: ContentBrief; color: string; logo: string | null }> {
   const [merchant, campaign, page, setting, route] = await Promise.all([
-    prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true } }),
+    prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true, description: true, avatarUrl: true } }),
     prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } }),
-    prisma.merchantDonationPage.findUnique({ where: { merchantId }, select: { color: true } }),
+    prisma.merchantDonationPage.findUnique({ where: { merchantId }, select: { color: true, intro: true } }),
     getContentSetting(merchantId),
     moRoute(merchantId),
   ]);
@@ -229,8 +313,11 @@ export async function buildBrief(merchantId: string, campaignId: string, toneOve
   const prefix = route?.mode === 'SHARED_PREFIX' && route.keyword ? `${route.keyword} ` : '';
   return {
     color,
+    logo: await logoDataUri(merchant.avatarUrl),
     brief: {
       merchantName: merchant.displayName,
+      merchantIntro: merchant.description?.trim() || null,
+      merchantBusiness: page?.intro?.trim() || null,
       campaignTitle: campaign.title,
       summary: campaign.summary,
       story: campaign.story,
@@ -248,13 +335,33 @@ export async function buildBrief(merchantId: string, campaignId: string, toneOve
   };
 }
 
-function renderScenes(captions: Array<{ caption: string; durationSec: number }>, kind: ContentKind, merchantName: string, color: string, regNo: string | null): Scene[] {
-  const format = kind === 'IMAGE_SQUARE' ? 'SQUARE' : 'STORY';
+function renderScenes(
+  captions: Array<{ caption: string; durationSec: number; label?: string; progress?: number }>,
+  kind: ContentKind,
+  merchantName: string,
+  color: string,
+  regNo: string | null,
+  logo: string | null = null,
+): Scene[] {
+  const format = kindFormat(kind);
   return captions.map((s, i) => ({
     caption: s.caption,
     durationSec: s.durationSec,
-    svg: renderSceneSvg({ caption: s.caption, index: i, total: captions.length, merchantName, color, footer: aiFooter(regNo), format }),
+    ...(s.label ? { label: s.label } : {}),
+    ...(typeof s.progress === 'number' ? { progress: s.progress } : {}),
+    svg: renderSceneSvg({ caption: s.caption, index: i, total: captions.length, merchantName, color, footer: aiFooter(regNo), format, label: s.label, progress: s.progress, logo }),
   }));
+}
+
+/** 문자 후원 안내 줄 (기본 캡션·플랫폼별 캡션 공통) */
+function moLines(moNumber: string | null, keyword: string | null) {
+  return moNumber ? [`문자 후원: ${moNumber} 로 '${keyword ?? '응원합니다'}' 보내기`, `정기후원: 같은 번호로 '정기' · 자원봉사: '봉사'`] : [];
+}
+
+async function recordScriptUsage(merchantId: string, usage: ScriptUsage[] | undefined) {
+  for (const u of usage ?? []) {
+    await recordAiUsage({ merchantId, feature: 'content_script', provider: u.provider, model: u.model, usage: { inputTokens: u.inputTokens, outputTokens: u.outputTokens }, ok: u.ok });
+  }
 }
 
 /** 생성 단계를 순서대로 돌린다. 끝난 단계는 건너뛴다(재시작 안전). */
@@ -265,16 +372,29 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
   const provider = adapter.info().provider;
   const claimed: Step[] = [];
   try {
-    const { brief, color } = await buildBrief(item.merchantId, item.campaignId, toneOverride);
+    const { brief, color, logo } = await buildBrief(item.merchantId, item.campaignId, toneOverride);
     const kind = item.kind;
     let cost = 0;
 
-    type ScriptOut = { title: string; script: string; scenes: Array<{ caption: string; durationSec: number }>; hashtags: string[] };
+    type ScriptOut = {
+      title: string;
+      script: string;
+      scenes: Array<{ caption: string; durationSec: number; label?: string; progress?: number }>;
+      hashtags: string[];
+      platformCaptions?: Record<string, { title?: string; body: string }>;
+    };
     const scriptDone = await claimStep(itemId, 'SCRIPT', provider);
     let script = (scriptDone?.output ?? null) as ScriptOut | null;
     if (!scriptDone) {
       claimed.push('SCRIPT');
-      const r = await adapter.script(brief, kind);
+      let r;
+      try {
+        r = await adapter.script(brief, kind);
+      } catch (e) {
+        await recordScriptUsage(item.merchantId, (e as { usage?: ScriptUsage[] }).usage);
+        throw e;
+      }
+      await recordScriptUsage(item.merchantId, r.usage);
       script = r.data;
       cost += r.costKrw;
       await recordJob(itemId, 'SCRIPT', provider, 'DONE', script, r.costKrw);
@@ -284,10 +404,11 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
 
     let scenes: Scene[] | null = (await jobDone(itemId, 'SCENES')) ? (item.scenes as unknown as Scene[]) : null;
     if (!scenes || scenes.length === 0) {
-      scenes = renderScenes(script.scenes, kind, brief.merchantName, color, brief.regNo);
+      scenes = renderScenes(script.scenes, kind, brief.merchantName, color, brief.regNo, logo);
       await recordJob(itemId, 'SCENES', 'givesign-svg', 'DONE', { count: scenes.length });
     }
 
+    let videoUrl: string | null = item.videoUrl ?? null;
     if (kind === 'SHORTFORM') {
       if (!(await claimStep(itemId, 'VOICE', provider))) {
         claimed.push('VOICE');
@@ -296,12 +417,17 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         await recordJob(itemId, 'VOICE', provider, 'DONE', v, v.costKrw);
         await touchItem(itemId);
       }
-      if (!(await claimStep(itemId, 'ASSEMBLE', provider))) {
+      const assembled = await claimStep(itemId, 'ASSEMBLE', provider);
+      if (!assembled) {
         claimed.push('ASSEMBLE');
-        const a = await adapter.assemble(scenes.length);
+        // 음성(TTS)은 계약 전이라 없다 — 자막이 그려진 장면만으로 조립한다.
+        const a = await adapter.assemble({ scenes: scenes.map((s) => ({ svg: s.svg, durationSec: s.durationSec })), audio: null });
         cost += a.costKrw;
+        videoUrl = a.videoUrl ?? null;
         await recordJob(itemId, 'ASSEMBLE', provider, 'DONE', a, a.costKrw);
         await touchItem(itemId);
+      } else {
+        videoUrl = videoUrl ?? ((assembled.output as { videoUrl?: string } | null)?.videoUrl ?? null);
       }
     }
     if (!(await jobDone(itemId, 'COVER'))) await recordJob(itemId, 'COVER', 'givesign-svg', 'DONE', { from: 'scene-2' });
@@ -310,9 +436,17 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
     const tags = [...new Set([...script.hashtags, ...setting.hashtags])].slice(0, 12);
     const regNoIncluded = Boolean(brief.regNo);
     const caption = buildCaptionTemplate({ summary: brief.summary, campaignTitle: brief.campaignTitle, moNumber: brief.moNumber, keyword: brief.keyword, regNo: brief.regNo, tags });
+    // LLM 이 쓴 플랫폼별 본문에 시스템이 문자 안내·링크·해시태그·AI 표시를 붙여 완성본으로 저장한다(mock 은 저장하지 않고 규칙 기반).
+    const platformCaptions = script.platformCaptions ? composeStoredCaptions(script.platformCaptions, { moLines: moLines(brief.moNumber, brief.keyword), tags, footer: aiFooter(brief.regNo) }) : null;
     // 자동 승인도 담당자 수정과 같은 검사를 거친다. 걸리면 자동 승인을 무시하고 검토 대기로 두며 사유를 남긴다.
     const violation = setting.autoApprove
-      ? contentDraftViolation({ bannedWords: setting.bannedWords, captions: scenes.map((s) => s.caption), caption, hashtags: tags })
+      ? contentDraftViolation({
+          bannedWords: setting.bannedWords,
+          captions: scenes.map((s) => s.caption),
+          caption,
+          hashtags: tags,
+          platformCaptions: platformCaptions ? Object.values(platformCaptions).map((p) => postToText(p)) : [],
+        })
       : null;
     const autoApprove = setting.autoApprove && regNoIncluded && !violation;
     // 다른 실행이 먼저 끝냈으면(생성 중이 아니면) 덮어쓰지 않는다.
@@ -324,6 +458,8 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         scenes: scenes as unknown as object,
         hashtags: tags,
         caption,
+        platformCaptions: platformCaptions ? (platformCaptions as unknown as Prisma.InputJsonObject) : undefined,
+        videoUrl,
         coverSvg: scenes[Math.min(1, scenes.length - 1)]!.svg,
         aiLabeled: true,
         regNoIncluded,
@@ -340,6 +476,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         merchantId: item.merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: itemId,
         payload: { kind: item.kind, campaignId: item.campaignId, approvedBy: 'AUTO' },
       });
+      await autoScheduleSlotItem(itemId);
     }
   } catch (e) {
     if (e instanceof StepBusyError) {
@@ -363,8 +500,7 @@ export function buildCaptionTemplate(input: { summary: string; campaignTitle: st
     `${input.campaignTitle}`,
     input.summary,
     '',
-    input.moNumber ? `문자 후원: ${input.moNumber} 로 '${input.keyword ?? '응원합니다'}' 보내기` : null,
-    input.moNumber ? `정기후원: 같은 번호로 '정기' · 자원봉사: '봉사'` : null,
+    ...moLines(input.moNumber, input.keyword),
     '후원하기: {링크}',
     '',
     input.tags.map((t) => `#${t}`).join(' '),
@@ -382,9 +518,40 @@ export async function contentLink(merchantId: string, campaignId: string | null,
   return `${env.baseUrl}${path}?${q}`;
 }
 
-export async function renderCaption(item: { id: string; merchantId: string; campaignId: string | null; caption: string | null }, platform: SocialPlatform | null) {
+/** LLM 플랫폼 변형 → 링크 자리({링크})가 남은 완성 캡션 */
+function composeStoredCaptions(
+  variants: Record<string, { title?: string; body: string }>,
+  common: { moLines: string[]; tags: string[]; footer: string },
+): Record<string, PlatformPost> {
+  const out: Record<string, PlatformPost> = {};
+  for (const [k, v] of Object.entries(variants)) {
+    if (!Object.hasOwn(PLATFORM_LABEL, k) || !v || typeof v.body !== 'string') continue;
+    out[k] = composeFromVariant(k as SocialPlatform, v, common);
+  }
+  return out;
+}
+
+type CaptionItem = { id: string; merchantId: string; campaignId: string | null; caption: string | null; platformCaptions?: unknown; title?: string };
+
+/**
+ * 플랫폼별 게시 글(제목·본문). LLM 이 쓴 변형이 저장돼 있으면 그것을, 없으면(mock·담당자 수정 후) 기본 캡션을 규칙으로 바꾼다.
+ * platform 이 null 이면(QR·기타) 기본 캡션 그대로.
+ */
+export async function renderPlatformPost(item: CaptionItem, platform: SocialPlatform | null): Promise<PlatformPost> {
   const link = await contentLink(item.merchantId, item.campaignId, platform, item.id);
-  return (item.caption ?? '').replace('{링크}', link);
+  const base = item.caption ?? '';
+  if (!platform) return { title: item.title ?? null, text: base.replace(LINK_TOKEN, link) };
+  const stored = (item.platformCaptions && typeof item.platformCaptions === 'object' ? (item.platformCaptions as Record<string, PlatformPost>)[platform] : null) ?? null;
+  const post = stored && typeof stored.text === 'string' ? stored : adaptCaption(base, platform);
+  return { title: post.title ?? null, text: post.text.replace(LINK_TOKEN, link) };
+}
+
+export async function renderCaption(item: CaptionItem, platform: SocialPlatform | null) {
+  if (!platform) {
+    const link = await contentLink(item.merchantId, item.campaignId, platform, item.id);
+    return (item.caption ?? '').replace('{링크}', link);
+  }
+  return postToText(await renderPlatformPost(item, platform));
 }
 
 // ---------------------------------------------------------------------------
@@ -407,14 +574,15 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
   if (captions.length === 0) throw new ContentError('장면 자막이 비어 있습니다.');
   const violation = contentDraftViolation({ bannedWords: setting.bannedWords, captions, caption: input.caption });
   if (violation) throw new ContentError(violation);
-  const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true } });
+  const merchant = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true, avatarUrl: true } });
   const page = await prisma.merchantDonationPage.findUnique({ where: { merchantId }, select: { color: true } });
   const scenes = renderScenes(
-    captions.map((c, i) => ({ caption: c, durationSec: old[i]?.durationSec ?? 6 })),
+    captions.map((c, i) => ({ caption: c, durationSec: old[i]?.durationSec ?? 6, label: old[i]?.label, progress: old[i]?.progress })),
     item.kind,
     merchant.displayName,
     page?.color ?? '#28634e',
     merchant.fundraisingRegNo ?? null,
+    await logoDataUri(merchant.avatarUrl),
   );
   return prisma.contentItem.update({
     where: { id },
@@ -422,6 +590,10 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
       scenes: scenes as unknown as object,
       script: captions.join('\n'),
       caption: input.caption.slice(0, 2000),
+      // 담당자가 고친 캡션이 기준이 된다. 플랫폼별 캡션은 고친 캡션에서 규칙으로 다시 만든다.
+      platformCaptions: Prisma.DbNull,
+      // 장면 글이 바뀌었으므로 예전 자막으로 조립한 영상은 쓰지 않는다.
+      videoUrl: null,
       coverSvg: scenes[Math.min(1, scenes.length - 1)]!.svg,
       status: 'REVIEW',
       approvedAt: null,
@@ -443,12 +615,55 @@ export async function approveContent(merchantId: string, id: string, userId: str
     merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: id,
     payload: { kind: approved.kind, campaignId: approved.campaignId, approvedBy: 'USER' },
   });
-  return approved;
+  // 캘린더 슬롯 콘텐츠면, 슬롯이 아직 미래이고 자동 예약이 켜져 있을 때 그 시각으로 예약한다.
+  await autoScheduleSlotItem(id);
+  return prisma.contentItem.findUniqueOrThrow({ where: { id } });
+}
+
+/**
+ * 콘텐츠 캘린더 슬롯 자동 예약. 슬롯이 미래이고, 기관이 autoSchedule 을 켰고, SNS 게시가 열려 있으며,
+ * 연결된 채널 중 설정 플랫폼·형식 허용인 곳이 있을 때만. 결과는 슬롯 메모로 남긴다. 실패가 승인을 되돌리지 않는다.
+ */
+export async function autoScheduleSlotItem(itemId: string, now = new Date()): Promise<SocialPlatform[]> {
+  const slot = await prisma.contentSlot.findFirst({ where: { itemId } });
+  if (!slot) return [];
+  const note = async (status: string, text: string | null) =>
+    prisma.contentSlot.update({ where: { id: slot.id }, data: { status, note: text?.slice(0, 300) ?? null } }).catch(() => undefined);
+  const item = await prisma.contentItem.findUnique({ where: { id: itemId }, select: { status: true, kind: true, merchantId: true } });
+  if (!item || item.status !== 'APPROVED') return [];
+  const setting = await getContentSetting(slot.merchantId);
+  if (!setting.autoSchedule) {
+    await note('APPROVED', '자동 예약 꺼짐 — 승인됨. 게시 예약은 콘텐츠 화면에서 직접 해 주세요.');
+    return [];
+  }
+  if (slot.slotAt.getTime() <= now.getTime()) {
+    await note('APPROVED', '슬롯 시각이 지나 자동 예약하지 않았습니다.');
+    return [];
+  }
+  if (!env.automation.socialPublishEnabled) {
+    await note('APPROVED', 'SNS 자동 게시가 열리지 않아 예약하지 않았습니다(내려받아 직접 게시).');
+    return [];
+  }
+  const channels = await prisma.socialChannel.findMany({ where: { merchantId: slot.merchantId, status: 'CONNECTED', platform: { in: setting.platforms } } });
+  const targets = channels.map((c) => c.platform).filter((p) => PLATFORM_KINDS[p].includes(item.kind));
+  if (targets.length === 0) {
+    await note('APPROVED', '연결된 자동 게시 채널 중 이 형식을 올릴 곳이 없습니다.');
+    return [];
+  }
+  try {
+    const created = await schedulePublish(slot.merchantId, itemId, targets, slot.slotAt);
+    await note('SCHEDULED', `${created.map((p) => PLATFORM_LABEL[p]).join(' · ')} 예약`);
+    return created;
+  } catch (e) {
+    await note('APPROVED', `자동 예약 실패: ${(e as Error).message}`);
+    return [];
+  }
 }
 
 export async function archiveContent(merchantId: string, id: string) {
   await ownItem(merchantId, id);
   await prisma.contentPublish.updateMany({ where: { itemId: id, status: 'SCHEDULED' }, data: { status: 'CANCELED' } });
+  await prisma.contentSlot.updateMany({ where: { merchantId, itemId: id }, data: { status: 'ARCHIVED', note: '보관됨' } });
   return prisma.contentItem.update({ where: { id }, data: { status: 'ARCHIVED' } });
 }
 
@@ -497,8 +712,8 @@ export async function schedulePublish(merchantId: string, id: string, platforms:
   const connected = new Set(channels.map((c) => c.platform));
   const created: SocialPlatform[] = [];
   for (const p of platforms) {
-    if (!connected.has(p)) throw new ContentError(`${p} 채널이 연결되어 있지 않습니다.`);
-    if (!PLATFORM_KINDS[p].includes(item.kind)) throw new ContentError(`${p} 에는 이 형식을 올릴 수 없습니다.`);
+    if (!connected.has(p)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 채널이 연결되어 있지 않습니다.`);
+    if (!PLATFORM_KINDS[p].includes(item.kind)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 에는 이 형식을 올릴 수 없습니다.`);
     const existing = await prisma.contentPublish.findUnique({ where: { itemId_platform: { itemId: id, platform: p } } });
     if (existing && ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING'].includes(existing.status)) continue;
     await prisma.contentPublish.upsert({
@@ -549,15 +764,16 @@ async function publishOne(publishId: string, now: Date) {
     }
   }
   const scenes = (p.item.scenes as unknown as Scene[]) ?? [];
-  const caption = await renderCaption(p.item, p.platform);
+  const post = await renderPlatformPost(p.item, p.platform);
   try {
     const res = await getSnsAdapter().publish({
       platform: p.platform,
       accessToken: channel.accessTokenEnc ? decrypt(channel.accessTokenEnc) : null,
-      caption,
-      title: p.item.title,
+      caption: post.text,
+      title: post.title ?? p.item.title,
       assets: scenes.map((s) => s.svg),
       kind: p.item.kind,
+      videoUrl: p.item.videoUrl,
     });
     if (!res.ok || !res.data) return fail(res.message ?? '게시에 실패했습니다.');
     await prisma.contentPublish.update({

@@ -26,6 +26,7 @@ export function MtMessageSection({
   preview,
   defaultPreview,
   notice,
+  aiDraft,
 }: {
   kind: 'moGuide' | 'thanks';
   title: string;
@@ -39,6 +40,8 @@ export function MtMessageSection({
   preview: string;
   defaultPreview: string;
   notice: React.ReactNode;
+  /** 본문 아래 "AI 초안" 버튼 자리 (감사 문자) */
+  aiDraft?: React.ReactNode;
 }) {
   // 실제 발송 바이트 수. 어댑터의 decideMessageType 과 같은 기준(90byte)이다.
   const bytes = Buffer.byteLength(preview, 'utf8');
@@ -53,6 +56,7 @@ export function MtMessageSection({
         <Field label="본문" hint={`${maxLength}자 이내. 비워두면 기본 문구로 발송됩니다.`}>
           <Textarea name={fieldName} rows={4} maxLength={maxLength} defaultValue={defaultValue} placeholder={placeholder} />
         </Field>
+        {aiDraft ? <div className="-mt-1">{aiDraft}</div> : null}
 
         <div className="rounded-2xl border border-ink-100 bg-ink-50 px-4 py-3">
           <p className="flex items-center gap-1.5 text-[12.5px] font-extrabold text-ink-900">

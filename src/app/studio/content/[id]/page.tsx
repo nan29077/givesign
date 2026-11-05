@@ -8,7 +8,8 @@ import { ActionForm } from '@/components/studio/action-form';
 import { ScenePlayer } from '@/components/content/scene-player';
 import { formatKst, kstDateKey } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
-import { PLATFORM_KINDS, PLATFORM_LABEL, snsIsMock } from '@/server/adapters/sns';
+import { PLATFORM_KINDS, PLATFORM_LABEL, PLATFORMS, snsIsMock } from '@/server/adapters/sns';
+import { kindFormat } from '@/server/adapters/content';
 import { CONTENT_KIND_LABEL, CONTENT_STATUS_LABEL, PUBLISH_STATUS_LABEL, contentConversions, renderCaption, type Scene } from '@/server/services/content';
 import {
   approveContentAction,
@@ -18,7 +19,6 @@ import {
   schedulePublishAction,
   updateContentAction,
 } from '@/app/actions/automation';
-import type { SocialPlatform } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,13 +41,15 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
   ]);
   const cv = conv.get(item.id)!;
   const scenes = (item.scenes as unknown as Scene[]) ?? [];
-  const format = item.kind === 'IMAGE_SQUARE' ? 'SQUARE' : 'STORY';
+  const format = kindFormat(item.kind);
+  const slot = await prisma.contentSlot.findFirst({ where: { merchantId, itemId: item.id } });
   const editable = item.status === 'REVIEW' || item.status === 'APPROVED';
   const canPublish = ['APPROVED', 'SCHEDULED', 'PUBLISHED'].includes(item.status);
   const voice = item.jobs.find((j) => j.step === 'VOICE')?.output as { available?: boolean; note?: string } | undefined;
   const assemble = item.jobs.find((j) => j.step === 'ASSEMBLE')?.output as { available?: boolean; note?: string } | undefined;
   const connected = new Set(channels.map((c) => c.platform));
-  const platforms: SocialPlatform[] = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK'];
+  const platforms = PLATFORMS;
+  const captionTargets = PLATFORMS.filter((p) => PLATFORM_KINDS[p].includes(item.kind));
   const now = defaultScheduleValue();
   const dl = (q: string) => `/api/studio/content/${item.id}/asset?${q}`;
 
@@ -65,6 +67,7 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
             <Badge tone={item.aiLabeled ? 'success' : 'danger'}>{item.aiLabeled ? 'AI 생성 표시 포함' : 'AI 생성 표시 없음 — 승인 불가'}</Badge>
             <Badge tone={item.regNoIncluded ? 'success' : 'danger'}>{item.regNoIncluded ? '모집등록번호 포함' : '모집등록번호 없음 — 승인 불가'}</Badge>
             {item.approvedAt ? <Badge>승인 {formatKst(item.approvedAt, false)}{item.approvedBy === 'AUTO' ? ' (자동)' : ''}</Badge> : null}
+            {slot ? <Badge tone="brand">캘린더 슬롯 {formatKst(slot.slotAt, false)}{slot.note ? ` · ${slot.note}` : ''}</Badge> : null}
           </div>
         </div>
       </div>
@@ -81,19 +84,28 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
       <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <Card>
           <ScenePlayer scenes={scenes} format={format} />
+          {item.videoUrl ? (
+            <div className="mt-4">
+              <p className="mb-1.5 text-[12.5px] font-bold text-ink-700">조립된 영상 (9:16 mp4)</p>
+              <video src={item.videoUrl} controls preload="metadata" className="mx-auto aspect-[9/16] w-full max-w-[300px] rounded-2xl bg-ink-900" />
+            </div>
+          ) : null}
           <div className="mt-4 space-y-1.5 text-[12.5px]">
             {item.kind === 'SHORTFORM' ? (
               <>
                 {voice && !voice.available ? <p className="text-ink-500">{voice.note}</p> : null}
                 {assemble && !assemble.available ? <p className="text-ink-500">{assemble.note}</p> : null}
+                {assemble?.available && assemble.note ? <p className="text-ink-500">{assemble.note}</p> : null}
               </>
             ) : null}
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 text-[12.5px] font-bold">
             <a className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl('cover=1')}>표지 SVG</a>
+            <a className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl('cover=1&format=png')}>표지 PNG</a>
             {item.kind === 'SHORTFORM' ? <a className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl('script=1')}>자막 SRT</a> : null}
-            {scenes.map((_, i) => <a key={i} className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl(`scene=${i}`)}>장면 {i + 1}</a>)}
-            {(['INSTAGRAM', 'YOUTUBE', 'FACEBOOK', 'QR'] as const).map((p) => <a key={p} className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl(`caption=${p}`)}>캡션 · {p === 'QR' ? 'QR·기타' : PLATFORM_LABEL[p]}</a>)}
+            {item.videoUrl ? <a className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={item.videoUrl} download>영상 MP4</a> : null}
+            {scenes.map((s, i) => <a key={i} className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl(`scene=${i}&format=png`)}>{item.kind === 'CARD_NEWS' ? `카드 ${i + 1}${s.label ? ` · ${s.label}` : ''}` : `장면 ${i + 1}`} PNG</a>)}
+            {[...captionTargets, 'QR' as const].map((p) => <a key={p} className="rounded-xl border border-ink-200 px-3 py-2 text-center" href={dl(`caption=${p}`)}>캡션 · {p === 'QR' ? 'QR·기타' : PLATFORM_LABEL[p]}</a>)}
           </div>
         </Card>
 
@@ -106,7 +118,7 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                 {scenes.map((s, i) => (
                   <Field key={i} label={`장면 ${i + 1} 자막 (${s.durationSec}초)`}><Input name="scene" defaultValue={s.caption} maxLength={120} /></Field>
                 ))}
-                <Field label="게시물 캡션" hint="{링크} 는 게시할 때 플랫폼별 유입 경로가 붙은 후원 주소로 바뀝니다. “AI 생성 콘텐츠” 표시는 지울 수 없습니다.">
+                <Field label="게시물 캡션" hint="{링크} 는 게시할 때 플랫폼별 유입 경로가 붙은 후원 주소로 바뀝니다. “AI 생성 콘텐츠” 표시는 지울 수 없습니다. 캡션을 고치면 플랫폼별 캡션(길이·해시태그 수 규칙)은 고친 캡션에서 다시 만듭니다.">
                   <Textarea name="caption" rows={9} defaultValue={item.caption ?? ''} maxLength={2000} />
                 </Field>
               </ActionForm></div>

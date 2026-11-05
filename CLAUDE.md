@@ -36,6 +36,10 @@
    - 콘텐츠는 항상 "AI 생성 콘텐츠" 표시, 모집등록번호가 없으면 승인 불가, 기본은 담당자 승인제. 게시는 `content_publish (item, platform)` 1회, 예약→게시 중 전환은 조건부 갱신으로 잡는다. 수혜자 실사진·실명을 쓰지 않는다.
    - 약정서·신청서(`agreement_document`)는 스냅샷 + SHA-256, 바꾸면 새 판(이전 판 보존). 스냅샷에는 마스킹 값만 넣는다.
    - 유입 경로는 `?src=&cid=` → `givesign_src` 쿠키(7일) → `charge.source/content_item_id`, 약정·봉사 신청에 기록한다. 원천은 각 테이블이다.
+   - **콘텐츠 캘린더**(`content-calendar.ts`, `/api/cron/content`)는 (기관, 슬롯 시각) 유니크(`content_slot`)로 슬롯당 1건만 만든다. 모집등록번호·진행 중 캠페인·월 한도가 없으면 만들지 않고 이유를 설정 화면에 보인다(행으로 남기지 않음). 자동 승인은 승인까지만, 게시 예약은 `autoSchedule` + 슬롯이 미래 + `SOCIAL_PUBLISH_ENABLED` + 연결 채널·형식 허용일 때만 슬롯 시각으로 한다.
+   - **LLM**(`adapters/llm`, `LLM_PROVIDER=mock|anthropic|openai`)은 JSON 응답을 검증(장면 수·자막 길이·해시태그·금지어·전화/이메일·링크)하고 어기면 1회 재요청 후 실패한다. 진행률·참여 방법·"AI 생성 콘텐츠"·모집등록번호·링크는 LLM 이 아니라 시스템이 붙인다. 키가 없으면 호출하지 않는다. 비용은 시도마다 `ai_usage`(실패 시도 포함). 프롬프트·응답 본문은 로그에 남기지 않는다.
+   - **AI 초안**(`ai-drafts.ts` — 캠페인·감사 문구·문의 답변·성과 요약)은 입력칸을 채우기만 한다. 자동 저장·자동 발송·자동 게시를 만들지 않는다. 기관(관리자)당 분당 `AI_DRAFT_PER_MINUTE` 회. LLM 이 mock 이면 화면은 버튼 대신 "AI 공급자 연결 후 사용". 공급자로 보내는 문의 본문은 연락처·계좌를 가린다(`maskForLlm`). 수혜자 실명·연락처 패턴은 거절한다.
+   - 영상(mp4)은 `FFMPEG_PATH` + sharp 가 있을 때만 조립해 `content_item.video_url` 에 둔다. TTS 는 계약 전이라 만들지 않는다(만든 척하지 않음). 플랫폼별 캡션 규칙은 `content-captions.ts` 한 곳(링크·AI 표시는 잘리지 않는다).
 
 ## 약관
 
@@ -86,7 +90,7 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 | 후원자·봉사자 | `/studio/supporters` | 통합 구성원·세그먼트·기관 명단 업로드·약정 미완료 재안내 (`/studio/donors` 는 후원자 상세 분석) |
 | 자원봉사 | `/studio/volunteers` | 신청 승인·배정·활동 기록·1365 등록 자료 CSV (`FEATURE_VOLUNTEER`) |
 | 약정서·신청서 | `/studio/agreements` | 전자 약정서·신청서 보관·판 이력 |
-| 콘텐츠 만들기 / SNS 채널 | `/studio/content` · `/studio/channels` | 숏폼·캠페인 이미지 생성·승인·예약 게시 (`FEATURE_CONTENT`) |
+| 콘텐츠 만들기 / SNS 채널 | `/studio/content` · `/studio/channels` | 숏폼·카드뉴스·피드 이미지 생성·승인·예약 게시, 콘텐츠 캘린더(자율 생성)·성과 요약 (`FEATURE_CONTENT`). 채널: 유튜브·인스타그램·페이스북·틱톡·네이버 블로그·카카오 채널 |
 | 알림톡·월간 안내 | `/studio/notices` | 카카오 채널·템플릿 코드, 월간 안내·영수증 주기 |
 | QR 코드 | `/studio/qr` | 후원페이지 QR 1개 + 캠페인마다 QR (`/api/qr/[code]`, `/api/qr/[code]/campaigns/[id]`, PNG·SVG·인쇄). 승인 기관·그 기관 캠페인만, 주소에 `?src=qr` |
 | 후원 설정 / 문자 관리 / 정산 관리 | 기존 유지 | |

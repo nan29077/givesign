@@ -6,6 +6,9 @@ import { AdminField, AdminTextarea } from '@/components/admin/controls';
 import { ActionButton, ActionForm } from '@/components/admin/action-form';
 import { replyInquiry, setInquiryStatus } from '@/app/actions/admin/inquiries';
 import { markInquiryRead } from '@/server/services/inquiry';
+import { AiDraftButton } from '@/components/studio/ai-draft-button';
+import { draftInquiryReplyAction } from '@/app/actions/ai-drafts';
+import { aiDraftAvailability } from '@/server/services/ai-drafts';
 import { prisma } from '@/server/db';
 import { requireAdmin } from '@/server/auth';
 import { formatKst } from '@/lib/datetime';
@@ -48,6 +51,7 @@ export default async function AdminInquiryDetailPage({ params }: { params: Promi
   if (!inquiry) notFound();
 
   await markInquiryRead(inquiry.id);
+  const ai = aiDraftAvailability();
 
   const user = inquiry.userId
     ? await prisma.user.findUnique({
@@ -114,6 +118,10 @@ export default async function AdminInquiryDetailPage({ params }: { params: Promi
                 <AdminField label="답변 내용">
                   <AdminTextarea name="body" rows={4} placeholder="답변을 입력해 주세요 (2,000자 이내)" required />
                 </AdminField>
+                <div className="mt-2">
+                  <AiDraftButton action={draftInquiryReplyAction} available={ai.available} unavailableMessage={ai.message} extra={{ inquiryId: inquiry.id }} label="AI 분류·답변 초안" />
+                  {ai.available ? <p className="mt-1 text-[11.5px] text-ink-400">문의 본문의 전화번호·이메일·계좌번호는 가린 뒤 AI 공급자에 보냅니다. 초안은 고쳐서 등록해 주세요(자동 발송하지 않습니다).</p> : null}
+                </div>
               </ActionForm>
             </div>
           </Card>

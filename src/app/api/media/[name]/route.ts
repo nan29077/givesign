@@ -17,6 +17,8 @@ const MIME: Record<string, string> = {
   png: 'image/png',
   webp: 'image/webp',
   gif: 'image/gif',
+  // 콘텐츠 숏폼 영상(ffmpeg 조립 결과)
+  mp4: 'video/mp4',
 };
 
 /**
@@ -37,7 +39,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ name: st
   const { name } = await params;
 
   // 경로 조작 방지: 허용된 파일명 형식만 받는다.
-  if (!/^[a-f0-9]{32}\.(jpg|jpeg|png|webp|gif|pdf|docx|doc|hwpx|hwp)$/i.test(name)) {
+  if (!/^[a-f0-9]{32}\.(jpg|jpeg|png|webp|gif|mp4|pdf|docx|doc|hwpx|hwp)$/i.test(name)) {
     return new Response('Not found', { status: 404 });
   }
 

@@ -4,17 +4,25 @@ import { ImageUploadField } from '@/components/studio/image-upload-field';
 import { saveCampaignAction } from '@/app/actions/fundraising';
 import type { Campaign } from '@/generated/prisma/client';
 import { CampaignCardEditor } from './campaign-card-editor';
+import { AiDraftButton } from './ai-draft-button';
+import { draftCampaignAction } from '@/app/actions/ai-drafts';
 
 /**
  * 캠페인 등록·수정 폼.
  * 문자 키워드는 후원자가 문자 맨 앞에 적는 값이라 짧고 기억하기 쉬운 한글을 권한다.
  */
-export function CampaignForm({ initial: c, today }: { initial?: Campaign | null; today: string }) {
+export function CampaignForm({ initial: c, today, ai }: { initial?: Campaign | null; today: string; ai?: { available: boolean; message: string } }) {
   const date = (d?: Date | null) => (d ? d.toISOString().slice(0, 10) : today);
   return (
     <ActionForm action={saveCampaignAction} submitLabel={c ? '캠페인 저장' : '캠페인 만들기'} className="space-y-5">
       <input type="hidden" name="id" value={c?.id ?? ''} />
       <Card className="space-y-4">
+        {ai ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink-100 bg-ink-50 px-4 py-3">
+            <p className="text-[12.5px] leading-relaxed text-ink-500">기관 소개·지난 캠페인으로 제목·소개·이야기·사용 계획 초안을 채웁니다. 저장 전에 사실과 맞는지 확인해 주세요. 수혜자 실명·연락처는 넣지 않습니다.</p>
+            <AiDraftButton action={draftCampaignAction} available={ai.available} unavailableMessage={ai.message} hintFields={['title']} />
+          </div>
+        ) : null}
         <div className="grid gap-4 md:grid-cols-[1fr_200px]">
           <Field label="캠페인 제목" required>
             <Input name="title" required maxLength={100} defaultValue={c?.title ?? ''} placeholder="예: 겨울 김장 나눔" />
