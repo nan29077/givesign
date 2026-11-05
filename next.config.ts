@@ -3,8 +3,17 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   distDir: '.givesign-next',
   agentRules: false,
-  // 내장 DB와 함께 실행하는 로컬 Windows 빌드의 동시 워커 수를 제한한다.
-  experimental: { cpus: 2 },
+  experimental: {
+    // 내장 DB와 함께 실행하는 로컬 Windows 빌드의 동시 워커 수를 제한한다.
+    cpus: 2,
+    /**
+     * 서버 액션 요청 본문 상한(기본 1MB). 라이브 바자회 사진·근거 파일을 서버 액션으로 받는다(점검 B-4).
+     * 한 번에 파일 6개 × 5MB(src/lib/bazaar.ts BAZAAR_UPLOAD_MAX_FILES·BAZAAR_UPLOAD_MAX_BYTES) = 30MB
+     * + 판매 결과 CSV(2MB)·폼 필드·multipart 경계 여유 → 32MB. 개수·크기는 서버에서 다시 검사한다.
+     * 이 값을 바꾸면 위 상수와 화면 안내 문구를 함께 바꾼다.
+     */
+    serverActions: { bodySizeLimit: '32mb' },
+  },
   /**
    * 개발 모드 좌측 하단 "N Issue" 배지 비활성화.
    *

@@ -11,17 +11,17 @@ import { studioBazaarContext } from '@/server/studio-bazaar-context';
 import { productSalesSummary, receiptAmountOf } from '@/server/services/bazaar';
 import { issuerReadiness } from '@/server/services/receipts';
 import { confirmInspectionAction, merchantValuationAction } from '@/app/actions/bazaar-studio';
-import { deliveryMethodLabel, donationStatusLabel, donorTypeLabel, formatBizNo, itemConditionLabel, productStatusLabel, unsoldActionLabel, type DonorType } from '@/lib/bazaar';
+import { deliveryMethodLabel, donationStatusLabel, donorTypeLabel, formatBizNo, itemConditionLabel, productStatusLabel, unsoldActionLabel, valuationKindLabel, type DonorType } from '@/lib/bazaar';
 import { formatNumber, formatWon } from '@/lib/money';
-import { formatKst } from '@/lib/datetime';
+import { formatKst, kstDateKey } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
 const actorLabel: Record<string, string> = { DONOR: '기부자', MERCHANT: '기관', ADMIN: '운영자' };
-const kindLabel: Record<string, string> = { PROPOSE: '제안', COUNTER: '역제안', CONFIRM: '확정', ACCEPT: '수락' };
 
 export default async function StudioBazaarDonationDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { merchant } = await studioBazaarContext();
+  const { merchant, participation } = await studioBazaarContext();
+  const canAct = participation?.status === 'APPROVED';
   const { id } = await params;
   const mid = merchant.merchantId;
   const d = await prisma.inKindDonation.findUnique({
@@ -39,14 +39,19 @@ export default async function StudioBazaarDonationDetail({ params }: { params: P
   });
   if (!d) notFound();
   const mine = d.merchantId === mid;
-  const proposedToMe = d.matches[0]?.status === 'PROPOSED';
+  // 기한이 지난 제안은 응답할 수 없으니 상세·파일도 열지 않는다(점검 낮음). 만료 처리 배치가 돌기 전이어도 같다.
+  const proposedToMe = d.matches[0]?.status === 'PROPOSED' && d.matches[0].deadline >= new Date();
   if (!mine && !proposedToMe) notFound();
   const profile = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: mid } });
   const readiness = issuerReadiness(profile);
   const sales = await productSalesSummary(d.products.map((p) => p.id));
-  const lastProposal = [...d.valuations].reverse().find((v) => v.kind === 'PROPOSE' || v.kind === 'COUNTER');
+  // 같은 시각이면 id(ULID) 순서로 마지막 제안을 고른다(서버 확정 기준과 같게).
+  const lastProposal = [...d.valuations].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).reverse().find((v) => v.kind === 'PROPOSE' || v.kind === 'COUNTER');
   const lastValues = (lastProposal?.itemValues ?? {}) as Record<string, string>;
   const receiptPreview = receiptAmountOf(d.items);
+  // 연도 경계: 입고일 기준 귀속 연도가 올해보다 앞이면 전년도 명세에 들어간다(점검 낮음).
+  const thisYear = Number(kstDateKey().slice(0, 4));
+  const inboundYear = d.inbound ? Number(kstDateKey(d.inbound.receivedAt).slice(0, 4)) : thisYear;
   const donorBlock = d.donor.donorType === 'CORPORATE'
     ? `${d.donor.displayName} (사업자 ${formatBizNo(d.donor.businessNo)}, 대표 ${d.donor.representativeName ?? '-'})`
     : `${d.donor.displayName}${d.donor.residentNoMasked ? '' : ' — 영수증 정보 미등록'}`;
@@ -57,6 +62,7 @@ export default async function StudioBazaarDonationDetail({ params }: { params: P
       <Card>
         <div className="flex flex-wrap items-center gap-2"><LabelBadge map={donationStatusLabel} value={d.status} /></div>
         <div className="mt-3"><DonationTimeline status={d.status} /></div>
+        {!canAct ? <div className="mt-3"><Notice tone="warning">라이브 바자회 참여가 승인된 상태가 아니어서 수락·가액 확정·검수 확정을 할 수 없습니다. 참여 상태는 라이브 바자회 홈에서 확인해 주세요.</Notice></div> : null}
         <div className="mt-3 grid gap-1 sm:grid-cols-2">
           <DataRow label="기부자" value={`${donorTypeLabel[d.donor.donorType as DonorType]} · ${mine ? donorBlock : d.donor.donorType === 'CORPORATE' ? d.donor.displayName : '개인 기부자'}`} />
           {mine ? <DataRow label="연락처" value={`${d.donor.contactName} · ${d.donor.phoneMasked}`} /> : null}
@@ -89,20 +95,22 @@ export default async function StudioBazaarDonationDetail({ params }: { params: P
         </div>
       </Card>
 
-      {mine && d.status === 'VALUATING' ? (
+      {mine && canAct && d.status === 'VALUATING' ? (
         <Card className="mt-4">
           <CardTitle>가액 협의</CardTitle>
           <p className="mt-1 text-[12.5px] text-ink-500">현물 기부금영수증은 확정한 단가 × 검수 합격 수량으로 발급됩니다. 세금계산서·거래명세서 등 근거 자료를 확인하고 정해 주세요.</p>
           <ul className="mt-3 space-y-1.5 text-[13px]">
             {d.valuations.map((v) => (
-              <li key={v.id} className="rounded-lg bg-ink-50 px-3 py-2"><strong>{actorLabel[v.actorType]}</strong> {kindLabel[v.kind] ?? v.kind} · 합계 {formatWon(v.total)} · {formatKst(v.createdAt, false)}{v.note ? <span className="block text-ink-500">{v.note}</span> : null}</li>
+              <li key={v.id} className="rounded-lg bg-ink-50 px-3 py-2"><strong>{actorLabel[v.actorType] ?? '시스템'}</strong> {valuationKindLabel[v.kind] ?? '기록'} · 합계 {formatWon(v.total)} · {formatKst(v.createdAt, false)}{v.note ? <span className="block text-ink-500">{v.note}</span> : null}</li>
             ))}
           </ul>
           {lastProposal?.actorType === 'DONOR' ? (
             <div className="mt-4">
-              <ActionForm action={merchantValuationAction} submitLabel={`기부자 제시 가액 ${formatWon(lastProposal.total)} 으로 확정`} confirm="이 가액으로 확정할까요? 확정 뒤에는 기부자가 약정에 동의합니다.">
+              <ActionForm action={merchantValuationAction} submitLabel={`기부자 제시 가액 ${formatWon(lastProposal.total)} 으로 확정`} confirm={`합계 ${formatWon(lastProposal.total)} 으로 확정할까요? 확정한 가액은 되돌릴 수 없고 현물 기부금영수증 금액의 기준이 됩니다.`}>
                 <input type="hidden" name="donationId" value={d.id} />
                 <input type="hidden" name="mode" value="CONFIRM" />
+                {/* 화면에서 본 제안. 그 사이 기부자가 다시 제안하면 서버가 확정을 거절한다. */}
+                <input type="hidden" name="valuationId" value={lastProposal.id} />
               </ActionForm>
             </div>
           ) : <div className="mt-3"><Notice tone="brand">기관이 낸 제안에 기부자가 응답하기를 기다리고 있습니다.</Notice></div>}
@@ -122,7 +130,7 @@ export default async function StudioBazaarDonationDetail({ params }: { params: P
         </Card>
       ) : null}
 
-      {mine && d.status === 'INSPECTED' && d.inbound ? (
+      {mine && canAct && d.status === 'INSPECTED' && d.inbound ? (
         <Card className="mt-4">
           <CardTitle>검수 확정 · 영수증 발급</CardTitle>
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
@@ -131,6 +139,7 @@ export default async function StudioBazaarDonationDetail({ params }: { params: P
             <DataRow label="반송비" value={d.inbound.returnCost > 0n ? `${formatWon(d.inbound.returnCost)} (${d.inbound.returnCostBearer === 'MERCHANT' ? '기관 부담 — 정산에서 공제' : '기브싸인 부담'})` : '없음'} />
             <DataRow label="발급될 영수증 금액" value={formatWon(receiptPreview)} />
           </div>
+          {inboundYear < thisYear ? <div className="mt-3"><Notice tone="warning">입고일이 {inboundYear}년이라 영수증은 {inboundYear}년 귀속으로 발급됩니다. {inboundYear}년 홈택스 명세를 이미 내려받았다면 발급 뒤 다시 내려받아 제출 자료를 고쳐 주세요.</Notice></div> : null}
           {!readiness.ok ? <div className="mt-3"><Notice tone="danger">영수증을 발급할 수 없습니다: {readiness.missing.join(', ')}</Notice></div> : null}
           {d.donor.donorType === 'INDIVIDUAL' && !d.donor.residentNoEnc ? <div className="mt-3"><Notice tone="warning">개인 기부자가 영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다. 등록 후 확정할 수 있습니다.</Notice></div> : null}
           <div className="mt-4">

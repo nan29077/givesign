@@ -25,7 +25,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!allowed && user.merchantId) {
     allowed =
       file.donation.merchantId === user.merchantId ||
-      (await prisma.inKindMatch.count({ where: { donationId: file.donationId, merchantId: user.merchantId, status: 'PROPOSED' } })) > 0;
+      // 응답 기한이 지난 제안으로는 열지 않는다(점검 낮음).
+      (await prisma.inKindMatch.count({ where: { donationId: file.donationId, merchantId: user.merchantId, status: 'PROPOSED', deadline: { gte: new Date() } } })) > 0;
   }
   if (!allowed) return notFound();
   const body = await getPrivateObject(file.objectName);

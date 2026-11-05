@@ -34,6 +34,7 @@ export async function merchantSalesOverview(merchantId: string) {
 
 /** 관리자 대시보드 숫자 */
 export async function adminBazaarCounts() {
+  // 만료는 배치(/api/cron/bazaar)가 맡는다. 화면에서도 한 번 더 돌려 바로 보이게 한다.
   await expireMatches().catch(() => 0);
   const [submitted, proposed, valuating, waitingInbound, inspected, draftProducts, listed, draftBatches, unpaid, applied] = await Promise.all([
     prisma.inKindDonation.count({ where: { status: 'SUBMITTED' } }),
@@ -44,16 +45,25 @@ export async function adminBazaarCounts() {
     prisma.bazaarProduct.count({ where: { status: 'DRAFT' } }),
     prisma.bazaarProduct.count({ where: { status: 'LISTED' } }),
     prisma.bazaarSaleBatch.count({ where: { status: 'DRAFT' } }),
-    prisma.bazaarSettlement.count({ where: { status: { in: ['DRAFT', 'CONFIRMED'] } } }),
+    prisma.bazaarSettlement.count({ where: { status: { in: ['DRAFT', 'CONFIRMED'] }, payout: { gt: 0 } } }),
     prisma.merchantBazaar.count({ where: { status: 'APPLIED' } }),
   ]);
   return { submitted, proposed, valuating, waitingInbound, inspected, draftProducts, listed, draftBatches, unpaid, applied };
 }
 
-/** 사이트 설정 화면의 미지급 정산 요약(스위치와 무관하게 보여 준다) */
+/**
+ * 사이트 설정 화면의 미지급 정산 요약(스위치와 무관하게 보여 준다).
+ * 지급할 돈이 있는 것(지급액 > 0)만 센다. 0원 이하는 확정 때 이월(CARRIED)되며, 예전에 확정만 된 건은 따로 센다.
+ */
 export async function unpaidSettlementSummary() {
   const rows = await prisma.bazaarSettlement.findMany({ where: { status: { in: ['DRAFT', 'CONFIRMED'] } }, select: { payout: true, status: true } });
-  return { count: rows.length, confirmed: rows.filter((r) => r.status === 'CONFIRMED').length, total: rows.reduce((s, r) => s + r.payout, 0n) };
+  const payable = rows.filter((r) => r.payout > 0n);
+  return {
+    count: payable.length,
+    confirmed: payable.filter((r) => r.status === 'CONFIRMED').length,
+    total: payable.reduce((s, r) => s + r.payout, 0n),
+    toCarry: rows.filter((r) => r.payout <= 0n).length,
+  };
 }
 
 /** 메인·소개 페이지용 공개 정보: 다가오는 방송(승인된 편성만), 참여 기관 수, 지급 완료 귀속액 */

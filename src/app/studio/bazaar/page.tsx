@@ -26,7 +26,7 @@ export default async function StudioBazaarHome() {
     prisma.inKindDonation.count({ where: { merchantId: mid, status: 'INSPECTED' } }),
     prisma.bazaarLive.count({ where: { merchantId: mid, status: 'PROPOSED' } }),
     prisma.bazaarProduct.count({ where: { merchantId: mid, status: 'LISTED' } }),
-    prisma.bazaarSettlement.aggregate({ where: { merchantId: mid, status: { in: ['DRAFT', 'CONFIRMED'] } }, _sum: { payout: true } }),
+    prisma.bazaarSettlement.aggregate({ where: { merchantId: mid, status: { in: ['DRAFT', 'CONFIRMED'] }, payout: { gt: 0 } }, _sum: { payout: true } }),
     getBazaarConfig(),
   ]);
   const readiness = issuerReadiness(profile);

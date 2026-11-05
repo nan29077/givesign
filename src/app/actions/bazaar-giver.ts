@@ -109,19 +109,30 @@ export async function createDonationAction(_p: AdminActionState, fd: FormData): 
       });
     }
     const minSale = t(fd, 'minSalePrice');
-    donationId = await svc.createDonation(donor.id, user.id, {
-      title: t(fd, 'title') || null,
-      items,
-      matchMode: t(fd, 'matchMode'),
-      preferredMerchantId: t(fd, 'preferredMerchantId') || null,
-      brandPublic: fd.get('brandPublic') === 'on',
-      minSalePrice: minSale ? numberOf(minSale) || null : null,
-      unsoldAction: t(fd, 'unsoldAction'),
-      deliveryMethod: t(fd, 'deliveryMethod'),
-      donorMessage: t(fd, 'donorMessage') || null,
-    });
-    for (const f of fd.getAll('photos')) if (f instanceof File && f.size > 0) await svc.saveDonationFile(donationId, 'PHOTO', f, user.id);
-    for (const f of fd.getAll('evidence')) if (f instanceof File && f.size > 0) await svc.saveDonationFile(donationId, 'EVIDENCE', f, user.id);
+    // 숫자가 아닌 최저가를 조용히 버리지 않는다(점검 낮음).
+    const minSalePrice = minSale ? numberOf(minSale) : null;
+    if (minSalePrice !== null && !Number.isFinite(minSalePrice)) throw new Error('최저 판매가는 숫자(원)로 입력해 주세요. 비우면 운영 기준을 따릅니다.');
+    // 파일을 먼저 검사한다. 하나라도 틀리면 기부 건을 만들지 않는다(점검 B-M9).
+    const files = await svc.prepareDonationFiles([
+      ...fd.getAll('photos').filter((f): f is File => f instanceof File).map((file) => ({ kind: 'PHOTO' as const, file })),
+      ...fd.getAll('evidence').filter((f): f is File => f instanceof File).map((file) => ({ kind: 'EVIDENCE' as const, file })),
+    ]);
+    donationId = await svc.createDonation(
+      donor.id,
+      user.id,
+      {
+        title: t(fd, 'title') || null,
+        items,
+        matchMode: t(fd, 'matchMode'),
+        preferredMerchantId: t(fd, 'preferredMerchantId') || null,
+        brandPublic: fd.get('brandPublic') === 'on',
+        minSalePrice: minSalePrice || null,
+        unsoldAction: t(fd, 'unsoldAction'),
+        deliveryMethod: t(fd, 'deliveryMethod'),
+        donorMessage: t(fd, 'donorMessage') || null,
+      },
+      files,
+    );
     return '기부를 접수했습니다.';
   });
   if (res.ok && donationId) redirect(`/giver/donations/${donationId}?created=1`);
@@ -132,7 +143,7 @@ export async function donorValuationAction(_p: AdminActionState, fd: FormData) {
   return runGiver(async ({ user, donor }) => {
     const donationId = t(fd, 'donationId');
     if (t(fd, 'mode') === 'ACCEPT') {
-      await svc.acceptValuation(donationId, { type: 'DONOR', userId: user.id, donorId: donor.id });
+      await svc.acceptValuation(donationId, { type: 'DONOR', userId: user.id, donorId: donor.id }, t(fd, 'valuationId'));
       return '기관 제안 가액을 수락했습니다. 이제 약정에 동의해 주세요.';
     }
     const values: Record<string, string> = {};
@@ -147,9 +158,9 @@ export async function evidenceUploadAction(_p: AdminActionState, fd: FormData) {
     const donationId = t(fd, 'donationId');
     const d = await prisma.inKindDonation.findFirst({ where: { id: donationId, donorId: donor.id } });
     if (!d) throw new Error('기부 건을 찾을 수 없습니다.');
-    let n = 0;
-    for (const f of fd.getAll('evidence')) if (f instanceof File && f.size > 0 && (await svc.saveDonationFile(donationId, 'EVIDENCE', f, user.id))) n += 1;
-    if (n === 0) throw new Error('올릴 파일을 골라 주세요.');
+    const files = await svc.prepareDonationFiles(fd.getAll('evidence').filter((f): f is File => f instanceof File).map((file) => ({ kind: 'EVIDENCE' as const, file })));
+    if (files.length === 0) throw new Error('올릴 파일을 골라 주세요.');
+    const n = await svc.attachDonationFiles(donationId, files, user.id, svc.DONOR_EVIDENCE_STATUSES);
     return `근거 자료 ${n}개를 올렸습니다.`;
   });
 }

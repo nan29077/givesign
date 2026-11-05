@@ -24,7 +24,8 @@ export default async function StudioBazaarSales() {
   let net = 0n;
   for (const s of sums.values()) net += s.gross - s.refund;
   const paid = settlements.filter((s) => s.status === 'PAID').reduce((a, s) => a + s.payout, 0n);
-  const due = settlements.filter((s) => s.status !== 'PAID').reduce((a, s) => a + s.payout, 0n);
+  // 지급 예정은 집계·확정 중이면서 지급액이 있는 것만. 0원 이하는 다음 달로 이월된다.
+  const due = settlements.filter((s) => (s.status === 'DRAFT' || s.status === 'CONFIRMED') && s.payout > 0n).reduce((a, s) => a + s.payout, 0n);
   return (
     <>
       <PageHeader title="판매·정산" description={`판매 금액에서 수수료 ${cfg.feeRatePercent}%(부가세 ${cfg.feeVatMode === 'INCLUDED' ? '포함' : '별도'})와 기관 부담 반송비를 뺀 금액을 매월 1회 정산해 다음 달 ${cfg.settlementPayDay}일에 지급합니다.`} action={<LinkButton href="/api/bazaar/export?kind=ledger" variant="secondary">현물 기부 대장(CSV)</LinkButton>} />
@@ -39,11 +40,12 @@ export default async function StudioBazaarSales() {
 
       <Card className="mt-5">
         <CardTitle>월 정산</CardTitle>
+        <p className="mt-1 text-[12.5px] text-ink-500">환불이 판매보다 많아 기관 귀속이 0원 이하인 달은 지급하지 않고 다음 달 정산으로 넘겨 차감합니다.</p>
         {settlements.length === 0 ? <p className="mt-2 text-[13px] text-ink-500">아직 정산 내역이 없습니다.</p> : (
           <div className="mt-3"><Table>
-            <thead><tr><Th>정산 월</Th><Th className="text-right">판매</Th><Th className="text-right">환불</Th><Th className="text-right">수수료</Th><Th className="text-right">반송비</Th><Th className="text-right">기관 귀속</Th><Th>지급일</Th><Th>상태</Th></tr></thead>
+            <thead><tr><Th>정산 월</Th><Th className="text-right">판매</Th><Th className="text-right">환불</Th><Th className="text-right">수수료</Th><Th className="text-right">반송비·이월</Th><Th className="text-right">기관 귀속</Th><Th>지급일</Th><Th>상태</Th></tr></thead>
             <tbody>{settlements.map((s) => (
-              <tr key={s.id}><Td>{s.month}</Td><Td className="text-right tabular-nums">{formatWon(s.gross)}</Td><Td className="text-right tabular-nums">{formatWon(s.refund)}</Td><Td className="text-right tabular-nums">{formatWon(s.fee)}<span className="block text-[11px] text-ink-400">부가세 {formatWon(s.feeVat)}</span></Td><Td className="text-right tabular-nums">{formatWon(s.returnCost)}</Td><Td className="text-right font-bold tabular-nums">{formatWon(s.payout)}</Td><Td>{s.paidAt ? formatKst(s.paidAt, false) : s.dueDate.toISOString().slice(0, 10)}</Td><Td><LabelBadge map={settlementStatusLabel} value={s.status} /></Td></tr>
+              <tr key={s.id}><Td>{s.month}</Td><Td className="text-right tabular-nums">{formatWon(s.gross)}</Td><Td className="text-right tabular-nums">{formatWon(s.refund)}</Td><Td className="text-right tabular-nums">{formatWon(s.fee)}<span className="block text-[11px] text-ink-400">부가세 {formatWon(s.feeVat)}</span></Td><Td className="text-right tabular-nums">{formatWon(s.returnCost)}{s.carryAmount !== 0n ? <span className="block text-[11px] text-ink-400">전월 이월 {formatWon(s.carryAmount)}</span> : null}</Td><Td className="text-right font-bold tabular-nums">{formatWon(s.payout)}</Td><Td>{s.paidAt ? formatKst(s.paidAt, false) : s.status === 'CARRIED' ? (s.carriedToMonth ? `${s.carriedToMonth} 정산에서 차감` : '지급 없음') : s.dueDate.toISOString().slice(0, 10)}</Td><Td><LabelBadge map={settlementStatusLabel} value={s.status} /></Td></tr>
             ))}</tbody>
           </Table></div>
         )}

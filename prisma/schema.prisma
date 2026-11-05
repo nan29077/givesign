@@ -4117,7 +4117,7 @@ model InKindReceipt {
   residentNoEnc  String?   @map("resident_no_enc")
   /// 기부일(입고일)
   donatedAt      DateTime  @map("donated_at") @db.Timestamptz(3)
-  /// ISSUED | VOID
+  /// ISSUED | VOID. 기부 건당 ISSUED 는 1장(부분 유니크 인덱스 in_kind_receipt_donation_issued_one)
   status         String    @default("ISSUED")
   issuedBy       String    @map("issued_by")
   issuedAt       DateTime  @default(now()) @map("issued_at") @db.Timestamptz(3)
@@ -4195,6 +4195,8 @@ model BazaarProduct {
   endedAt         DateTime? @map("ended_at") @db.Timestamptz(3)
   /// 판매 종료 시 미판매 수량 처리 MERCHANT_USE | TRANSFER | RETURN | DISPOSE
   remainingAction String?   @map("remaining_action")
+  /// 기부자에게 돌려준 수량(remainingAction=RETURN). 현물 영수증 수량에서 뺀다(점검 B-M4).
+  returnedQty     Int       @default(0) @map("returned_qty")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -4274,6 +4276,12 @@ model BazaarSaleLine {
   /// NONE | MERCHANT | GIVESIGN
   returnBearer String   @default("NONE") @map("return_bearer")
   note         String?
+  /// 승인 때 판매분에 적용한 수수료 요율(퍼센트 문자열)·부가세 방식. 환불 환입은 원래 판매 요율로 한다(2026-11-08 점검 B-M3).
+  feeRatePercent       String? @map("fee_rate_percent")
+  feeVatMode           String? @map("fee_vat_mode")
+  /// 승인 때 환불분 환입에 적용한 요율(그 상품의 원래 판매 요율)
+  refundFeeRatePercent String? @map("refund_fee_rate_percent")
+  refundFeeVatMode     String? @map("refund_fee_vat_mode")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   batch   BazaarSaleBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -4286,6 +4294,7 @@ model BazaarSaleLine {
 
 /// 바자회 정산 원장(append-only). 금액은 기관 수취 기준 부호(+ 증가, - 차감).
 /// SALE + / REFUND - / FEE -(수수료, 공급가액·부가세 분리 기록) / RETURN_COST - / PAYOUT -(지급)
+/// CARRY_IN(0원 이하 정산을 다음 달로 넘긴 금액, 멱등키 carry:{정산 id}) / CARRY_OUT(넘긴 달에서 빼는 반대 기록, carry-out:{정산 id})
 model BazaarLedger {
   id             String   @id
   merchantId     String   @map("merchant_id")
@@ -4316,9 +4325,13 @@ model BazaarSettlement {
   fee         BigInt
   feeVat      BigInt    @map("fee_vat")
   returnCost  BigInt    @map("return_cost")
+  /// 이전 달에서 넘어온 금액(CARRY_IN 합계, 보통 음수)
+  carryAmount BigInt    @default(0) @map("carry_amount")
   payout      BigInt
-  /// DRAFT | CONFIRMED | PAID
+  /// DRAFT | CONFIRMED | PAID | CARRIED(0원 이하 — 다음 달로 이월하고 종료)
   status      String    @default("DRAFT")
+  /// CARRIED 일 때 넘긴 달
+  carriedToMonth String? @map("carried_to_month")
   dueDate     DateTime  @map("due_date") @db.Date
   confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz(3)
   confirmedBy String?   @map("confirmed_by")

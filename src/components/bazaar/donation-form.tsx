@@ -5,7 +5,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button, Card, CardTitle, Checkbox, Field, Input, Notice, Select, Textarea } from '@/components/ui';
 import { createDonationAction } from '@/app/actions/bazaar-giver';
 import { initialAdminState } from '@/components/admin/state';
-import { ITEM_CATEGORIES, ITEM_CONDITIONS, itemConditionLabel, unsoldActionLabel, deliveryMethodLabel } from '@/lib/bazaar';
+import { BAZAAR_UPLOAD_MAX_FILES, ITEM_CATEGORIES, ITEM_CONDITIONS, itemConditionLabel, unsoldActionLabel, deliveryMethodLabel } from '@/lib/bazaar';
 
 interface Row { key: number }
 
@@ -90,8 +90,8 @@ export function DonationForm({ merchants, minSalePrice }: { merchants: Array<{ i
         <CardTitle>3. 판매 조건</CardTitle>
         <div className="mt-3 space-y-3">
           <Checkbox name="brandPublic" label="방송·상품 설명에 기부 기업(브랜드)명을 공개해도 됩니다" description="체크하지 않으면 익명 기부로 표시합니다." />
-          <Field label="최저 판매가(선택, 원)" hint={`비우면 운영 기준(최소 ${minSalePrice.toLocaleString('ko-KR')}원)을 따릅니다. 이 가격보다 낮게는 팔지 않습니다.`}>
-            <Input name="minSalePrice" inputMode="numeric" />
+          <Field label="최저 판매가(선택, 원)" hint={`숫자만 적어 주세요. 비우면 운영 기준(최소 ${minSalePrice.toLocaleString('ko-KR')}원)을 따릅니다. 이 가격보다 낮게는 팔지 않습니다.`}>
+            <Input name="minSalePrice" inputMode="numeric" pattern="[0-9,]*" title="숫자로 입력해 주세요" />
           </Field>
           <Field label="판매되지 않은 물품" required>
             <Select name="unsoldAction" defaultValue="MERCHANT_USE">
@@ -109,8 +109,9 @@ export function DonationForm({ merchants, minSalePrice }: { merchants: Array<{ i
       <Card>
         <CardTitle>4. 사진·가액 근거</CardTitle>
         <div className="mt-3 space-y-3">
+          <p className="text-[12.5px] text-ink-500">사진과 근거 자료를 합쳐 한 번에 {BAZAAR_UPLOAD_MAX_FILES}개까지, 한 개 5MB 이하로 올릴 수 있습니다. 더 있으면 접수한 뒤 기부 상세 화면에서 올려 주세요. 파일에 문제가 있으면 기부가 접수되지 않으니 안내를 확인하고 다시 올려 주세요.</p>
           <Field label="물품 사진" hint="JPG·PNG·WEBP, 한 장 5MB 이하"><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp" className="text-[13px]" /></Field>
-          <Field label="가액 근거(세금계산서·거래명세서·원가 자료)" hint="이미지 또는 PDF. 기관이 가액을 확정하는 데 씁니다. 나중에 올려도 됩니다."><input type="file" name="evidence" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="text-[13px]" /></Field>
+          <Field label="가액 근거(세금계산서·거래명세서·원가 자료)" hint="이미지 또는 PDF, 한 개 5MB 이하. 기관이 가액을 확정하는 데 씁니다. 나중에 올려도 됩니다."><input type="file" name="evidence" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="text-[13px]" /></Field>
           <Field label="기관에 전할 말(선택)"><Textarea name="donorMessage" rows={3} maxLength={500} /></Field>
         </div>
       </Card>

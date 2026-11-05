@@ -110,6 +110,14 @@ export async function applyMerchant(_prev: MerchantApplyState, formData: FormDat
     if (session.role === 'ADMIN') {
       return { ok: false, message: '관리자 계정으로는 사회복지기관을 신청할 수 없습니다.', values };
     }
+    // 현물 기부 회원(GIVER)을 기관으로 바꾸면 기부자 콘솔·진행 중 기부의 약정·영수증을 잃는다(점검 B-M7).
+    if (session.role === 'GIVER') {
+      return {
+        ok: false,
+        message: '현물 기부 회원 계정으로는 기관 도입을 신청할 수 없습니다. 로그아웃한 뒤 기관용 이메일로 새 계정을 만들어 신청해 주세요.',
+        values,
+      };
+    }
     const existing = await prisma.merchantProfile.findUnique({
       where: { userId: session.id },
       select: { code: true, status: true, displayName: true },
@@ -192,8 +200,8 @@ export async function applyMerchant(_prev: MerchantApplyState, formData: FormDat
         data: { id: newId(), merchantId: profile.id, code: profile.code, active: true },
       });
 
-      // 로그인 사용자의 역할을 사회복지기관으로 승격 (관리자는 위에서 차단)
-      if (session && session.role !== 'MERCHANT') {
+      // 로그인 사용자의 역할을 사회복지기관으로 승격 (관리자·현물 기부 회원은 위에서 차단)
+      if (session && session.role !== 'MERCHANT' && session.role !== 'GIVER') {
         await tx.user.update({ where: { id: userId }, data: { role: 'MERCHANT' } });
       }
       return profile;

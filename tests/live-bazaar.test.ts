@@ -74,6 +74,12 @@ async function corporateGiver() {
   });
 }
 
+/** 화면에서 본 마지막 제안 id(가액 확정에 함께 보낸다) */
+async function lastProposalId(donationId: string) {
+  const v = await prisma.inKindValuation.findFirstOrThrow({ where: { donationId, kind: { in: ['PROPOSE', 'COUNTER'] } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+  return v.id;
+}
+
 const ITEMS = [
   { name: '주방세제 1L', category: '생활용품', quantity: 100, condition: 'NEW', declaredUnitValue: 3000 },
   { name: '수건 세트', category: '생활용품', quantity: 50, condition: 'NEW', declaredUnitValue: 8000 },
@@ -200,10 +206,10 @@ describe('라이브 바자회 — 전체 흐름', () => {
     expect(d.merchantId).toBe(merchantId);
 
     // 자기 제안은 스스로 확정할 수 없다 (기부자 접수 제안 → 기부자가 확정 시도)
-    await expect(acceptValuation(donationId, { type: 'DONOR', userId: g.userId, donorId: g.donorId })).rejects.toThrow(/상대가 수락/);
+    await expect(acceptValuation(donationId, { type: 'DONOR', userId: g.userId, donorId: g.donorId }, await lastProposalId(donationId))).rejects.toThrow(/상대가 수락/);
     // 기관 역제안 → 기부자 수락
     await proposeValuation(donationId, { type: 'MERCHANT', userId: merchantUserId, merchantId }, { [d.items[0].id]: '2500', [d.items[1].id]: '7000' }, '시중가 반영');
-    await acceptValuation(donationId, { type: 'DONOR', userId: g.userId, donorId: g.donorId });
+    await acceptValuation(donationId, { type: 'DONOR', userId: g.userId, donorId: g.donorId }, await lastProposalId(donationId));
     d = await prisma.inKindDonation.findUniqueOrThrow({ where: { id: donationId }, include: { items: { orderBy: { seq: 'asc' } } } });
     expect(d.status).toBe('VALUE_CONFIRMED');
     expect(d.confirmedTotal).toBe(100n * 2500n + 50n * 7000n);
@@ -239,6 +245,7 @@ describe('라이브 바자회 — 전체 흐름', () => {
     // 최소 판매가 아래로는 바꿀 수 없다
     await expect(updateProduct(products[0].id, { name: '주방세제', salePrice: 1000, shippingFee: 3000, quantity: 90, perPersonLimit: 5 })).rejects.toThrow(/최소 판매가/);
     await updateProduct(products[0].id, { name: '주방세제 1L', salePrice: 5000, shippingFee: 3000, quantity: 90, perPersonLimit: 5 });
+    await updateProduct(products[1].id, { name: '수건 세트', salePrice: 15000, shippingFee: 3000, quantity: 50, perPersonLimit: 5 });
 
     // 판매 등록 대기 상품은 판매 결과에 넣을 수 없다
     await expect(
@@ -339,7 +346,7 @@ describe('라이브 바자회 — 전체 흐름', () => {
     expect((await prisma.inKindDonation.findUniqueOrThrow({ where: { id: donationId } })).status).toBe('MATCH_PROPOSED');
     const m = await prisma.inKindMatch.findFirstOrThrow({ where: { donationId } });
     await respondMatch(merchantId, m.id, true, merchantUserId);
-    await acceptValuation(donationId, { type: 'MERCHANT', userId: merchantUserId, merchantId });
+    await acceptValuation(donationId, { type: 'MERCHANT', userId: merchantUserId, merchantId }, await lastProposalId(donationId));
     await pledgeDonation(g.donorId, donationId, g.userId, { name: '김개인', agree: true });
     const item = await prisma.inKindItem.findFirstOrThrow({ where: { donationId } });
     await registerInbound(donationId, adminA, { warehouse: '센터', receivedAt: new Date(), result: 'PASS', items: [{ itemId: item.id, receivedQty: 10, acceptedQty: 10 }], returnCost: 0n, returnCostBearer: 'NONE' });
@@ -386,7 +393,7 @@ describe('라이브 바자회 — 전체 흐름', () => {
     const donationId = await createDonation(g.donorId, g.userId, { items: ITEMS.slice(0, 1), matchMode: 'DESIGNATED', preferredMerchantId: merchantId, brandPublic: false, unsoldAction: 'MERCHANT_USE', deliveryMethod: 'SEND' });
     const m = await prisma.inKindMatch.findFirstOrThrow({ where: { donationId } });
     await respondMatch(merchantId, m.id, true, merchantUserId);
-    await acceptValuation(donationId, { type: 'MERCHANT', userId: merchantUserId, merchantId });
+    await acceptValuation(donationId, { type: 'MERCHANT', userId: merchantUserId, merchantId }, await lastProposalId(donationId));
     await pledgeDonation(g.donorId, donationId, g.userId, { name: '홍담당', agree: true });
     const item = await prisma.inKindItem.findFirstOrThrow({ where: { donationId } });
     await expect(

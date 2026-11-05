@@ -14,7 +14,8 @@ import { formatKst } from '@/lib/datetime';
 export const dynamic = 'force-dynamic';
 
 export default async function StudioBazaarDonations() {
-  const { merchant } = await studioBazaarContext();
+  const { merchant, participation } = await studioBazaarContext();
+  const canAct = participation?.status === 'APPROVED';
   const mid = merchant.merchantId;
   const now = new Date();
   const [proposals, donations, lives] = await Promise.all([
@@ -39,6 +40,7 @@ export default async function StudioBazaarDonations() {
 
       <Card>
         <CardTitle>매칭 제안</CardTitle>
+        {!canAct ? <p className="mt-2 text-[13px] text-warning-500">라이브 바자회 참여가 승인된 상태가 아니어서 제안에 응답할 수 없습니다.</p> : null}
         {proposals.length === 0 ? <p className="mt-2 text-[13px] text-ink-500">응답할 제안이 없습니다.</p> : (
           <ul className="mt-3 space-y-3">
             {proposals.map((m) => (
@@ -54,17 +56,17 @@ export default async function StudioBazaarDonations() {
                 <ul className="mt-2 text-[12.5px] text-ink-700">
                   {m.donation.items.slice(0, 5).map((it) => <li key={it.id}>· {it.name} × {it.quantity}</li>)}
                 </ul>
-                <div className="mt-3 flex flex-wrap items-start gap-3">
-                  <ActionForm action={respondMatchAction} submitLabel="수락" compact>
+                {canAct ? <div className="mt-3 flex flex-wrap items-start gap-3">
+                  <ActionForm action={respondMatchAction} submitLabel="수락" compact confirm="이 기부 건을 수락할까요? 수락하면 가액 협의가 시작되고 되돌릴 수 없습니다.">
                     <input type="hidden" name="matchId" value={m.id} />
                     <input type="hidden" name="decision" value="ACCEPT" />
                   </ActionForm>
-                  <ActionForm action={respondMatchAction} submitLabel="거절" variant="secondary" compact>
+                  <ActionForm action={respondMatchAction} submitLabel="거절" variant="secondary" compact confirm="이 제안을 거절할까요? 같은 기부 건은 다시 제안받지 않습니다.">
                     <input type="hidden" name="matchId" value={m.id} />
                     <input type="hidden" name="decision" value="REJECT" />
                     <Field label="거절 사유"><Input name="reason" maxLength={200} className="h-9 text-[13px]" placeholder="예: 보관 공간 부족" /></Field>
                   </ActionForm>
-                </div>
+                </div> : null}
               </li>
             ))}
           </ul>
