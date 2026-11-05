@@ -213,3 +213,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 서식 행이 생기기 전 미리보기·등록은 업로드 응답의 서명 토큰(`signBasePdf`, 기관·파일·24시간)으로 이 기관이 올린 바탕 PDF 인지 확인한다. 바탕 PDF 주소만으로는 미리보기·등록할 수 없다.
 - **브라우저에서는 pdf.js 호환 빌드(`pdfjs-dist/legacy/build/*`)만 쓴다**(`src/components/pdf/pdfjs.ts`). 기본 빌드는 최신 브라우저 기능(`Map.getOrInsertComputed`)을 보완 없이 써서, 최신이 아닌 브라우저에서 미리보기가 안 보인다(2026-11-04 장애). `e2e/pdf-form-edit.mjs` 는 그 기능을 끈 브라우저(`--js-flags=--no-js-upsert`)로 돈다.
 - API: 미리보기 `POST /api/studio/pdf-form/preview`({templateId} 또는 {basePdfUrl, token} + layout), 글꼴 올리기 `POST /api/studio/pdf-form/font`. 화면 흐름 확인 `node e2e/pdf-form-edit.mjs`.
+
+## 자동 실행 계층 (2026-11-06 고도화)
+
+- **도메인 이벤트(아웃박스).** 업무 트랜잭션 안에서 `emitDomainEvent(…, tx)` 로 `domain_event` 에 남긴다(`dedupe_key` 유니크). 결제 성공(`charge.paid`)은 승인·정산 원장과 같은 트랜잭션이다. 후속 일(알림·명단 연결·목표 달성·저니)은 소비자로만 붙인다 — `executePayment` 등 업무 함수에 후속 호출을 새로 하드코딩하지 않는다. payload 에 개인정보 원문을 넣지 않는다.
+- 소비자는 `event-consumers.ts` `registerDefaultConsumers()` 에 등록하고 `/api/cron/events`(1분)가 (이벤트, 소비자) 1회 처리한다. 실패 소비자만 백오프 재시도, 6회 소진 시 FAILED(관리자 자동화 > 배치·이벤트에서 재처리).
+- **배치는 `src/server/cron-registry.ts` 에 선언**하고 라우트는 공용 `runCronJob`(인증·소유자 잠금·`cron_heartbeat` 실행 기록)만 쓴다. 잠금을 직접 구현하지 않는다. 수신 배치(emma-mo)만 `failOpenLock`.
+- **승인 요청(`approval_request`).** "시스템이 준비하고 사람이 승인" 하는 일은 `requestApproval` + `registerApprovalHandler(kind)` 로 만든다. 결정은 PENDING→PROCESSING 조건부 선점, 처리기 실패 시 PENDING 으로 되돌림.
+- **저니(`src/server/services/journeys`).** 정의는 코드에 고정(광고성 단계 없음), 기관은 `/studio/journeys` 에서 켜기·단계별 '승인 후 보내기'·값만 바꾼다. 실행은 (저니, 이벤트) 유일. 발송 단계 공통 보호: 탈퇴·차단·`notice_opt_out_at` → 멈춤, 야간 21~9시 KST → 다음 날 9시(`JOURNEY_QUIET_HOURS=off` 로만 끔), 후원자당 7일 3건 상한 → 하루 보류(14번 넘으면 건너뜀). 문서 단계는 `issuePurposeDocument` 만 부른다.
+- **영수증 연간 준비.** `receiptCycle=YEARLY` 기관은 1~2월 `/api/cron/receipts` 가 발급 가능자를 승인 요청(RECEIPT_BATCH, 주 1회·대기 중이면 새로 안 쌓음)으로 올리고, 미등록자에게는 `receipt.info_needed` → 저니가 등록 방법을 안내한다. 발급은 담당자 승인 후에만.
+- **통합 승인 대기함(`/studio/inbox`).** 승인 요청 + 콘텐츠 검토 + 봉사 신청 + 제출 문서 + 신고를 원천 테이블에서 모은다(복사하지 않음). 자동화 준비도(`automationReadiness`)는 같은 화면 위쪽에 — 빠진 항목이 무엇을 멈추는지 적는다.

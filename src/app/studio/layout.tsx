@@ -6,6 +6,7 @@ import { getSessionUser, requireMerchant } from '@/server/auth';
 import { getStudioPendingCounts } from '@/server/services/studio-pending';
 import { featureContentEnabled, featureGoodsEnabled, featureVolunteerEnabled } from '@/lib/env';
 import { prisma } from '@/server/db';
+import { inboxActionCount } from '@/server/services/inbox';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ function buildGroups(pending: {
   documents: number;
   volunteers: number;
   contentReview: number;
+  inbox: number;
 }): NavGroup[] {
   const goods = featureGoodsEnabled();
   const volunteer = featureVolunteerEnabled();
@@ -38,6 +40,8 @@ function buildGroups(pending: {
       title: '현황',
       items: [
         { href: '/studio', label: '대시보드', icon: 'dashboard' },
+        // 자동화가 준비한 일·담당자가 처리할 일을 한 곳에(콘텐츠 검토·봉사 신청·자동 안내 승인·영수증 일괄 발급 …)
+        { href: '/studio/inbox', label: '승인 대기함', icon: 'inbox', badge: pending.inbox },
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
         { href: '/studio/supporters', label: '후원자·봉사자', icon: 'supporters' },
         // 기관 후원 회원(후원페이지 로그인 회원)과 후원자별 상세 분석
@@ -58,6 +62,7 @@ function buildGroups(pending: {
               { href: '/studio/channels', label: 'SNS 채널', icon: 'channels' as const },
             ]
           : []),
+        { href: '/studio/journeys', label: '자동 안내', icon: 'journeys' },
         { href: '/studio/notices', label: '알림톡·월간 안내', icon: 'notices' },
       ],
     },
@@ -156,9 +161,10 @@ export default async function StudioLayout({ children }: { children: React.React
   // 밀린 일을 메뉴에서 바로 보이게 한다.
   // 대시보드도 같은 집계를 쓰므로 요청 단위 캐시로 묶어 한 번만 실행한다.
   const pending = await getStudioPendingCounts(user.merchantId);
-  const [volunteers, contentReview] = await Promise.all([
+  const [volunteers, contentReview, inbox] = await Promise.all([
     prisma.volunteerApplication.count({ where: { merchantId: user.merchantId, status: 'RECEIVED' } }),
     prisma.contentItem.count({ where: { merchantId: user.merchantId, status: 'REVIEW' } }),
+    inboxActionCount(user.merchantId),
   ]);
 
   return (
@@ -171,6 +177,7 @@ export default async function StudioLayout({ children }: { children: React.React
         documents: pending.documents,
         volunteers,
         contentReview,
+        inbox,
       })}
       user={{
         id: user.id,

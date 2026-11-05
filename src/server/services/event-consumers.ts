@@ -4,6 +4,8 @@ import { formatWon } from '@/lib/money';
 import { registerConsumer, emitDomainEvent, type StoredDomainEvent } from './events';
 import { notifyUser } from './notifications';
 import { campaignStats } from './fundraising';
+import { registerJourneyEngine } from './journeys/engine';
+import { registerReceiptBatchHandler } from './receipt-batch';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -73,6 +75,19 @@ export async function handleMerchantAlert(ev: StoredDomainEvent) {
     });
     return;
   }
+  if (ev.type === 'receipt.batch_ready') {
+    await notifyUser({
+      userId,
+      title: `${String(ev.payload.taxYear ?? '')}년 기부금영수증 발급 준비`,
+      body: `발급할 수 있는 후원자 ${String(ev.payload.readyCount ?? 0)}명 — 승인 대기함에서 확인 후 발급해 주세요.`,
+      linkUrl: '/studio/inbox',
+    });
+    return;
+  }
+  if (ev.type === 'agreement.signed') {
+    await notifyUser({ userId, title: '전자서명 완료', body: `${String(ev.payload.title ?? '약정서')} 서명이 완료되었습니다.`, linkUrl: '/studio/agreements' });
+    return;
+  }
   return 'SKIPPED' as const;
 }
 
@@ -126,10 +141,13 @@ export function registerDefaultConsumers() {
   registered = true;
   registerConsumer({
     name: 'merchant-alert',
-    types: ['charge.paid', 'volunteer.applied', 'campaign.goal_reached', 'recurring.pledged'],
+    types: ['charge.paid', 'volunteer.applied', 'campaign.goal_reached', 'recurring.pledged', 'receipt.batch_ready', 'agreement.signed'],
     handle: handleMerchantAlert,
   });
   registerConsumer({ name: 'supporter-link', types: ['charge.paid', 'volunteer.applied', 'recurring.pledged'], handle: handleSupporterLink });
   registerConsumer({ name: 'campaign-goal', types: ['charge.paid'], handle: handleCampaignGoal });
+  // 저니(자동 안내 흐름) — 3단계
+  registerJourneyEngine();
+  registerReceiptBatchHandler();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

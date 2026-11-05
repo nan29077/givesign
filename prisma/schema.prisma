@@ -3517,3 +3517,82 @@ model ApprovalRequest {
   @@index([merchantId, status, createdAt])
   @@map("approval_request")
 }
+
+// ===========================================================================
+// 저니(자동 안내 흐름) — 2026-11-06 고도화 3단계
+// ===========================================================================
+
+/// 기관별 저니 설정. 저니 정의(단계·조건)는 코드(src/server/services/journeys/definitions.ts)에 있고,
+/// 기관은 켜기/끄기, 단계별 승인 필요 여부, 몇 가지 값(최소 금액·대기 일수 등)만 바꾼다.
+/// 행이 없으면 정의의 기본값을 쓴다.
+model JourneySetting {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  journeyKey String   @map("journey_key")
+  enabled    Boolean
+  /// { [stepKey]: true } — 승인 대기함을 거치는 단계
+  approvals  Json     @default("{}")
+  /// 저니별 값(최소 금액·대기 일수·이정표 등). 정의의 params 키만 받는다.
+  params     Json     @default("{}")
+  updatedBy  String?  @map("updated_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, journeyKey])
+  @@map("journey_setting")
+}
+
+/// 저니 실행 1건. (저니, 원천 키) 유일 — 같은 이벤트로 같은 저니가 두 번 돌지 않는다.
+model JourneyRun {
+  id          String    @id
+  merchantId  String    @map("merchant_id")
+  journeyKey  String    @map("journey_key")
+  /// `${journeyKey}:${이벤트 id 또는 원천 키}`
+  triggerKey  String    @unique @map("trigger_key")
+  eventId     String?   @map("event_id")
+  payerId     String?   @map("payer_id")
+  subjectType String?   @map("subject_type")
+  subjectId   String?   @map("subject_id")
+  stepIndex   Int       @default(0) @map("step_index")
+  /// WAITING · RUNNING · AWAITING_APPROVAL · DONE · STOPPED · FAILED · CANCELED
+  status      String    @default("WAITING")
+  dueAt       DateTime  @default(now()) @map("due_at") @db.Timestamptz(3)
+  lockedAt    DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy    String?   @map("locked_by")
+  /// 실행 맥락(금액·캠페인·횟수 등 마스킹 값만) + 승인된 단계
+  context     Json      @default("{}")
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error")
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  logs JourneyStepLog[]
+
+  @@index([status, dueAt])
+  @@index([merchantId, journeyKey, startedAt])
+  @@index([merchantId, payerId, startedAt])
+  @@map("journey_run")
+}
+
+/// 저니 단계 기록(append-only 성격 — 고치지 않고 쌓는다).
+model JourneyStepLog {
+  id        String   @id
+  runId     String   @map("run_id")
+  stepIndex Int      @map("step_index")
+  stepKey   String   @map("step_key")
+  /// DONE · SKIPPED · WAIT · AWAITING_APPROVAL · APPROVED · REJECTED · BLOCKED · FAILED · STOPPED
+  outcome   String
+  /// 발송 단계면 SENT 로 표시(후원자당 발송 상한 계산에 쓴다)
+  sent      Boolean  @default(false)
+  detail    String?
+  merchantId String  @map("merchant_id")
+  payerId   String?  @map("payer_id")
+  at        DateTime @default(now()) @db.Timestamptz(3)
+
+  run JourneyRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, at])
+  @@index([merchantId, payerId, sent, at])
+  @@map("journey_step_log")
+}

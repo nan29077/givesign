@@ -1,6 +1,8 @@
 import { runCronJob } from '@/server/cron';
 import { processDomainEvents } from '@/server/services/events';
 import { registerDefaultConsumers } from '@/server/services/event-consumers';
+import { advanceDueJourneyRuns } from '@/server/services/journeys/engine';
+import { expireApprovals } from '@/server/services/approvals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,5 +18,11 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: Request) {
   registerDefaultConsumers();
-  return runCronJob(req, 'events', 240, async () => ({ ...(await processDomainEvents({ limit: 300 })) }));
+  return runCronJob(req, 'events', 240, async () => {
+    const events = await processDomainEvents({ limit: 300 });
+    // 기한이 된 저니 실행(대기·보류가 끝난 것)을 이어 간다.
+    const journeys = await advanceDueJourneyRuns({ limit: 300 });
+    const approvalsExpired = await expireApprovals();
+    return { events, journeys, approvalsExpired };
+  });
 }

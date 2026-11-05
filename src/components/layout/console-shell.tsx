@@ -21,6 +21,8 @@ import {
   Contact,
   FileSignature as FileSignatureIcon,
   QrCode,
+  Inbox,
+  Workflow,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
@@ -61,9 +63,12 @@ export type ConsoleIconName =
   | 'system' | 'templates' | 'terms' | 'users' | 'settings' | 'send'
   | 'products' | 'orders' | 'apidocs' | 'documents'
   | 'campaigns' | 'recurring' | 'receipts' | 'donors' | 'building'
-  | 'supporters' | 'volunteers' | 'content' | 'channels' | 'notices' | 'agreements' | 'qr';
+  | 'supporters' | 'volunteers' | 'content' | 'channels' | 'notices' | 'agreements' | 'qr'
+  | 'inbox' | 'journeys';
 
 const CONSOLE_ICONS = {
+  inbox: Inbox,
+  journeys: Workflow,
   activity: Activity,
   admins: UserCog,
   audit: ClipboardList,

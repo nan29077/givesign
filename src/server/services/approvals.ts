@@ -122,6 +122,11 @@ export async function decideApproval(input: {
     id: req.id, merchantId: req.merchantId, kind: req.kind, title: req.title, summary: req.summary,
     payload: (req.payload ?? {}) as Record<string, unknown>, subjectType: req.subjectType, subjectId: req.subjectId, payerId: req.payerId,
   };
+  // 처리기는 기본 소비자 등록 때 함께 등록된다(서버 액션 프로세스에서도 보장).
+  if (!handlers.has(req.kind)) {
+    const { registerDefaultConsumers } = await import('./event-consumers');
+    registerDefaultConsumers();
+  }
   const handler = handlers.get(req.kind);
   try {
     if (input.decision === 'APPROVE') {

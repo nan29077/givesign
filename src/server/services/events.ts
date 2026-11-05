@@ -46,6 +46,10 @@ export const DOMAIN_EVENT_TYPES = [
   'agreement.signed',
   'document.signed',
   'supporter.dormant',
+  /** 연초: 지난해 후원자 중 영수증 정보 미등록자(영수증 배치가 낸다) */
+  'receipt.info_needed',
+  /** 봉사 회차 전날(저니 배치가 낸다) */
+  'volunteer.shift_reminder_due',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 
