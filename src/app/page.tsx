@@ -31,6 +31,32 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ w
 
       <HomeAutomation />
 
+      <section className="mt-14 overflow-hidden rounded-[28px] border border-brand-100 bg-[#e9f1e7]" aria-labelledby="home-automation-film-title">
+        <div className="p-6 sm:p-8">
+          <h2 id="home-automation-film-title" className="text-[26px] font-black leading-tight tracking-[-0.03em] text-ink-900 sm:text-[30px]">
+            후원과 전자문서,<br />하나로 이어지는 자동화
+          </h2>
+          <p id="home-automation-film-description" className="mt-4 text-[14px] leading-7 text-ink-700">
+            후원자 모집부터 정기약정·월간 안내·기부금영수증까지.<br className="hidden sm:block" /> 전자문서 작성과 서명, 확인·보관도 기브싸인으로 연결하세요.
+          </p>
+        </div>
+        <video
+          controls
+          playsInline
+          preload="none"
+          poster="/videos/givesign-automation-v2-poster.jpg"
+          width={1280}
+          height={720}
+          aria-labelledby="home-automation-film-title"
+          aria-describedby="home-automation-film-description"
+          className="block aspect-video w-full bg-ink-900"
+        >
+          <source src="/videos/givesign-automation-v2.mp4" type="video/mp4" />
+          <track kind="captions" src="/videos/givesign-automation-v2.ko.vtt" srcLang="ko" label="한국어" />
+          <a href="/videos/givesign-automation-v2.mp4">후원과 전자문서 자동화 소개 보기</a>
+        </video>
+      </section>
+
       <BannerStrip position="HOME_MIDDLE" className="mt-14" />
 
       <section className="mt-14 overflow-hidden rounded-3xl bg-white shadow-sm">
