@@ -118,6 +118,23 @@ tests/             핵심 흐름 통합 테스트
 docs/              분석·설계 보고서, 운영 문서
 ```
 
+## 2026-11-05 점검 조치로 생긴 규칙
+
+상세: `docs/2026-11-05_점검조치완료보고서.md`.
+
+- **시드는 둘로 나뉜다.** `prisma/seed-base.ts`(약관·전역 수수료/한도 정책·필수 설정 — 운영에서도 없는 것만 넣는다) + 로컬 샘플(계정·거래). 운영 시드는 기준 데이터만 넣고 끝난다. 스테이징 샘플 시드는 `SEED_ADMIN_PASSWORD`(12자 이상, 공개 기본값 금지)가 필수이고, `givesign1234!` 는 로컬 전용이다. 기준 데이터가 비면 관리자 대시보드 경고 + 부팅 로그 오류(`base-data-check.ts`).
+- **테스트 환경 고지는 한 곳에서 판단한다.** `src/server/services/service-mode.ts` 의 `testModeNotice()`(결제·문자 어댑터 mock 또는 `SAFE_MODE`). 공개 푸터·기관 신청 폼·기관 대시보드 띠는 이 값일 때만 그린다. 문구를 하드코딩하지 않는다.
+- **결과 미확인 건 복구.** `src/server/services/payment-recovery.ts` 정리 배치가 15분 지난 `REQUESTED/TIMEOUT` 결제 거래를 UNKNOWN(대사 큐)으로, 30분 지난 출금 전 고아(RECEIVED·세션 없는 PENDING_PIN)를 실패로 닫는다. 돈이 빠졌을 수 있는 건은 실패로 확정하지 않는다. 헥토 조회의 빈/모르는 상태값은 PENDING.
+- **PIN 성공 코드.** 결제사가 mock 이 아니면 환경과 무관하게 `MOCK` 코드는 무효이고, `PAYMENT_PIN_SUCCESS_CODES` 가 비면 모든 PIN 콜백을 거절한다(`resolvePinSuccessCodes`).
+- **상품 규칙은 콘솔·파트너 API 공용**(`src/server/services/product-rules.ts`): `FEATURE_GOODS` 꺼짐이면 DIGITAL 만, 금액 범위·0원 거절·종류 변경 거절·보관 상품 수정 거절·종류별 12개.
+- **보관(soft delete) 대상 추가:** 웹훅(전송 이력 보존)·발송 템플릿·금칙어·공휴일·관리자 배너·공지(`archived_at`). 하드 삭제를 새로 만들지 않는다.
+- **동시 실행 선점.** 월간 안내는 `notice_run.locked_at` 선점 + `notice_delivery` 를 발송 전에 `SENDING` 으로 먼저 만든다. 콘텐츠 생성 재개·게시 고착(`PUBLISHING` 30분)·크론 잠금은 모두 조건부 갱신·소유자 확인(`runCronJob`).
+- **탈퇴.** 후원자 탈퇴 시 `payer_receipt_profile` 을 지우고 영수증 동의 철회를 기록한다. 탈퇴자 명의 영수증은 발급하지 않는다(발급된 영수증 스냅샷은 보존). 주민번호 해시는 유니크.
+- **공용 `Button` 의 기본 `type` 은 `button`** 이다. 폼 제출 버튼은 `type="submit"` 을 명시한다.
+- **사업자 표시 정보**는 `BUSINESS_*` 환경변수로 받고, 값이 없으면 그 줄을 숨긴다(지어내지 않는다).
+- **비밀번호 재설정 메일·후원회원 이메일 인증은 메일 발송 연동이 없다.** 운영에서 재설정 링크는 로그에만 남는다. 연동 전에는 "메일로 보냈다"고 꾸미지 않는다.
+- 공개 화면의 로컬 이미지(`/assets/**`, `/banners/**`)는 Next 이미지 최적화를 쓴다(배포 환경에 `sharp` 필요). 업로드·외부 주소만 원본(`image-src.ts`).
+
 ## 실행 방법
 
 루트 배치 파일은 번호가 붙은 3개가 기본이고, 나머지는 `도구_` 접두사를 쓴다.

@@ -28,7 +28,7 @@ const client = new Client({ connectionString: url, connectionTimeoutMillis: 5000
 
 try {
   await client.connect();
-  const r = await client.query('SELECT current_database() AS db');
+  await client.query('SELECT current_database() AS db');
   const t = await client.query(
     "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema='public'",
   );
