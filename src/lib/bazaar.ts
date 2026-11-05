@@ -86,10 +86,17 @@ export const ITEM_CATEGORIES = ['생활용품', '식품', '의류·잡화', '주
  * 판매·기부 접수 금지 품목. 기관이 판매자(위탁자)가 되므로 영업신고·인증이 필요한 품목은 받지 않는다.
  * 품명·분류에 아래 단어가 들어가면 접수 단계에서 막는다(운영자가 최종 검토).
  */
-export const BLOCKED_KEYWORDS = ['건강기능식품', '의약품', '약품', '주류', '술', '담배', '전자담배', '의료기기', '총', '도검', '농약', '반려동물 사료', '중고 속옷'];
+export const BLOCKED_KEYWORDS = [
+  '건강기능식품', '의약품', '약품', '주류', '술', '담배', '전자담배', '의료기기', '총', '도검', '농약', '반려동물 사료', '중고 속옷',
+  // 주류(2026-11-06 점검 낮음): 품명에 술 종류만 적는 경우가 많다.
+  '소주', '맥주', '와인', '위스키', '막걸리', '보드카', '전통주', '사케', '고량주', '샴페인', '브랜디', '리큐르', '데킬라', '하이볼',
+];
+/** 금지어가 들어 있어도 술 자체가 아닌 용품(잔·오프너 등)은 막지 않는다. */
+const BLOCKED_KEYWORD_EXCEPTIONS = ['와인잔', '와인글라스', '와인오프너', '와인셀러', '와인랙', '맥주잔', '맥주컵', '소주잔', '위스키잔', '하이볼잔', '샴페인잔', '무알코올', '무알콜'];
 
 export function blockedKeyword(text: string): string | null {
-  const t = text.replace(/\s+/g, '');
+  let t = text.replace(/\s+/g, '');
+  for (const ex of BLOCKED_KEYWORD_EXCEPTIONS) t = t.split(ex).join('|');
   for (const k of BLOCKED_KEYWORDS) {
     const kk = k.replace(/\s+/g, '');
     if (kk.length <= 1) {
@@ -148,7 +155,10 @@ export const settlementStatusLabel: Record<string, { text: string; tone: Tone }>
   DRAFT: { text: '집계', tone: 'neutral' },
   CONFIRMED: { text: '확정(지급 대기)', tone: 'warning' },
   PAID: { text: '지급 완료', tone: 'success' },
+  CARRIED: { text: '다음 달로 이월', tone: 'neutral' },
 };
+/** 가액 협의 이력 종류(화면에 영문 코드를 보이지 않는다) */
+export const valuationKindLabel: Record<string, string> = { PROPOSE: '제안', COUNTER: '역제안', CONFIRM: '확정', ACCEPT: '수락', RECALC: '재계산' };
 export const RETURN_BEARERS = ['NONE', 'MERCHANT', 'GIVESIGN'] as const;
 export const returnBearerLabel: Record<string, string> = { NONE: '없음', MERCHANT: '기관 부담', GIVESIGN: '기브싸인 부담' };
 export const ledgerTypeLabel: Record<string, string> = {
@@ -157,16 +167,30 @@ export const ledgerTypeLabel: Record<string, string> = {
   FEE: '수수료',
   RETURN_COST: '반송비(기관 부담)',
   PAYOUT: '지급',
+  CARRY_IN: '전월 이월',
+  CARRY_OUT: '다음 달로 이월',
 };
 
-/** 추적 코드: 셀러브릭스 상품명 앞에 붙인다. */
+/** 추적 코드: 셀러브릭스 상품명 앞에 붙인다. 6자리(1,000,000번째부터는 7자리 이상). */
 export function trackingCode(n: number): string {
   return `GSB-${String(n).padStart(6, '0')}`;
 }
-/** 문자열에서 추적 코드를 찾는다(파일 업로드의 상품명 열에서도 찾는다). */
+/**
+ * 문자열에서 추적 코드를 찾는다(파일 업로드의 상품명 열에서도 찾는다).
+ * 숫자를 끝까지 읽는다 — 예전에는 6자리만 읽어 'GSB-0000012'·'GSB-000001 2'·'GSB-0000015개' 를 GSB-000001 로 잘못 맞췄다.
+ * 앞뒤가 다른 영문·숫자에 붙어 있으면 코드로 보지 않는다(예: XGSB-000001).
+ */
 export function findTrackingCode(text: string): string | null {
-  const m = /GSB-\d{6}/i.exec(text);
-  return m ? m[0].toUpperCase() : null;
+  const m = /(?<![A-Za-z0-9])GSB-(\d{6,9})(?![\d])/i.exec(text);
+  if (!m) return null;
+  const digits = m[1];
+  // 7자리 이상이면서 0으로 시작하면 정규 코드가 아니다(1,000,000 이상만 7자리).
+  if (digits.length > 6 && digits.startsWith('0')) return null;
+  return `GSB-${digits}`;
+}
+/** 추적 코드의 번호(정렬·다음 번호 계산용) */
+export function trackingNumber(code: string): number {
+  return Number(code.replace(/^GSB-/i, '')) || 0;
 }
 
 // ---------------------------------------------------------------- 설정
@@ -197,15 +221,42 @@ export const DEFAULT_BAZAAR_CONFIG: BazaarConfig = {
   consignmentNotice: '{기관명} 위탁판매 상품입니다. 판매 금액에서 수수료를 뺀 금액이 {기관명}에 귀속됩니다.',
 };
 
+/** 요율 입력: 0~90, 소수 둘째 자리까지. '1e1'·' 30'·'030.' 같은 꼴은 받지 않는다. */
+export function isFeeRateString(v: unknown): v is string {
+  return typeof v === 'string' && /^(0|[1-9]\d?)(\.\d{1,2})?$/.test(v) && Number(v) <= 90;
+}
+
+/** 운영 설정 입력 범위(화면 검증·저장 정규화 공용) */
+export const BAZAAR_CONFIG_RANGES = {
+  minSalePrice: { min: 100, max: 10_000_000, label: '최소 판매가', unit: '원' },
+  defaultPerPersonLimit: { min: 1, max: 999, label: '1인 구매 제한', unit: '개' },
+  matchDeadlineDays: { min: 1, max: 30, label: '매칭 수락 기한', unit: '일' },
+  settlementPayDay: { min: 1, max: 28, label: '정산 지급일', unit: '일' },
+} as const;
+
+/** 범위를 벗어난 값을 기본값으로 바꾸지 않고 오류 문구로 돌려준다(저장 전 검증). */
+export function validateConfigInput(v: Partial<Record<keyof BazaarConfig, unknown>>): string[] {
+  const errors: string[] = [];
+  if (!isFeeRateString(v.feeRatePercent)) errors.push('수수료 요율은 0~90 사이 숫자(소수 둘째 자리까지)로 입력해 주세요.');
+  for (const [key, r] of Object.entries(BAZAAR_CONFIG_RANGES)) {
+    const n = Number(v[key as keyof BazaarConfig]);
+    if (!Number.isInteger(n) || n < r.min || n > r.max)
+      errors.push(`${r.label}은(는) ${r.min.toLocaleString('ko-KR')}~${r.max.toLocaleString('ko-KR')}${r.unit} 사이 정수로 입력해 주세요.`);
+  }
+  if (typeof v.warehouseAddress === 'string' && v.warehouseAddress.length > 300) errors.push('창고 주소는 300자 이내로 입력해 주세요.');
+  if (typeof v.consignmentNotice === 'string' && v.consignmentNotice.length > 300) errors.push('위탁판매 문구는 300자 이내로 입력해 주세요.');
+  return errors;
+}
+
 export function normalizeConfig(raw: unknown): BazaarConfig {
   const v = (raw && typeof raw === 'object' ? raw : {}) as Partial<BazaarConfig>;
   const num = (x: unknown, d: number, min: number, max: number) => {
     const n = Number(x);
     return Number.isFinite(n) && n >= min && n <= max ? Math.trunc(n) : d;
   };
-  const rate = Number(v.feeRatePercent);
   return {
-    feeRatePercent: Number.isFinite(rate) && rate >= 0 && rate <= 90 ? String(v.feeRatePercent) : DEFAULT_BAZAAR_CONFIG.feeRatePercent,
+    // 저장은 정규형 문자열("30", "12.5")로. 지수 표기 등은 기본값(검증은 validateConfigInput 이 먼저 한다).
+    feeRatePercent: isFeeRateString(v.feeRatePercent) ? String(Number(v.feeRatePercent)) : DEFAULT_BAZAAR_CONFIG.feeRatePercent,
     feeVatMode: v.feeVatMode === 'EXCLUDED' ? 'EXCLUDED' : 'INCLUDED',
     minSalePrice: num(v.minSalePrice, DEFAULT_BAZAAR_CONFIG.minSalePrice, 100, 10_000_000),
     defaultPerPersonLimit: num(v.defaultPerPersonLimit, DEFAULT_BAZAAR_CONFIG.defaultPerPersonLimit, 1, 999),
@@ -245,15 +296,44 @@ export function computeFee(net: bigint, ratePercent: string, mode: 'INCLUDED' | 
   return { fee: supply + vat, supply, vat };
 }
 
-/** 판매 결과 한 줄의 기관 귀속 계산(미리보기·원장 반영 공용) */
+export type FeeRate = Pick<BazaarConfig, 'feeRatePercent' | 'feeVatMode'>;
+
+/**
+ * 판매 결과 한 줄의 기관 귀속 계산(미리보기·원장 반영 공용).
+ * refundRate 를 주면 환불분 수수료 환입은 그 요율(원래 판매 때 요율)로 계산한다(점검 B-M3).
+ * 판매·환불 요율이 같으면 예전과 같이 순판매액(판매-환불)에 한 번 계산한다(반올림 결과 동일 유지).
+ * 반올림은 줄 단위다(월 합계 반올림과 원 단위 차이가 날 수 있음 — 결정 필요 항목, 2026-11-06 점검 낮음).
+ */
 export function settleLine(
   line: { grossAmount: bigint; refundAmount: bigint; returnCost: bigint; returnBearer: string },
-  config: Pick<BazaarConfig, 'feeRatePercent' | 'feeVatMode'>,
+  config: FeeRate,
+  refundRate?: FeeRate | null,
 ) {
   const net = line.grossAmount - line.refundAmount;
-  const { fee, supply, vat } = computeFee(net, config.feeRatePercent, config.feeVatMode);
+  const rr = refundRate ?? config;
+  let fee: bigint, supply: bigint, vat: bigint;
+  if (rr.feeRatePercent === config.feeRatePercent && rr.feeVatMode === config.feeVatMode) {
+    ({ fee, supply, vat } = computeFee(net, config.feeRatePercent, config.feeVatMode));
+  } else {
+    const a = computeFee(line.grossAmount, config.feeRatePercent, config.feeVatMode);
+    const b = computeFee(line.refundAmount, rr.feeRatePercent, rr.feeVatMode);
+    fee = a.fee - b.fee;
+    supply = a.supply - b.supply;
+    vat = a.vat - b.vat;
+  }
   const returnCost = line.returnBearer === 'MERCHANT' ? line.returnCost : 0n;
   return { net, fee, supply, vat, returnCost, payout: net - fee - returnCost };
+}
+
+/** 저장된 판매 줄의 요율(승인 때 기록). 승인 전·기록 이전 줄은 현재 설정으로 본다. */
+export function lineRates(
+  line: { feeRatePercent?: string | null; feeVatMode?: string | null; refundFeeRatePercent?: string | null; refundFeeVatMode?: string | null },
+  fallback: FeeRate,
+): { sale: FeeRate; refund: FeeRate } {
+  const mode = (v: string | null | undefined, d: FeeRate['feeVatMode']) => (v === 'EXCLUDED' ? 'EXCLUDED' : v === 'INCLUDED' ? 'INCLUDED' : d);
+  const sale: FeeRate = { feeRatePercent: line.feeRatePercent ?? fallback.feeRatePercent, feeVatMode: mode(line.feeVatMode, fallback.feeVatMode) };
+  const refund: FeeRate = { feeRatePercent: line.refundFeeRatePercent ?? sale.feeRatePercent, feeVatMode: mode(line.refundFeeVatMode, sale.feeVatMode) };
+  return { sale, refund };
 }
 
 // ---------------------------------------------------------------- 월·날짜
@@ -295,36 +375,90 @@ export interface ParsedSaleRow {
 
 /** 따옴표를 지원하는 간단한 CSV 한 줄 분리 */
 export function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
+  return splitCsvRecords(line)[0]?.cells ?? [''];
+}
+
+/**
+ * CSV 전체를 레코드로 나눈다. 따옴표 안의 쉼표·줄바꿈("메모\n둘째 줄")을 지원한다.
+ * line 은 레코드가 시작한 파일 줄 번호(1부터)다.
+ */
+export function splitCsvRecords(text: string): Array<{ line: number; cells: string[]; raw: string }> {
+  const out: Array<{ line: number; cells: string[]; raw: string }> = [];
+  let cells: string[] = [];
   let cur = '';
   let q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
+  let line = 1;
+  let startLine = 1;
+  let raw = '';
+  const flush = () => {
+    cells.push(cur);
+    out.push({ line: startLine, cells: cells.map((x) => x.trim()), raw });
+    cells = [];
+    cur = '';
+    raw = '';
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
     if (q) {
-      if (c === '"' && line[i + 1] === '"') {
+      if (c === '"' && text[i + 1] === '"') {
         cur += '"';
+        raw += '""';
         i++;
-      } else if (c === '"') q = false;
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') {
-      out.push(cur);
+        continue;
+      }
+      if (c === '"') q = false;
+      else {
+        if (c === '\n') line++;
+        cur += c;
+      }
+      raw += c;
+      continue;
+    }
+    if (c === '"') {
+      q = true;
+      raw += c;
+    } else if (c === ',') {
+      cells.push(cur);
       cur = '';
-    } else cur += c;
+      raw += c;
+    } else if (c === '\r' && text[i + 1] === '\n') {
+      continue;
+    } else if (c === '\n' || c === '\r') {
+      flush();
+      line++;
+      startLine = line;
+    } else {
+      cur += c;
+      raw += c;
+    }
   }
-  out.push(cur);
-  return out.map((x) => x.trim());
+  if (cur !== '' || cells.length || raw !== '') flush();
+  return out;
+}
+
+/**
+ * 업로드한 CSV 바이트를 글자로 바꾼다. UTF-8 로 읽어 깨진 글자(U+FFFD)가 나오면
+ * 엑셀 기본 저장 형식(CP949 = WHATWG 'euc-kr')으로 다시 읽는다.
+ */
+export function decodeCsvBytes(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'cp949' } {
+  const utf8 = new TextDecoder('utf-8').decode(bytes);
+  if (!utf8.includes('\uFFFD')) return { text: utf8, encoding: 'utf-8' };
+  try {
+    return { text: new TextDecoder('euc-kr').decode(bytes), encoding: 'cp949' };
+  } catch {
+    return { text: utf8, encoding: 'utf-8' };
+  }
 }
 
 function toInt(v: string | undefined): number | null {
   const s = (v ?? '').replace(/[,\s원]/g, '');
   if (s === '') return 0;
-  return /^\d+$/.test(s) ? Number(s) : null;
+  return /^\d{1,9}$/.test(s) ? Number(s) : null;
 }
 function toWon(v: string | undefined): bigint | null {
   const s = (v ?? '').replace(/[,\s원]/g, '');
   if (s === '') return 0n;
-  return /^\d+$/.test(s) ? BigInt(s) : null;
+  return /^\d{1,15}$/.test(s) ? BigInt(s) : null;
 }
 function toBearer(v: string | undefined): 'NONE' | 'MERCHANT' | 'GIVESIGN' | null {
   const s = (v ?? '').trim();
@@ -335,11 +469,10 @@ function toBearer(v: string | undefined): 'NONE' | 'MERCHANT' | 'GIVESIGN' | nul
 }
 
 export function parseSaleCsv(text: string): ParsedSaleRow[] {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+  const records = splitCsvRecords(text.replace(/^\uFEFF/, ''));
   const rows: ParsedSaleRow[] = [];
-  lines.forEach((raw, idx) => {
-    if (!raw.trim()) return;
-    const cells = splitCsvLine(raw);
+  records.forEach(({ line, cells, raw }, idx) => {
+    if (!raw.trim() || cells.every((c) => c === '')) return;
     // 머리줄은 건너뛴다. 첫 줄이라도 추적 코드가 있거나 둘째 칸이 숫자면 데이터 줄이다
     // (예전에는 '상품' 이 들어간 첫 데이터 줄을 머리줄로 보고 조용히 버렸다 — 2026-11-05 E2E 에서 발견).
     if (idx === 0 && !findTrackingCode(cells[0] ?? '') && !/^\s*[\d,]+\s*$/.test(cells[1] ?? '')) return;
@@ -352,13 +485,18 @@ export function parseSaleCsv(text: string): ParsedSaleRow[] {
     const bearer = toBearer(cells[6]);
     let error: string | null = null;
     if (!code) error = '추적 코드(GSB-000000)가 없습니다. 셀러브릭스 임시상품이면 바자회 정산에서 제외됩니다.';
+    // 열 개수가 다르면 따옴표 없는 "10,000" 처럼 칸이 밀린 것이다(점검 B-M5: 10원으로 조용히 들어가던 문제).
+    else if (cells.length !== SALE_CSV_HEADER.length)
+      error = `열이 ${cells.length}개입니다. ${SALE_CSV_HEADER.length}개 열(${SALE_CSV_HEADER.join(', ')})을 맞춰 주세요. 쉼표가 든 금액은 따옴표로 감싸거나 쉼표 없이 적어 주세요(예: 10000).`;
     else if (soldQty === null || gross === null || refundQty === null || refund === null || returnCost === null)
       error = '수량·금액은 숫자로 입력해 주세요.';
     else if (bearer === null) error = '반송비 부담은 기관 / 기브싸인 / 없음 중 하나로 입력해 주세요.';
     else if (soldQty === 0 && gross === 0n && refund === 0n && returnCost === 0n) error = '판매·환불·반송비가 모두 0 입니다.';
-    // 환불은 이전에 승인된 판매에 대한 정정일 수 있다. 상품 누적 판매액을 넘는지는 서비스가 확인한다.
+    else if ((soldQty > 0) !== (gross > 0n)) error = '판매 수량과 판매 금액은 함께 적어 주세요(한쪽만 0 일 수 없습니다).';
+    else if (refundQty > 0 && refund === 0n) error = '환불 수량이 있으면 환불 금액을 적어 주세요.';
+    // 환불은 이전에 승인된 판매에 대한 정정일 수 있다. 상품 누적 판매액을 넘는지·단가와 맞는지는 서비스가 확인한다.
     rows.push({
-      line: idx + 1,
+      line,
       trackingCode: code,
       soldQty: soldQty ?? 0,
       grossAmount: gross ?? 0n,
@@ -372,6 +510,25 @@ export function parseSaleCsv(text: string): ParsedSaleRow[] {
   });
   return rows;
 }
+
+/**
+ * 판매 금액이 수량 × 판매가와 크게 다르면 입력 실수로 본다(쉼표 밀림·자릿수 오타).
+ * 할인·배송비·가격 변경을 감안해 수량 × 판매가의 절반 미만, 수량 × (판매가 + 배송비)의 2배 초과만 거절한다.
+ */
+export function amountMismatch(qty: number, amount: bigint, salePrice: bigint, shippingFee: bigint): boolean {
+  if (qty <= 0) return false;
+  const low = (BigInt(qty) * salePrice) / 2n;
+  const high = BigInt(qty) * (salePrice + shippingFee) * 2n;
+  return amount < low || amount > high;
+}
+
+/** 서버 액션 한 번에 올릴 수 있는 파일(사진·근거 합계). next.config.ts serverActions.bodySizeLimit 와 맞춘다. */
+export const BAZAAR_UPLOAD_MAX_FILES = 6;
+export const BAZAAR_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+/** 기부 건당 파일 상한 */
+export const BAZAAR_FILES_PER_DONATION = 20;
+/** 판매 결과 CSV 상한 */
+export const BAZAAR_CSV_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 엑셀 수식 주입 방지 + 따옴표 이스케이프 */
 export function csvCell(v: string | number | bigint | null | undefined): string {

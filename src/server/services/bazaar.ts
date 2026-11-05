@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Prisma } from '@/generated/prisma/client';
+import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import { encrypt, phoneHash, maskPhone, normalizePhone, normalizeResident, isValidResident, maskResident } from '@/lib/crypto';
@@ -20,6 +20,11 @@ import {
   settleLine,
   settlementDueDate,
   trackingCode,
+  amountMismatch,
+  BAZAAR_FILES_PER_DONATION,
+  BAZAAR_UPLOAD_MAX_BYTES,
+  BAZAAR_UPLOAD_MAX_FILES,
+  type FeeRate,
   type DonationStatus,
   type ParsedSaleRow,
   type BazaarConfig,
@@ -68,6 +73,27 @@ async function transition(
       note: note ?? null,
     },
   });
+}
+
+/** 기부 건 행 잠금. 같은 기부 건의 가액 제안·확정·영수증 발급·재발급을 줄 세운다(점검 B-3·B-M1). */
+async function lockDonation(tx: Tx, donationId: string) {
+  await tx.$queryRaw`SELECT id FROM in_kind_donation WHERE id = ${donationId} FOR UPDATE`;
+}
+
+/**
+ * 기관 단위 정산 잠금(트랜잭션 끝까지). 판매 결과 승인·정산 집계·확정·지급·이월이 같은 기관에서 겹치지 않게 한다(점검 B-2·B-M6).
+ * 여러 기관을 잡을 때는 정렬해서 잡는다(교착 방지).
+ */
+async function lockMerchantSettlement(tx: Tx, merchantIds: string[]) {
+  for (const id of [...new Set(merchantIds)].sort()) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(778202, hashtext(${id}::text))`;
+  }
+}
+
+/** 기관이 바자회 참여 승인 상태인지(기관 콘솔에서 하는 변경 작업의 공통 조건, 점검 B-5) */
+async function assertMerchantParticipating(merchantId: string, client: Tx | typeof prisma = prisma) {
+  const p = await client.merchantBazaar.findUnique({ where: { merchantId }, select: { status: true } });
+  if (p?.status !== 'APPROVED') throw new BazaarError('라이브 바자회 참여가 승인된 기관만 처리할 수 있습니다. 참여 상태를 확인해 주세요.');
 }
 
 // ===========================================================================
@@ -225,6 +251,24 @@ export async function decideParticipation(merchantId: string, decision: 'APPROVE
     where: { merchantId },
     data: { status: decision, decidedAt: new Date(), decidedBy: adminUserId, note: note?.slice(0, 300) ?? row.note },
   });
+  // 정지·반려된 기관에 걸려 있는 매칭 제안은 철회하고 기부 건을 접수 상태로 되돌린다(점검 B-5).
+  let withdrawn = 0;
+  if (decision !== 'APPROVED') {
+    const open = await prisma.inKindMatch.findMany({ where: { merchantId, status: 'PROPOSED' }, select: { id: true, donationId: true } });
+    const why = decision === 'SUSPENDED' ? '기관 참여 정지' : '기관 참여 반려';
+    for (const m of open) {
+      await prisma.$transaction(async (tx) => {
+        const n = await tx.inKindMatch.updateMany({
+          where: { id: m.id, status: 'PROPOSED' },
+          data: { status: 'WITHDRAWN', decidedAt: new Date(), decidedBy: adminUserId, reason: why },
+        });
+        if (n.count !== 1) return;
+        await transition(tx, m.donationId, S.MATCH_PROPOSED, S.SUBMITTED, { type: 'ADMIN', userId: adminUserId }, `${why}로 매칭 제안 철회`);
+        withdrawn += 1;
+      });
+    }
+  }
+  return { withdrawn };
 }
 
 /** 매칭 가능한 기관: 바자회 참여 승인 + 기관 승인 + 공익법인 지정 확인(영수증 발급 가능) */
@@ -299,15 +343,31 @@ export function validateDonationInput(input: DonationInput) {
   if (!(DELIVERY_METHODS as readonly string[]).includes(input.deliveryMethod)) throw new BazaarError('물품 전달 방법을 골라 주세요.');
 }
 
-export async function createDonation(donorId: string, userId: string, input: DonationInput) {
+/** 기부 접수 때 함께 올리는 파일(검증을 마친 것). */
+export interface PreparedFile {
+  kind: 'PHOTO' | 'EVIDENCE' | 'INSPECTION';
+  buf: Buffer;
+  ext: string;
+  mime: string;
+  fileName: string;
+}
+
+export async function createDonation(donorId: string, userId: string, input: DonationInput, files: PreparedFile[] = []) {
   validateDonationInput(input);
+  if (files.length > BAZAAR_FILES_PER_DONATION) throw new BazaarError(`한 기부 건에는 파일을 ${BAZAAR_FILES_PER_DONATION}개까지 올릴 수 있습니다.`);
+  if (input.minSalePrice != null && (!Number.isInteger(input.minSalePrice) || input.minSalePrice < 0 || input.minSalePrice > 100_000_000))
+    throw new BazaarError('최저 판매가를 숫자(원)로 입력해 주세요.');
   const config = await getBazaarConfig();
   if (input.preferredMerchantId) await assertEligible(input.preferredMerchantId);
   const declaredTotal = input.items.reduce((s, it) => s + BigInt(it.declaredUnitValue) * BigInt(it.quantity), 0n);
   const id = newId();
   const title = (input.title?.trim() || `${input.items[0].name.trim()}${input.items.length > 1 ? ` 외 ${input.items.length - 1}건` : ''}`).slice(0, 80);
   const itemIds = input.items.map(() => newId());
+  // 파일은 기부 건보다 먼저 저장소에 올린다. 저장 실패면 기부 건을 만들지 않는다(점검 B-M9: 고아 기부 건·중복 접수 방지).
+  // 기부 건 생성이 실패하면 올린 파일을 지운다.
+  const stored = await storeFiles(files);
 
+  try {
   await prisma.$transaction(async (tx) => {
     await tx.inKindDonation.create({
       data: {
@@ -367,7 +427,12 @@ export async function createDonation(donorId: string, userId: string, input: Don
       });
       await transition(tx, id, S.SUBMITTED, S.MATCH_PROPOSED, { type: 'SYSTEM' }, '기부자가 지정한 기관에 매칭 제안');
     }
+    for (const f of stored) await tx.inKindFile.create({ data: { ...f, donationId: id, uploadedBy: userId } });
   });
+  } catch (e) {
+    await discardStored(stored);
+    throw e;
+  }
   return id;
 }
 
@@ -452,6 +517,9 @@ export async function expireMatches(now = new Date()) {
 }
 
 export async function respondMatch(merchantId: string, matchId: string, accept: boolean, userId: string, reason?: string | null) {
+  // 제안 뒤 참여 정지·공익법인 지정 만료가 생길 수 있으니 수락 시점에 다시 확인한다(점검 B-5).
+  if (accept) await assertEligible(merchantId);
+  else await assertMerchantParticipating(merchantId);
   await prisma.$transaction(async (tx) => {
     const m = await tx.inKindMatch.findFirst({ where: { id: matchId, merchantId } });
     if (!m) throw new BazaarError('매칭 제안을 찾을 수 없습니다.');
@@ -485,7 +553,15 @@ function parseItemValues(itemIds: string[], values: Record<string, string>) {
 }
 
 export async function latestValuation(donationId: string) {
-  return prisma.inKindValuation.findFirst({ where: { donationId }, orderBy: { createdAt: 'desc' } });
+  return prisma.inKindValuation.findFirst({ where: { donationId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+}
+
+/** 가장 최근의 제안·역제안(확정 대상). 같은 시각이면 id(ULID) 로 순서를 정한다. */
+async function lastProposal(tx: Tx, donationId: string) {
+  return tx.inKindValuation.findFirst({
+    where: { donationId, kind: { in: ['PROPOSE', 'COUNTER'] } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
 }
 
 /**
@@ -498,44 +574,55 @@ export async function proposeValuation(
   values: Record<string, string>,
   note?: string | null,
 ) {
-  const d = await prisma.inKindDonation.findUnique({ where: { id: donationId }, include: { items: { orderBy: { seq: 'asc' } } } });
-  if (!d) throw new BazaarError('기부 건을 찾을 수 없습니다.');
-  if (actor.type === 'DONOR' && d.donorId !== actor.donorId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
-  if (actor.type === 'MERCHANT' && d.merchantId !== actor.merchantId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
-  if (d.status !== S.VALUATING) throw new BazaarError('가액 협의 단계에서만 제안할 수 있습니다.');
-  const parsed = parseItemValues(d.items.map((i) => i.id), values);
-  const total = d.items.reduce((s, it) => s + parsed[it.id] * BigInt(it.quantity), 0n);
-  await prisma.inKindValuation.create({
-    data: {
-      id: newId(),
-      donationId,
-      actorType: actor.type,
-      actorUserId: actor.userId,
-      kind: actor.type === 'DONOR' ? 'PROPOSE' : 'COUNTER',
-      total,
-      itemValues: Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, v.toString()])),
-      note: note?.trim().slice(0, 500) || null,
-    },
+  if (actor.type === 'MERCHANT' && actor.merchantId) await assertMerchantParticipating(actor.merchantId);
+  // 기부 건을 잠그고 제안을 남긴다. 상대의 확정(acceptValuation)과 줄을 서므로 확정 뒤 제안이 끼어들지 않는다(점검 B-3).
+  return prisma.$transaction(async (tx) => {
+    await lockDonation(tx, donationId);
+    const d = await tx.inKindDonation.findUnique({ where: { id: donationId }, include: { items: { orderBy: { seq: 'asc' } } } });
+    if (!d) throw new BazaarError('기부 건을 찾을 수 없습니다.');
+    if (actor.type === 'DONOR' && d.donorId !== actor.donorId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
+    if (actor.type === 'MERCHANT' && d.merchantId !== actor.merchantId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
+    if (d.status !== S.VALUATING) throw new BazaarError('가액 협의 단계에서만 제안할 수 있습니다.');
+    const parsed = parseItemValues(d.items.map((i) => i.id), values);
+    const total = d.items.reduce((s, it) => s + parsed[it.id] * BigInt(it.quantity), 0n);
+    await tx.inKindValuation.create({
+      data: {
+        id: newId(),
+        donationId,
+        actorType: actor.type,
+        actorUserId: actor.userId,
+        kind: actor.type === 'DONOR' ? 'PROPOSE' : 'COUNTER',
+        total,
+        itemValues: Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, v.toString()])),
+        note: note?.trim().slice(0, 500) || null,
+      },
+    });
+    return total;
   });
-  return total;
 }
 
-/** 상대의 마지막 제안을 받아들여 가액을 확정한다. 자기 제안은 스스로 확정할 수 없다. */
+/**
+ * 상대의 마지막 제안을 받아들여 가액을 확정한다. 자기 제안은 스스로 확정할 수 없다.
+ * valuationId 는 화면에서 본 제안이다. 그 사이 상대가 다시 제안했으면 확정하지 않는다(점검 B-3).
+ */
 export async function acceptValuation(
   donationId: string,
   actor: { type: 'DONOR' | 'MERCHANT'; userId: string; donorId?: string; merchantId?: string },
+  valuationId: string,
 ) {
+  if (!valuationId) throw new BazaarError('확정할 제안을 확인할 수 없습니다. 화면을 새로 고쳐 주세요.');
+  if (actor.type === 'MERCHANT' && actor.merchantId) await assertMerchantParticipating(actor.merchantId);
   await prisma.$transaction(async (tx) => {
+    await lockDonation(tx, donationId);
     const d = await tx.inKindDonation.findUnique({ where: { id: donationId }, include: { items: true } });
     if (!d) throw new BazaarError('기부 건을 찾을 수 없습니다.');
     if (actor.type === 'DONOR' && d.donorId !== actor.donorId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
     if (actor.type === 'MERCHANT' && d.merchantId !== actor.merchantId) throw new BazaarError('기부 건을 찾을 수 없습니다.');
     if (d.status !== S.VALUATING) throw new BazaarError('가액 협의 단계가 아닙니다.');
-    const last = await tx.inKindValuation.findFirst({
-      where: { donationId, kind: { in: ['PROPOSE', 'COUNTER'] } },
-      orderBy: { createdAt: 'desc' },
-    });
+    const last = await lastProposal(tx, donationId);
     if (!last) throw new BazaarError('확정할 가액 제안이 없습니다.');
+    if (last.id !== valuationId)
+      throw new BazaarError('상대가 그 사이 새 가액을 제안했습니다. 화면을 새로 고쳐 최신 제안을 확인한 뒤 다시 확정해 주세요.');
     if (last.actorType === actor.type) throw new BazaarError('내가 낸 제안은 상대가 수락해야 확정됩니다.');
     const values = last.itemValues as Record<string, string>;
     for (const it of d.items) {
@@ -693,9 +780,12 @@ export async function registerInbound(donationId: string, adminUserId: string, i
   });
 }
 
-/** 검수 확정 시 영수증 금액 = Σ 확정 단가 × 합격 수량 */
-export function receiptAmountOf(items: Array<{ unitValue: bigint | null; acceptedQty: number | null }>) {
-  return items.reduce((s, it) => s + (it.unitValue ?? 0n) * BigInt(it.acceptedQty ?? 0), 0n);
+/**
+ * 영수증 금액 = Σ 확정 단가 × (합격 수량 - 기부자에게 돌려준 수량).
+ * 돌려준 수량은 상품 판매 종료 때 '기부자에게 반환' 으로 기록한 수량이다(점검 B-M4). 검수 확정 때는 0 이다.
+ */
+export function receiptAmountOf(items: Array<{ unitValue: bigint | null; acceptedQty: number | null; returnedQty?: number | null }>) {
+  return items.reduce((s, it) => s + (it.unitValue ?? 0n) * BigInt(Math.max((it.acceptedQty ?? 0) - (it.returnedQty ?? 0), 0)), 0n);
 }
 
 async function nextReceiptSeq(tx: Tx, merchantId: string, taxYear: number) {
@@ -707,7 +797,7 @@ async function nextReceiptSeq(tx: Tx, merchantId: string, taxYear: number) {
 async function issueInKindReceiptTx(tx: Tx, donationId: string, issuedBy: string) {
   const d = await tx.inKindDonation.findUnique({
     where: { id: donationId },
-    include: { items: { orderBy: { seq: 'asc' } }, donor: true, merchant: true, inbound: true },
+    include: { items: { orderBy: { seq: 'asc' }, include: { product: { select: { returnedQty: true } } } }, donor: true, merchant: true, inbound: true },
   });
   if (!d || !d.merchant) throw new BazaarError('기부 건을 찾을 수 없습니다.');
   const readiness = issuerReadiness(d.merchant);
@@ -716,9 +806,11 @@ async function issueInKindReceiptTx(tx: Tx, donationId: string, issuedBy: string
   if (donor.donorType === 'INDIVIDUAL' && (!donor.legalName || !donor.residentNoEnc))
     throw new BazaarError('개인 기부자가 영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다. 기부자 콘솔에서 등록하면 발급할 수 있습니다.');
   if (donor.donorType === 'CORPORATE' && !donor.businessNo) throw new BazaarError('기업 기부자의 사업자등록번호가 없습니다.');
-  const items = d.items.filter((it) => (it.acceptedQty ?? 0) > 0);
-  const total = receiptAmountOf(items);
-  if (total <= 0n) throw new BazaarError('영수증 금액이 0원입니다. 합격 수량과 확정 단가를 확인해 주세요.');
+  const items = d.items
+    .map((it) => ({ ...it, qty: Math.max((it.acceptedQty ?? 0) - (it.product?.returnedQty ?? 0), 0) }))
+    .filter((it) => it.qty > 0);
+  const total = items.reduce((s, it) => s + (it.unitValue ?? 0n) * BigInt(it.qty), 0n);
+  if (total <= 0n) throw new BazaarError('영수증 금액이 0원입니다. 합격 수량·반환 수량과 확정 단가를 확인해 주세요.');
   const donatedAt = d.inbound?.receivedAt ?? new Date();
   const taxYear = Number(kstDateKey(donatedAt).slice(0, 4));
   const seq = await nextReceiptSeq(tx, d.merchant.id, taxYear);
@@ -754,9 +846,9 @@ async function issueInKindReceiptTx(tx: Tx, donationId: string, issuedBy: string
       } as Prisma.InputJsonValue,
       items: items.map((it) => ({
         name: it.name,
-        quantity: it.acceptedQty,
+        quantity: it.qty,
         unitValue: (it.unitValue ?? 0n).toString(),
-        amount: ((it.unitValue ?? 0n) * BigInt(it.acceptedQty ?? 0)).toString(),
+        amount: ((it.unitValue ?? 0n) * BigInt(it.qty)).toString(),
       })) as Prisma.InputJsonValue,
       residentNoEnc: donor.donorType === 'INDIVIDUAL' ? donor.residentNoEnc : null,
       donatedAt,
@@ -768,8 +860,9 @@ async function issueInKindReceiptTx(tx: Tx, donationId: string, issuedBy: string
 async function nextTrackingNumber(tx: Tx) {
   // 표 전체 잠금 대신 advisory lock 으로 번호 발급만 직렬화한다.
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(778201)`;
-  const last = await tx.bazaarProduct.findFirst({ orderBy: { trackingCode: 'desc' }, select: { trackingCode: true } });
-  return (last ? Number(last.trackingCode.slice(4)) : 0) + 1;
+  // 문자열 정렬은 GSB-999999 > GSB-1000000 이 되므로 숫자로 최대값을 구한다(점검 낮음: 7자리 이후 순서).
+  const rows = await tx.$queryRaw<Array<{ n: bigint | null }>>`SELECT MAX(CAST(SUBSTRING(tracking_code FROM 5) AS BIGINT)) AS n FROM bazaar_product`;
+  return Number(rows[0]?.n ?? 0n) + 1;
 }
 
 /**
@@ -778,7 +871,9 @@ async function nextTrackingNumber(tx: Tx) {
  */
 export async function confirmInspection(merchantId: string, donationId: string, userId: string) {
   const config = await getBazaarConfig();
+  await assertMerchantParticipating(merchantId);
   return prisma.$transaction(async (tx) => {
+    await lockDonation(tx, donationId);
     const d = await tx.inKindDonation.findFirst({ where: { id: donationId, merchantId }, include: { items: { orderBy: { seq: 'asc' } }, inbound: true } });
     if (!d) throw new BazaarError('기부 건을 찾을 수 없습니다.');
     if (d.status !== S.INSPECTED || !d.inbound) throw new BazaarError('입고·검수가 등록된 기부 건만 확정할 수 있습니다.');
@@ -823,22 +918,57 @@ export async function confirmInspection(merchantId: string, donationId: string, 
 /** 영수증 무효(정정). 무효 뒤 재발급은 reissueInKindReceipt. 번호는 재사용하지 않는다. */
 export async function voidInKindReceipt(receiptId: string, adminUserId: string, reason: string) {
   if (!reason.trim()) throw new BazaarError('무효 사유를 입력해 주세요.');
-  const n = await prisma.inKindReceipt.updateMany({
-    where: { id: receiptId, status: 'ISSUED' },
-    data: { status: 'VOID', voidedAt: new Date(), voidedBy: adminUserId, voidReason: reason.slice(0, 200) },
+  await prisma.$transaction(async (tx) => {
+    const r = await tx.inKindReceipt.findUnique({ where: { id: receiptId }, select: { donationId: true, receiptNo: true } });
+    if (!r) throw new BazaarError('영수증을 찾을 수 없습니다.');
+    await lockDonation(tx, r.donationId);
+    const n = await tx.inKindReceipt.updateMany({
+      where: { id: receiptId, status: 'ISSUED' },
+      data: { status: 'VOID', voidedAt: new Date(), voidedBy: adminUserId, voidReason: reason.slice(0, 200) },
+    });
+    if (n.count !== 1) throw new BazaarError('발급 상태인 영수증만 무효 처리할 수 있습니다.');
+    await statusNote(tx, r.donationId, { type: 'ADMIN', userId: adminUserId }, `현물 영수증 ${r.receiptNo} 무효: ${reason.trim().slice(0, 150)}`);
   });
-  if (n.count !== 1) throw new BazaarError('발급 상태인 영수증만 무효 처리할 수 있습니다.');
 }
 
 export async function reissueInKindReceipt(donationId: string, adminUserId: string) {
-  return prisma.$transaction(async (tx) => {
-    const active = await tx.inKindReceipt.findFirst({ where: { donationId, status: 'ISSUED' } });
-    if (active) throw new BazaarError('발급 상태인 영수증이 있습니다. 먼저 무효 처리해 주세요.');
-    const d = await tx.inKindDonation.findUnique({ where: { id: donationId }, select: { status: true } });
-    if (!d || !([S.RECEIPTED, S.ON_SALE, S.SALE_ENDED, S.CLOSED] as DonationStatus[]).includes(d.status as DonationStatus))
-      throw new BazaarError('검수 확정이 끝난 기부 건만 재발급할 수 있습니다.');
-    return issueInKindReceiptTx(tx, donationId, adminUserId);
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // 같은 기부 건의 동시 재발급을 줄 세운다. 마지막 방어선은 부분 유니크 인덱스(in_kind_receipt_donation_issued_one)다(점검 B-M1).
+      await lockDonation(tx, donationId);
+      const active = await tx.inKindReceipt.findFirst({ where: { donationId, status: 'ISSUED' } });
+      if (active) throw new BazaarError('발급 상태인 영수증이 있습니다. 먼저 무효 처리해 주세요.');
+      const d = await tx.inKindDonation.findUnique({ where: { id: donationId }, select: { status: true } });
+      if (!d || !([S.RECEIPTED, S.ON_SALE, S.SALE_ENDED, S.CLOSED] as DonationStatus[]).includes(d.status as DonationStatus))
+        throw new BazaarError('검수 확정이 끝난 기부 건만 재발급할 수 있습니다.');
+      const r = await issueInKindReceiptTx(tx, donationId, adminUserId);
+      await statusNote(tx, donationId, { type: 'ADMIN', userId: adminUserId }, `현물 영수증 ${r.receiptNo} 재발급(${r.totalAmount.toString()}원)`);
+      return r;
+    });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
+      throw new BazaarError('발급 상태인 영수증이 있습니다. 먼저 무효 처리해 주세요.');
+    throw e;
+  }
+}
+
+/** 상태는 그대로 두고 이력에만 남긴다(영수증 무효·재발급·반환 정정 등). */
+async function statusNote(tx: Tx, donationId: string, actor: Actor, note: string) {
+  const d = await tx.inKindDonation.findUniqueOrThrow({ where: { id: donationId }, select: { status: true } });
+  await tx.inKindStatusLog.create({
+    data: { id: newId(), donationId, fromStatus: d.status, toStatus: d.status, actorType: actor.type, actorUserId: actor.userId ?? null, note: note.slice(0, 300) },
   });
+}
+
+/** 영수증 정정이 필요한지: 발급된 영수증 금액과 지금 계산한 금액(반환 수량 차감)이 다르면 true */
+export async function receiptCorrectionNeeded(donationId: string) {
+  const [receipt, items] = await Promise.all([
+    prisma.inKindReceipt.findFirst({ where: { donationId, status: 'ISSUED' }, select: { id: true, totalAmount: true, receiptNo: true } }),
+    prisma.inKindItem.findMany({ where: { donationId }, include: { product: { select: { returnedQty: true } } } }),
+  ]);
+  if (!receipt) return null;
+  const expected = receiptAmountOf(items.map((it) => ({ unitValue: it.unitValue, acceptedQty: it.acceptedQty, returnedQty: it.product?.returnedQty ?? 0 })));
+  return expected === receipt.totalAmount ? null : { receiptId: receipt.id, receiptNo: receipt.receiptNo, issued: receipt.totalAmount, expected };
 }
 
 // ===========================================================================
@@ -851,7 +981,9 @@ export async function updateProduct(
   config?: BazaarConfig,
 ) {
   const cfg = config ?? (await getBazaarConfig());
-  const p = await prisma.bazaarProduct.findUnique({ where: { id: productId }, include: { item: true, donation: true } });
+  return prisma.$transaction(async (tx) => {
+  await tx.$queryRaw`SELECT id FROM bazaar_product WHERE id = ${productId} FOR UPDATE`;
+  const p = await tx.bazaarProduct.findUnique({ where: { id: productId }, include: { item: true, donation: true } });
   if (!p) throw new BazaarError('상품을 찾을 수 없습니다.');
   if (p.status === 'ENDED') throw new BazaarError('판매가 끝난 상품은 바꿀 수 없습니다.');
   if (!input.name.trim()) throw new BazaarError('상품명을 입력해 주세요.');
@@ -863,7 +995,14 @@ export async function updateProduct(
   if (!Number.isInteger(input.quantity) || input.quantity < 0 || input.quantity > (p.item.acceptedQty ?? 0))
     throw new BazaarError(`판매 수량은 합격 수량(${p.item.acceptedQty ?? 0}) 이하여야 합니다.`);
   if (!Number.isInteger(input.perPersonLimit) || input.perPersonLimit < 1) throw new BazaarError('1인 구매 제한을 확인해 주세요.');
-  await prisma.bazaarProduct.update({
+  // 이미 팔린 수량(승인 + 승인 대기 판매 결과, 환불 차감 전) 아래로는 줄일 수 없다(점검 낮음).
+  const sold = await tx.bazaarSaleLine.aggregate({
+    where: { productId, batch: { status: { in: ['APPROVED', 'DRAFT'] } } },
+    _sum: { soldQty: true },
+  });
+  const soldQty = sold._sum.soldQty ?? 0;
+  if (input.quantity < soldQty) throw new BazaarError(`판매 수량은 이미 판매 결과에 들어간 수량(${soldQty}) 아래로 줄일 수 없습니다.`);
+  await tx.bazaarProduct.update({
     where: { id: productId },
     data: {
       name: input.name.trim().slice(0, 80),
@@ -872,6 +1011,7 @@ export async function updateProduct(
       quantity: input.quantity,
       perPersonLimit: input.perPersonLimit,
     },
+  });
   });
 }
 
@@ -890,15 +1030,40 @@ export async function markProductListed(productId: string, adminUserId: string, 
   });
 }
 
+/**
+ * 판매 종료. 남은 수량을 기부자에게 돌려주면(RETURN) 그 수량을 상품에 기록하고 상태 이력에 정정 사유를 남긴다.
+ * 돌려준 물품은 기부가 아니므로 현물 영수증을 무효 → 재발급해 금액을 줄여야 한다(점검 B-M4).
+ * 반환 수량 = 판매 수량 - 순판매(판매 - 환불) 수량. 판매 대기 중인 판매 결과가 있으면 종료하지 않는다.
+ */
 export async function endProduct(productId: string, adminUserId: string, remainingAction: string) {
   if (!['MERCHANT_USE', 'TRANSFER', 'RETURN', 'DISPOSE'].includes(remainingAction)) throw new BazaarError('남은 수량 처리 방법을 골라 주세요.');
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM bazaar_product WHERE id = ${productId} FOR UPDATE`;
+    const before = await tx.bazaarProduct.findUnique({ where: { id: productId }, include: { item: { select: { acceptedQty: true } } } });
+    if (!before) throw new BazaarError('상품을 찾을 수 없습니다.');
+    let returnedQty = 0;
+    if (remainingAction === 'RETURN') {
+      const pending = await tx.bazaarSaleLine.count({ where: { productId, batch: { status: 'DRAFT' } } });
+      if (pending) throw new BazaarError('승인 대기 중인 판매 결과가 있습니다. 승인·반려한 뒤 기부자 반환으로 종료해 주세요.');
+      const sold = await tx.bazaarSaleLine.aggregate({ where: { productId, batch: { status: 'APPROVED' } }, _sum: { soldQty: true, refundQty: true } });
+      const netSold = (sold._sum.soldQty ?? 0) - (sold._sum.refundQty ?? 0);
+      // 합격 수량 중 팔리지 않은 것 전부가 기부자에게 돌아간다(판매 수량을 합격 수량보다 적게 잡았던 나머지 포함).
+      returnedQty = Math.max((before.item.acceptedQty ?? before.quantity) - netSold, 0);
+    }
     const n = await tx.bazaarProduct.updateMany({
       where: { id: productId, status: { in: ['DRAFT', 'LISTED'] } },
-      data: { status: 'ENDED', endedAt: new Date(), remainingAction },
+      data: { status: 'ENDED', endedAt: new Date(), remainingAction, returnedQty },
     });
     if (n.count !== 1) throw new BazaarError('이미 판매가 끝난 상품입니다.');
     const p = await tx.bazaarProduct.findUniqueOrThrow({ where: { id: productId } });
+    if (returnedQty > 0) {
+      await statusNote(
+        tx,
+        p.donationId,
+        { type: 'ADMIN', userId: adminUserId },
+        `${p.trackingCode} 남은 ${returnedQty}개 기부자 반환 — 현물 영수증 정정 필요(무효 후 반환 수량을 뺀 금액으로 재발급)`,
+      );
+    }
     const open = await tx.bazaarProduct.count({ where: { donationId: p.donationId, status: { in: ['DRAFT', 'LISTED'] } } });
     if (open === 0) {
       const d = await tx.inKindDonation.findUniqueOrThrow({ where: { id: p.donationId }, select: { status: true } });
@@ -906,10 +1071,13 @@ export async function endProduct(productId: string, adminUserId: string, remaini
         await transition(tx, p.donationId, [S.ON_SALE, S.RECEIPTED], S.SALE_ENDED, { type: 'ADMIN', userId: adminUserId }, '모든 상품 판매 종료');
       }
     }
+    return { returnedQty, correctionNeeded: returnedQty > 0 };
   });
 }
 
 export async function closeDonation(donationId: string, adminUserId: string) {
+  const fix = await receiptCorrectionNeeded(donationId);
+  if (fix) throw new BazaarError(`기부자에게 반환한 수량이 있어 영수증 ${fix.receiptNo} 정정이 필요합니다(발급 ${fix.issued.toString()}원 → ${fix.expected.toString()}원). 무효 후 재발급한 뒤 종결해 주세요.`);
   await prisma.$transaction(async (tx) => {
     await transition(tx, donationId, S.SALE_ENDED, S.CLOSED, { type: 'ADMIN', userId: adminUserId }, '종결', { closedAt: new Date() });
   });
@@ -959,6 +1127,9 @@ export async function createLive(
   if (Number.isNaN(input.scheduledAt.getTime())) throw new BazaarError('방송 일시를 확인해 주세요.');
   const seller = await prisma.bazaarSeller.findUnique({ where: { id: input.sellerId } });
   if (!seller?.active) throw new BazaarError('활동 중인 셀러를 골라 주세요.');
+  // 상품 없이 편성해도 기관은 참여 승인 기관이어야 한다(점검 낮음).
+  if (!input.merchantId) throw new BazaarError('편성할 기관을 골라 주세요.');
+  await assertMerchantParticipating(input.merchantId);
   if (input.broadcastUrl && !/^https:\/\//.test(input.broadcastUrl)) throw new BazaarError('방송 주소는 https:// 로 시작해야 합니다.');
   if (input.productIds.length) {
     const ok = await prisma.bazaarProduct.count({ where: { id: { in: input.productIds }, merchantId: input.merchantId, status: { in: ['DRAFT', 'LISTED'] } } });
@@ -982,6 +1153,7 @@ export async function createLive(
 }
 
 export async function decideLive(merchantId: string, liveId: string, approve: boolean, userId: string, note?: string | null) {
+  await assertMerchantParticipating(merchantId);
   const n = await prisma.bazaarLive.updateMany({
     where: { id: liveId, merchantId, status: 'PROPOSED' },
     data: { status: approve ? 'APPROVED' : 'REJECTED', decidedAt: new Date(), decidedBy: userId, ...(note ? { note: note.slice(0, 300) } : {}) },
@@ -998,9 +1170,14 @@ export async function updateLiveStatus(liveId: string, status: 'DONE' | 'CANCELE
   if (n.count !== 1) throw new BazaarError('이미 끝났거나 취소된 편성입니다.');
 }
 
+/** 방송 주소 변경. 바꾸기 전 주소를 돌려준다(감사로그용). 끝난·취소된 편성은 바꾸지 않는다. */
 export async function updateLiveUrl(liveId: string, broadcastUrl: string) {
-  if (!/^https:\/\//.test(broadcastUrl)) throw new BazaarError('방송 주소는 https:// 로 시작해야 합니다.');
-  await prisma.bazaarLive.update({ where: { id: liveId }, data: { broadcastUrl } });
+  if (!/^https:\/\/\S+$/.test(broadcastUrl)) throw new BazaarError('방송 주소는 https:// 로 시작해야 합니다.');
+  const before = await prisma.bazaarLive.findUnique({ where: { id: liveId }, select: { broadcastUrl: true, status: true } });
+  if (!before) throw new BazaarError('편성을 찾을 수 없습니다.');
+  const n = await prisma.bazaarLive.updateMany({ where: { id: liveId, status: { in: ['PROPOSED', 'APPROVED'] } }, data: { broadcastUrl } });
+  if (n.count !== 1) throw new BazaarError('이미 끝났거나 취소된 편성입니다.');
+  return { before: before.broadcastUrl };
 }
 
 // ===========================================================================
@@ -1011,7 +1188,7 @@ async function appendLedger(
   tx: Tx,
   e: {
     merchantId: string;
-    entryType: 'SALE' | 'REFUND' | 'FEE' | 'RETURN_COST' | 'PAYOUT';
+    entryType: 'SALE' | 'REFUND' | 'FEE' | 'RETURN_COST' | 'PAYOUT' | 'CARRY_IN' | 'CARRY_OUT';
     amount: bigint;
     idempotencyKey: string;
     month?: string;
@@ -1025,6 +1202,8 @@ async function appendLedger(
 ) {
   const exists = await tx.bazaarLedger.findUnique({ where: { idempotencyKey: e.idempotencyKey }, select: { id: true } });
   if (exists) return false;
+  // 월을 정해야 하면 정산 잠금 아래에서 정한다(같은 트랜잭션에서 다시 잡아도 된다 — advisory lock 은 재진입 가능).
+  if (!e.month) await lockMerchantSettlement(tx, [e.merchantId]);
   const month = e.month ?? (await openMonthFor(tx, e.merchantId));
   await tx.bazaarLedger.create({
     data: {
@@ -1045,9 +1224,12 @@ async function appendLedger(
   return true;
 }
 
-/** 이번 달 정산이 이미 확정·지급됐으면 다음 달로 넘긴다(확정된 정산 금액이 바뀌지 않게). */
-async function openMonthFor(tx: Tx, merchantId: string, now = new Date()) {
-  let month = kstMonthKey(now);
+/**
+ * 이번 달 정산이 이미 확정·지급·이월됐으면 다음 달로 넘긴다(확정된 정산 금액이 바뀌지 않게).
+ * 부르는 쪽은 lockMerchantSettlement 를 먼저 잡아 확정과 겹치지 않게 한다(점검 B-2).
+ */
+async function openMonthFor(tx: Tx, merchantId: string, from?: string) {
+  let month = from && from > kstMonthKey() ? from : kstMonthKey();
   for (let i = 0; i < 24; i++) {
     const s = await tx.bazaarSettlement.findUnique({ where: { merchantId_month: { merchantId, month } }, select: { status: true } });
     if (!s || s.status === 'DRAFT') return month;
@@ -1088,6 +1270,12 @@ export async function validateSaleRows(rows: SaleRowInput[], excludeBatchId?: st
       return;
     }
     if (p.status === 'DRAFT') errors.push(`${at}: 아직 셀러브릭스 등록 완료로 표시되지 않은 상품입니다.`);
+    if (p.returnedQty > 0 && r.soldQty > 0) errors.push(`${at}: 남은 수량을 기부자에게 돌려주고 종료한 상품이라 판매를 더 넣을 수 없습니다.`);
+    // 금액이 수량 × 판매가와 자릿수 단위로 어긋나면 입력 실수로 본다(점검 B-M5).
+    if (amountMismatch(r.soldQty, r.grossAmount, p.salePrice, p.shippingFee))
+      errors.push(`${at}: 판매 금액(${r.grossAmount.toString()}원)이 수량 ${r.soldQty} × 판매가 ${p.salePrice.toString()}원과 크게 다릅니다. 금액·수량을 확인해 주세요.`);
+    if (r.refundQty > 0 && amountMismatch(r.refundQty, r.refundAmount, p.salePrice, p.shippingFee))
+      errors.push(`${at}: 환불 금액(${r.refundAmount.toString()}원)이 환불 수량 ${r.refundQty} × 판매가 ${p.salePrice.toString()}원과 크게 다릅니다.`);
     const a = acc.get(p.id) ?? { sold: 0, gross: 0n, rq: 0, refund: 0n };
     a.sold += r.soldQty;
     a.gross += r.grossAmount;
@@ -1163,38 +1351,102 @@ export function saleRowsFromParsed(rows: ParsedSaleRow[]): { rows: SaleRowInput[
 /**
  * 판매 결과 승인 → 원장 반영.
  * 입력자와 승인자가 달라야 한다. 최고관리자는 사유를 적으면 단독 승인할 수 있다(소규모 운영 대비, 감사로그).
+ *
+ * 동시성(점검 B-2·B-M2):
+ *  - 기관별 정산 잠금을 먼저 잡는다. 같은 기관의 정산 확정과 줄을 서므로, 확정 뒤 승인된 판매는 반드시 다음 달 원장으로 간다.
+ *  - 상품 행을 FOR UPDATE 로 잡고, 승인된 묶음만 기준으로 재고·환불 한도를 다시 검사한다(입력 때는 대기 묶음까지 봤다).
+ *  - 줄마다 적용한 수수료 요율을 남기고, 환불 환입은 그 상품의 원래 판매 요율로 한다(점검 B-M3).
  */
 export async function approveSaleBatch(batchId: string, approver: { userId: string; superAdmin: boolean }, soloReason?: string | null) {
   const config = await getBazaarConfig();
+  const current: FeeRate = { feeRatePercent: config.feeRatePercent, feeVatMode: config.feeVatMode };
   return prisma.$transaction(async (tx) => {
-    const b = await tx.bazaarSaleBatch.findUnique({ where: { id: batchId }, include: { lines: { include: { product: true } } } });
-    if (!b) throw new BazaarError('판매 결과를 찾을 수 없습니다.');
-    if (b.status !== 'DRAFT') throw new BazaarError('이미 처리된 판매 결과입니다.');
+    const head = await tx.bazaarSaleBatch.findUnique({ where: { id: batchId }, select: { status: true, lines: { select: { merchantId: true, productId: true } } } });
+    if (!head) throw new BazaarError('판매 결과를 찾을 수 없습니다.');
+    if (head.status !== 'DRAFT') throw new BazaarError('이미 처리된 판매 결과입니다.');
+    await lockMerchantSettlement(tx, head.lines.map((l) => l.merchantId));
+    const productIds = [...new Set(head.lines.map((l) => l.productId))].sort();
+    if (productIds.length) await tx.$queryRaw`SELECT id FROM bazaar_product WHERE id = ANY(${productIds}::text[]) ORDER BY id FOR UPDATE`;
+
+    const b = await tx.bazaarSaleBatch.findUnique({ where: { id: batchId }, include: { lines: { include: { product: true }, orderBy: { id: 'asc' } } } });
+    if (!b || b.status !== 'DRAFT') throw new BazaarError('이미 처리된 판매 결과입니다.');
     if (b.createdBy === approver.userId) {
       if (!approver.superAdmin) throw new BazaarError('입력한 사람과 다른 관리자가 승인해야 합니다.');
       if (!soloReason?.trim()) throw new BazaarError('단독 승인 사유를 입력해 주세요(최고관리자만 가능).');
     }
+
+    // 승인된 판매만 기준으로 다시 검사(반려된 묶음의 판매를 근거로 한 환불, 동시 승인으로 생긴 초과 판매를 막는다)
+    const prior = await tx.bazaarSaleLine.groupBy({
+      by: ['productId'],
+      where: { productId: { in: productIds }, batch: { status: 'APPROVED' } },
+      _sum: { soldQty: true, grossAmount: true, refundQty: true, refundAmount: true },
+    });
+    const acc = new Map(prior.map((r) => [r.productId, { sold: r._sum.soldQty ?? 0, gross: r._sum.grossAmount ?? 0n, rq: r._sum.refundQty ?? 0, refund: r._sum.refundAmount ?? 0n }]));
+    const errors: string[] = [];
+    b.lines.forEach((l, i) => {
+      const at = `${i + 1}번째 줄(${l.product.trackingCode})`;
+      const a = acc.get(l.productId) ?? { sold: 0, gross: 0n, rq: 0, refund: 0n };
+      a.sold += l.soldQty;
+      a.gross += l.grossAmount;
+      a.rq += l.refundQty;
+      a.refund += l.refundAmount;
+      acc.set(l.productId, a);
+      if (l.product.status === 'DRAFT') errors.push(`${at}: 셀러브릭스 등록 완료 전인 상품입니다.`);
+      if (l.product.returnedQty > 0 && l.soldQty > 0) errors.push(`${at}: 기부자에게 반환하고 종료한 상품입니다.`);
+      if (a.sold > l.product.quantity) errors.push(`${at}: 승인된 누적 판매 수량(${a.sold})이 판매 수량(${l.product.quantity})을 넘습니다.`);
+      if (a.refund > a.gross) errors.push(`${at}: 환불 금액이 승인된 누적 판매 금액을 넘습니다(근거 판매가 반려됐거나 아직 승인되지 않았습니다).`);
+      if (a.rq > a.sold) errors.push(`${at}: 환불 수량이 승인된 누적 판매 수량을 넘습니다.`);
+    });
+    if (errors.length) throw new BazaarError(errors.slice(0, 6).join('\n') + (errors.length > 6 ? `\n외 ${errors.length - 6}건` : ''));
+
+    // 줄마다 원장 월을 정한다(기관별로 한 번). 묶음의 월은 원장 월을 모은 값이다(여러 기관이면 쉼표).
+    const monthOf = new Map<string, string>();
+    for (const l of b.lines) if (!monthOf.has(l.merchantId)) monthOf.set(l.merchantId, await openMonthFor(tx, l.merchantId));
+    const months = [...new Set(monthOf.values())].sort();
+
     const n = await tx.bazaarSaleBatch.updateMany({
       where: { id: batchId, status: 'DRAFT' },
       data: {
         status: 'APPROVED',
         approvedBy: approver.userId,
         approvedAt: new Date(),
-        month: kstMonthKey(),
+        month: months.join(',') || kstMonthKey(),
         note: soloReason?.trim() ? `${b.note ? `${b.note} / ` : ''}단독 승인: ${soloReason.trim().slice(0, 200)}` : b.note,
       },
     });
     if (n.count !== 1) throw new BazaarError('이미 처리된 판매 결과입니다.');
+
     let payout = 0n;
     for (const l of b.lines) {
-      const r = settleLine(l, config);
-      const month = await openMonthFor(tx, l.merchantId);
+      // 환불 환입 요율: 이 상품의 가장 최근 승인 판매 줄 요율(없으면 같은 줄 판매 요율 = 현재 설정)
+      let refundRate: FeeRate = current;
+      if (l.refundAmount > 0n) {
+        const src = await tx.bazaarSaleLine.findFirst({
+          where: { productId: l.productId, soldQty: { gt: 0 }, feeRatePercent: { not: null }, batch: { status: 'APPROVED' }, NOT: { batchId: b.id } },
+          orderBy: [{ batch: { approvedAt: 'desc' } }, { id: 'desc' }],
+          select: { feeRatePercent: true, feeVatMode: true },
+        });
+        if (src?.feeRatePercent) refundRate = { feeRatePercent: src.feeRatePercent, feeVatMode: src.feeVatMode === 'EXCLUDED' ? 'EXCLUDED' : 'INCLUDED' };
+      }
+      await tx.bazaarSaleLine.update({
+        where: { id: l.id },
+        data: {
+          feeRatePercent: current.feeRatePercent,
+          feeVatMode: current.feeVatMode,
+          refundFeeRatePercent: l.refundAmount > 0n ? refundRate.feeRatePercent : null,
+          refundFeeVatMode: l.refundAmount > 0n ? refundRate.feeVatMode : null,
+        },
+      });
+      const r = settleLine(l, current, refundRate);
+      const month = monthOf.get(l.merchantId)!;
       const base = { merchantId: l.merchantId, month, productId: l.productId, batchId: b.id };
       if (l.grossAmount > 0n)
         await appendLedger(tx, { ...base, entryType: 'SALE', amount: l.grossAmount, idempotencyKey: `sale:${l.id}`, memo: `${l.product.trackingCode} 판매 ${l.soldQty}개` });
       if (l.refundAmount > 0n)
         await appendLedger(tx, { ...base, entryType: 'REFUND', amount: -l.refundAmount, idempotencyKey: `refund:${l.id}`, memo: `${l.product.trackingCode} 환불 ${l.refundQty}개` });
-      if (r.fee !== 0n)
+      if (r.fee !== 0n) {
+        const sameRate = refundRate.feeRatePercent === current.feeRatePercent && refundRate.feeVatMode === current.feeVatMode;
+        const vatText = (m: string) => (m === 'INCLUDED' ? '포함' : '별도');
         await appendLedger(tx, {
           ...base,
           entryType: 'FEE',
@@ -1202,8 +1454,12 @@ export async function approveSaleBatch(batchId: string, approver: { userId: stri
           supplyAmount: -r.supply,
           vatAmount: -r.vat,
           idempotencyKey: `fee:${l.id}`,
-          memo: `수수료 ${config.feeRatePercent}% (부가세 ${config.feeVatMode === 'INCLUDED' ? '포함' : '별도'})`,
+          memo:
+            l.refundAmount > 0n && !sameRate
+              ? `수수료 ${current.feeRatePercent}%(부가세 ${vatText(current.feeVatMode)}) · 환불 환입 ${refundRate.feeRatePercent}%(원 판매 요율)`
+              : `수수료 ${current.feeRatePercent}% (부가세 ${vatText(current.feeVatMode)})`,
         });
+      }
       if (r.returnCost > 0n)
         await appendLedger(tx, { ...base, entryType: 'RETURN_COST', amount: -r.returnCost, idempotencyKey: `return:${l.id}`, memo: `${l.product.trackingCode} 반송비(기관 부담)` });
       payout += r.payout;
@@ -1225,10 +1481,14 @@ export async function rejectSaleBatch(batchId: string, adminUserId: string, reas
 // 월 정산(월 1회)
 // ===========================================================================
 
-export async function settlementTotals(merchantId: string, month: string) {
-  const rows = await prisma.bazaarLedger.groupBy({
+/**
+ * 원장으로 월 정산 합계를 낸다. PAYOUT(지급)·CARRY_OUT(다음 달로 넘긴 반대 기록)은 정산 결과라 빼고,
+ * CARRY_IN(전월 이월)은 carryAmount 로 더한다.
+ */
+export async function settlementTotals(merchantId: string, month: string, client: Tx | typeof prisma = prisma) {
+  const rows = await client.bazaarLedger.groupBy({
     by: ['entryType'],
-    where: { merchantId, month, entryType: { not: 'PAYOUT' } },
+    where: { merchantId, month, entryType: { notIn: ['PAYOUT', 'CARRY_OUT'] } },
     _sum: { amount: true, vatAmount: true },
   });
   const get = (t: string) => rows.find((r) => r.entryType === t)?._sum.amount ?? 0n;
@@ -1237,49 +1497,123 @@ export async function settlementTotals(merchantId: string, month: string) {
   const refund = -get('REFUND');
   const fee = -get('FEE');
   const returnCost = -get('RETURN_COST');
-  return { gross, refund, fee, feeVat: -vat, returnCost, payout: gross - refund - fee - returnCost };
+  const carryAmount = get('CARRY_IN');
+  return { gross, refund, fee, feeVat: -vat, returnCost, carryAmount, payout: gross - refund - fee - returnCost + carryAmount };
 }
 
-/** 해당 월 원장이 있는 기관마다 정산을 만들거나(집계) 다시 계산한다. 확정·지급된 정산은 건드리지 않는다. */
+/**
+ * 해당 월 원장이 있는 기관마다 정산을 만들거나(집계) 다시 계산한다. 확정·지급·이월된 정산은 건드리지 않는다.
+ * 기관마다 정산 잠금 아래에서 합계·저장을 하고, 갱신은 DRAFT 일 때만 한다(같은 시점의 확정 금액을 덮어쓰지 않음, 점검 B-M6).
+ */
 export async function generateSettlements(month: string) {
   const config = await getBazaarConfig();
-  const merchants = await prisma.bazaarLedger.findMany({ where: { month, entryType: { not: 'PAYOUT' } }, distinct: ['merchantId'], select: { merchantId: true } });
+  const merchants = await prisma.bazaarLedger.findMany({ where: { month, entryType: { notIn: ['PAYOUT', 'CARRY_OUT'] } }, distinct: ['merchantId'], select: { merchantId: true } });
   let created = 0;
   for (const { merchantId } of merchants) {
-    const t = await settlementTotals(merchantId, month);
-    const existing = await prisma.bazaarSettlement.findUnique({ where: { merchantId_month: { merchantId, month } } });
-    if (existing && existing.status !== 'DRAFT') continue;
-    const data = { ...t, dueDate: settlementDueDate(month, config.settlementPayDay) };
-    if (existing) await prisma.bazaarSettlement.update({ where: { id: existing.id }, data });
-    else {
-      await prisma.bazaarSettlement.create({ data: { id: newId(), merchantId, month, ...data } });
-      created += 1;
-    }
+    await prisma.$transaction(async (tx) => {
+      await lockMerchantSettlement(tx, [merchantId]);
+      const existing = await tx.bazaarSettlement.findUnique({ where: { merchantId_month: { merchantId, month } } });
+      if (existing && existing.status !== 'DRAFT') return;
+      const t = await settlementTotals(merchantId, month, tx);
+      const data = { ...t, dueDate: settlementDueDate(month, config.settlementPayDay) };
+      if (existing) await tx.bazaarSettlement.updateMany({ where: { id: existing.id, status: 'DRAFT' }, data });
+      else {
+        await tx.bazaarSettlement.create({ data: { id: newId(), merchantId, month, ...data } });
+        created += 1;
+      }
+    });
   }
   return { merchants: merchants.length, created };
 }
 
-export async function confirmSettlement(settlementId: string, adminUserId: string) {
-  const s = await prisma.bazaarSettlement.findUnique({ where: { id: settlementId } });
-  if (!s) throw new BazaarError('정산을 찾을 수 없습니다.');
-  if (s.status !== 'DRAFT') throw new BazaarError('집계 상태의 정산만 확정할 수 있습니다.');
-  // 확정 직전에 원장으로 다시 계산해 저장한다(집계 뒤 들어온 판매 반영).
-  const t = await settlementTotals(s.merchantId, s.month);
-  const n = await prisma.bazaarSettlement.updateMany({
-    where: { id: settlementId, status: 'DRAFT' },
-    data: { ...t, status: 'CONFIRMED', confirmedAt: new Date(), confirmedBy: adminUserId },
+/**
+ * 0원 이하 정산을 다음 달로 넘기고 닫는다(점검 B-1).
+ *  - 넘긴 달: CARRY_OUT(+|지급액|, carry-out:{정산 id}) — 그 달 원장 합계가 0 이 된다(지급의 PAYOUT 과 같은 역할).
+ *  - 받는 달(열린 다음 달): CARRY_IN(지급액, carry:{정산 id}) — 다음 정산에서 차감된다.
+ *  - 정산 상태 CARRIED, carriedToMonth 기록. 0원이면 원장 없이 CARRIED 로만 닫는다.
+ */
+async function carryOverTx(tx: Tx, s: { id: string; merchantId: string; month: string; payout: bigint }, adminUserId: string, fromStatus: 'DRAFT' | 'CONFIRMED', totals?: Record<string, bigint>) {
+  if (s.payout > 0n) throw new BazaarError('지급액이 있는 정산은 이월하지 않습니다. 지급 완료를 기록해 주세요.');
+  const target = await openMonthFor(tx, s.merchantId, nextMonth(s.month));
+  const now = new Date();
+  const n = await tx.bazaarSettlement.updateMany({
+    where: { id: s.id, status: fromStatus },
+    data: {
+      ...(totals ?? {}),
+      status: 'CARRIED',
+      carriedToMonth: s.payout < 0n ? target : null,
+      ...(fromStatus === 'DRAFT' ? { confirmedAt: now, confirmedBy: adminUserId } : {}),
+    },
   });
   if (n.count !== 1) throw new BazaarError('이미 처리된 정산입니다.');
+  if (s.payout < 0n) {
+    await appendLedger(tx, {
+      merchantId: s.merchantId,
+      month: s.month,
+      entryType: 'CARRY_OUT',
+      amount: -s.payout,
+      settlementId: s.id,
+      idempotencyKey: `carry-out:${s.id}`,
+      memo: `${s.month} 정산 ${s.payout.toString()}원 → ${target} 이월`,
+    });
+    await appendLedger(tx, {
+      merchantId: s.merchantId,
+      month: target,
+      entryType: 'CARRY_IN',
+      amount: s.payout,
+      settlementId: s.id,
+      idempotencyKey: `carry:${s.id}`,
+      memo: `${s.month} 정산에서 이월(${s.payout.toString()}원)`,
+    });
+  }
+  return { status: 'CARRIED' as const, carriedToMonth: s.payout < 0n ? target : null, payout: s.payout };
+}
+
+/**
+ * 정산 확정. 한 트랜잭션에서 기관 정산 잠금 → 원장 재계산 → DRAFT 일 때만 확정(점검 B-2).
+ * 지급액이 0원 이하이면 지급 대기로 두지 않고 바로 다음 달로 이월하고 닫는다(점검 B-1).
+ */
+export async function confirmSettlement(settlementId: string, adminUserId: string) {
+  return prisma.$transaction(async (tx) => {
+    const s0 = await tx.bazaarSettlement.findUnique({ where: { id: settlementId }, select: { merchantId: true } });
+    if (!s0) throw new BazaarError('정산을 찾을 수 없습니다.');
+    await lockMerchantSettlement(tx, [s0.merchantId]);
+    const s = await tx.bazaarSettlement.findUniqueOrThrow({ where: { id: settlementId } });
+    if (s.status !== 'DRAFT') throw new BazaarError('집계 상태의 정산만 확정할 수 있습니다.');
+    // 확정 직전에 원장으로 다시 계산해 저장한다(집계 뒤 들어온 판매 반영).
+    const t = await settlementTotals(s.merchantId, s.month, tx);
+    if (t.payout <= 0n) return carryOverTx(tx, { ...s, payout: t.payout }, adminUserId, 'DRAFT', t);
+    const n = await tx.bazaarSettlement.updateMany({
+      where: { id: settlementId, status: 'DRAFT' },
+      data: { ...t, status: 'CONFIRMED', confirmedAt: new Date(), confirmedBy: adminUserId },
+    });
+    if (n.count !== 1) throw new BazaarError('이미 처리된 정산입니다.');
+    return { status: 'CONFIRMED' as const, carriedToMonth: null, payout: t.payout };
+  });
+}
+
+/** 예전에 0원 이하로 확정만 되고 남은 정산(이 조치 이전 데이터)을 다음 달로 넘긴다. */
+export async function carryOverSettlement(settlementId: string, adminUserId: string) {
+  return prisma.$transaction(async (tx) => {
+    const s0 = await tx.bazaarSettlement.findUnique({ where: { id: settlementId }, select: { merchantId: true } });
+    if (!s0) throw new BazaarError('정산을 찾을 수 없습니다.');
+    await lockMerchantSettlement(tx, [s0.merchantId]);
+    const s = await tx.bazaarSettlement.findUniqueOrThrow({ where: { id: settlementId } });
+    if (s.status !== 'CONFIRMED') throw new BazaarError('확정(지급 대기) 상태의 정산만 이월할 수 있습니다.');
+    return carryOverTx(tx, s, adminUserId, 'CONFIRMED');
+  });
 }
 
 /** 지급 완료 기록(계좌 이체는 운영자가 은행에서 한다). 원장에 지급 기록을 남긴다. */
 export async function markSettlementPaid(settlementId: string, adminUserId: string, input: { transferRef: string; paidAt: Date }) {
   if (!input.transferRef.trim()) throw new BazaarError('이체 확인 번호(또는 메모)를 입력해 주세요.');
   await prisma.$transaction(async (tx) => {
-    const s = await tx.bazaarSettlement.findUnique({ where: { id: settlementId } });
-    if (!s) throw new BazaarError('정산을 찾을 수 없습니다.');
+    const s0 = await tx.bazaarSettlement.findUnique({ where: { id: settlementId }, select: { merchantId: true } });
+    if (!s0) throw new BazaarError('정산을 찾을 수 없습니다.');
+    await lockMerchantSettlement(tx, [s0.merchantId]);
+    const s = await tx.bazaarSettlement.findUniqueOrThrow({ where: { id: settlementId } });
     if (s.status !== 'CONFIRMED') throw new BazaarError('확정된 정산만 지급 완료로 바꿀 수 있습니다.');
-    if (s.payout <= 0n) throw new BazaarError('지급할 금액이 없습니다(0원 이하). 다음 달 정산과 함께 처리됩니다.');
+    if (s.payout <= 0n) throw new BazaarError('지급할 금액이 없습니다(0원 이하). "다음 달로 이월"로 처리해 주세요.');
     const n = await tx.bazaarSettlement.updateMany({
       where: { id: settlementId, status: 'CONFIRMED' },
       data: { status: 'PAID', paidAt: input.paidAt, paidBy: adminUserId, transferRef: input.transferRef.trim().slice(0, 80) },
@@ -1319,7 +1653,6 @@ export async function createReconcile(month: string, externalAmount: bigint, adm
 // 파일(사진·근거)
 // ===========================================================================
 
-const MAX_FILE = 5 * 1024 * 1024;
 export function sniffFile(buf: Buffer): { ext: string; mime: string } | null {
   if (buf.length < 12) return null;
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: 'jpg', mime: 'image/jpeg' };
@@ -1329,29 +1662,75 @@ export function sniffFile(buf: Buffer): { ext: string; mime: string } | null {
   return null;
 }
 
-export async function saveDonationFile(donationId: string, kind: 'PHOTO' | 'EVIDENCE' | 'INSPECTION', file: File, uploadedBy: string) {
-  if (file.size === 0) return null;
-  if (file.size > MAX_FILE) throw new BazaarError('파일은 5MB 이하만 올릴 수 있습니다.');
-  const count = await prisma.inKindFile.count({ where: { donationId } });
-  if (count >= 20) throw new BazaarError('한 기부 건에는 파일을 20개까지 올릴 수 있습니다.');
-  const buf = Buffer.from(await file.arrayBuffer());
-  const kindOf = sniffFile(buf);
-  if (!kindOf) throw new BazaarError('JPG·PNG·WEBP 사진 또는 PDF 만 올릴 수 있습니다.');
+/**
+ * 올린 파일을 DB·저장소에 손대기 전에 모두 검사한다(개수·크기·형식). 하나라도 틀리면 아무것도 저장하지 않는다(점검 B-M9).
+ * 사진(PHOTO)은 이미지만, 근거·검수(EVIDENCE·INSPECTION)는 이미지 또는 PDF.
+ */
+export async function prepareDonationFiles(entries: Array<{ kind: PreparedFile['kind']; file: File }>): Promise<PreparedFile[]> {
+  const list = entries.filter((e) => e.file && e.file.size > 0);
+  if (list.length > BAZAAR_UPLOAD_MAX_FILES) throw new BazaarError(`파일은 한 번에 ${BAZAAR_UPLOAD_MAX_FILES}개까지 올릴 수 있습니다. 나머지는 접수 뒤 상세 화면에서 올려 주세요.`);
+  const out: PreparedFile[] = [];
+  for (const { kind, file } of list) {
+    const label = file.name ? `'${file.name.slice(0, 40)}'` : '파일';
+    if (file.size > BAZAAR_UPLOAD_MAX_BYTES) throw new BazaarError(`${label}: 파일은 한 개 5MB 이하만 올릴 수 있습니다.`);
+    const buf = Buffer.from(await file.arrayBuffer());
+    const kindOf = sniffFile(buf);
+    if (!kindOf) throw new BazaarError(`${label}: JPG·PNG·WEBP 사진 또는 PDF 만 올릴 수 있습니다.`);
+    if (kind === 'PHOTO' && kindOf.ext === 'pdf') throw new BazaarError(`${label}: 물품 사진은 JPG·PNG·WEBP 만 올릴 수 있습니다.`);
+    out.push({ kind, buf, ext: kindOf.ext, mime: kindOf.mime, fileName: (file.name || `file.${kindOf.ext}`).replace(/[^\w.\-가-힣 ]/g, '_').slice(0, 100) });
+  }
+  return out;
+}
+
+type StoredFile = { id: string; kind: string; objectName: string; fileName: string; contentType: string; size: number };
+
+async function storeFiles(files: PreparedFile[]): Promise<StoredFile[]> {
+  if (files.length === 0) return [];
   const { putPrivateObject, newObjectName } = await import('@/server/uploads');
-  const name = newObjectName(kindOf.ext);
-  await putPrivateObject(name, buf, kindOf.mime);
-  const id = newId();
-  await prisma.inKindFile.create({
-    data: {
-      id,
-      donationId,
-      kind,
-      objectName: name,
-      fileName: (file.name || `file.${kindOf.ext}`).replace(/[^\w.\-가-힣 ]/g, '_').slice(0, 100),
-      contentType: kindOf.mime,
-      size: buf.length,
-      uploadedBy,
-    },
-  });
-  return id;
+  const stored: StoredFile[] = [];
+  try {
+    for (const f of files) {
+      const name = newObjectName(f.ext);
+      await putPrivateObject(name, f.buf, f.mime);
+      stored.push({ id: newId(), kind: f.kind, objectName: name, fileName: f.fileName, contentType: f.mime, size: f.buf.length });
+    }
+  } catch (e) {
+    await discardStored(stored);
+    logger.warn('바자회 파일 저장 실패', { message: (e as Error).message });
+    throw new BazaarError('파일을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요. 기부는 접수되지 않았습니다.');
+  }
+  return stored;
+}
+
+async function discardStored(stored: StoredFile[]) {
+  if (stored.length === 0) return;
+  const { deletePrivateObject } = await import('@/server/uploads');
+  for (const f of stored) await deletePrivateObject(f.objectName).catch(() => undefined);
+}
+
+/** 근거 자료를 더 올릴 수 있는 단계(기부자). 종결·취소·반송 건에는 올리지 않는다(점검 낮음). */
+export const DONOR_EVIDENCE_STATUSES: DonationStatus[] = [S.SUBMITTED, S.MATCH_PROPOSED, S.VALUATING, S.VALUE_CONFIRMED, S.PLEDGED];
+/** 검수 사진을 올릴 수 있는 단계(관리자) */
+export const INSPECTION_PHOTO_STATUSES: DonationStatus[] = [S.PLEDGED, S.INSPECTED];
+
+/** 이미 있는 기부 건에 검사를 마친 파일을 붙인다. 단계·기부 건당 개수 상한을 확인한다. */
+export async function attachDonationFiles(donationId: string, files: PreparedFile[], uploadedBy: string, allowedStatuses: DonationStatus[]) {
+  if (files.length === 0) return 0;
+  const d = await prisma.inKindDonation.findUnique({ where: { id: donationId }, select: { status: true } });
+  if (!d) throw new BazaarError('기부 건을 찾을 수 없습니다.');
+  if (!allowedStatuses.includes(d.status as DonationStatus)) throw new BazaarError('이 단계에서는 파일을 올릴 수 없습니다.');
+  const stored = await storeFiles(files);
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockDonation(tx, donationId);
+      const count = await tx.inKindFile.count({ where: { donationId } });
+      if (count + stored.length > BAZAAR_FILES_PER_DONATION)
+        throw new BazaarError(`한 기부 건에는 파일을 ${BAZAAR_FILES_PER_DONATION}개까지 올릴 수 있습니다(지금 ${count}개).`);
+      for (const f of stored) await tx.inKindFile.create({ data: { ...f, donationId, uploadedBy } });
+    });
+  } catch (e) {
+    await discardStored(stored);
+    throw e;
+  }
+  return stored.length;
 }

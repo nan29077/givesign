@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import type { AdminActionState } from '@/components/admin/state';
 import { writeAudit } from '@/server/auth';
-import { requireBazaarMerchant } from '@/server/bazaar-auth';
+import { requireBazaarMerchant, requireBazaarMerchantAny } from '@/server/bazaar-auth';
 import * as svc from '@/server/services/bazaar';
 
 /**
@@ -12,9 +12,9 @@ import * as svc from '@/server/services/bazaar';
  * 참여 신청(위탁판매 동의)도 여기서 한다.
  */
 
-async function runMerchant(fn: (m: { id: string; merchantId: string }) => Promise<string>): Promise<AdminActionState> {
+async function runMerchant(fn: (m: { id: string; merchantId: string }) => Promise<string>, guard = requireBazaarMerchant): Promise<AdminActionState> {
   try {
-    const m = await requireBazaarMerchant();
+    const m = await guard();
     const message = await fn({ id: m.id, merchantId: m.merchantId });
     revalidatePath('/studio/bazaar', 'layout');
     revalidatePath('/admin/bazaar', 'layout');
@@ -37,7 +37,7 @@ export async function applyParticipationAction(_p: AdminActionState, fd: FormDat
     });
     await writeAudit({ actorUserId: m.id, action: 'BAZAAR_PARTICIPATION_APPLY', targetType: 'merchant_bazaar', targetId: m.merchantId });
     return r === 'UPDATED' ? '필요 물품·통신판매업 정보를 저장했습니다.' : '참여를 신청했습니다. 운영자 승인 후 기부 물품을 매칭받을 수 있습니다.';
-  });
+  }, requireBazaarMerchantAny);
 }
 
 export async function respondMatchAction(_p: AdminActionState, fd: FormData) {
@@ -53,7 +53,8 @@ export async function merchantValuationAction(_p: AdminActionState, fd: FormData
   return runMerchant(async (m) => {
     const donationId = t(fd, 'donationId');
     if (t(fd, 'mode') === 'CONFIRM') {
-      await svc.acceptValuation(donationId, { type: 'MERCHANT', userId: m.id, merchantId: m.merchantId });
+      // 화면에서 본 제안 id 를 함께 보낸다. 그 사이 기부자가 다시 제안했으면 확정하지 않는다(점검 B-3).
+      await svc.acceptValuation(donationId, { type: 'MERCHANT', userId: m.id, merchantId: m.merchantId }, t(fd, 'valuationId'));
       await writeAudit({ actorUserId: m.id, action: 'BAZAAR_VALUATION_CONFIRM', targetType: 'in_kind_donation', targetId: donationId });
       return '가액을 확정했습니다. 기부자가 약정에 동의하면 물품이 입고됩니다.';
     }
@@ -79,6 +80,7 @@ export async function decideLiveAction(_p: AdminActionState, fd: FormData) {
   return runMerchant(async (m) => {
     const approve = t(fd, 'decision') === 'APPROVE';
     await svc.decideLive(m.merchantId, t(fd, 'liveId'), approve, m.id, t(fd, 'note') || null);
+    await writeAudit({ actorUserId: m.id, action: approve ? 'BAZAAR_LIVE_APPROVE' : 'BAZAAR_LIVE_REJECT', targetType: 'bazaar_live', targetId: t(fd, 'liveId') });
     return approve ? '편성을 승인했습니다.' : '편성을 반려했습니다.';
   });
 }

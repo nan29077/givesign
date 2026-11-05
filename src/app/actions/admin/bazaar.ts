@@ -11,7 +11,7 @@ import {
   setLiveBazaarEnabled,
 } from '@/server/services/bazaar-settings';
 import * as svc from '@/server/services/bazaar';
-import { isMonthKey, parseSaleCsv, type BazaarConfig } from '@/lib/bazaar';
+import { BAZAAR_CSV_MAX_BYTES, decodeCsvBytes, isMonthKey, parseSaleCsv, validateConfigInput, type BazaarConfig } from '@/lib/bazaar';
 
 /**
  * 라이브 바자회 — 통합 관리자 액션.
@@ -30,6 +30,14 @@ function revalidateBazaar() {
 
 function assertSuper(admin: { adminPermission?: string }) {
   if (admin.adminPermission !== 'SUPER_ADMIN') throw new Error('최고관리자만 바꿀 수 있습니다.');
+}
+
+/**
+ * 영수증 금액·정산에 영향을 주는 입력(입고·검수, 판매 결과 입력·반려, 판매 종료)은 고객지원(SUPPORT) 권한을 뺀
+ * 금전 권한(최고관리자·운영·재무)에서만 한다(점검 낮음 — 기존 MONEY 화이트리스트 재사용).
+ */
+function assertBazaarOperator(admin: Parameters<typeof assertMoneyAdmin>[0]) {
+  assertMoneyAdmin(admin, '입고·검수, 판매 결과, 판매 종료는 최고관리자·운영·재무 권한에서만 처리할 수 있습니다.');
 }
 
 function intOf(fd: FormData, key: string, label: string): number {
@@ -57,17 +65,27 @@ export async function saveBazaarConfigAction(_p: AdminActionState, fd: FormData)
     assertSuper(admin);
     await assertBazaarEnabled();
     const before = await getBazaarConfig();
-    const rate = text(fd, 'feeRatePercent');
-    if (!/^\d{1,2}(\.\d{1,2})?$/.test(rate) || Number(rate) > 90) throw new Error('수수료 요율을 0~90 사이 퍼센트로 입력해 주세요.');
-    const next: BazaarConfig = {
-      feeRatePercent: rate,
-      feeVatMode: text(fd, 'feeVatMode') === 'EXCLUDED' ? 'EXCLUDED' : 'INCLUDED',
-      minSalePrice: intOf(fd, 'minSalePrice', '최소 판매가'),
-      defaultPerPersonLimit: intOf(fd, 'defaultPerPersonLimit', '1인 구매 제한'),
-      matchDeadlineDays: intOf(fd, 'matchDeadlineDays', '매칭 수락 기한'),
-      settlementPayDay: intOf(fd, 'settlementPayDay', '정산 지급일'),
+    const raw = {
+      feeRatePercent: text(fd, 'feeRatePercent'),
+      minSalePrice: text(fd, 'minSalePrice').replace(/[,\s원]/g, ''),
+      defaultPerPersonLimit: text(fd, 'defaultPerPersonLimit').replace(/[,\s]/g, ''),
+      matchDeadlineDays: text(fd, 'matchDeadlineDays').replace(/[,\s]/g, ''),
+      settlementPayDay: text(fd, 'settlementPayDay').replace(/[,\s]/g, ''),
       warehouseAddress: text(fd, 'warehouseAddress'),
       consignmentNotice: text(fd, 'consignmentNotice'),
+    };
+    // 범위를 벗어난 값을 기본값으로 바꿔 저장하고 "저장했습니다" 라고 하지 않는다(점검 낮음).
+    const errors = validateConfigInput({ ...raw, minSalePrice: raw.minSalePrice || 'x', defaultPerPersonLimit: raw.defaultPerPersonLimit || 'x', matchDeadlineDays: raw.matchDeadlineDays || 'x', settlementPayDay: raw.settlementPayDay || 'x' });
+    if (errors.length) throw new Error(errors.join('\n'));
+    const next: BazaarConfig = {
+      feeRatePercent: raw.feeRatePercent,
+      feeVatMode: text(fd, 'feeVatMode') === 'EXCLUDED' ? 'EXCLUDED' : 'INCLUDED',
+      minSalePrice: Number(raw.minSalePrice),
+      defaultPerPersonLimit: Number(raw.defaultPerPersonLimit),
+      matchDeadlineDays: Number(raw.matchDeadlineDays),
+      settlementPayDay: Number(raw.settlementPayDay),
+      warehouseAddress: raw.warehouseAddress,
+      consignmentNotice: raw.consignmentNotice,
     };
     const saved = await saveBazaarConfig(next, admin.id);
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_CONFIG', targetType: 'system_setting', targetId: 'live_bazaar.config', before, after: saved });
@@ -84,10 +102,11 @@ export async function decideParticipationAction(_p: AdminActionState, fd: FormDa
     const merchantId = text(fd, 'merchantId');
     const decision = text(fd, 'decision') as 'APPROVED' | 'REJECTED' | 'SUSPENDED';
     if (!['APPROVED', 'REJECTED', 'SUSPENDED'].includes(decision)) throw new Error('처리 방법을 골라 주세요.');
-    await svc.decideParticipation(merchantId, decision, admin.id, optText(fd, 'note'));
-    await writeAudit({ adminUserId: admin.id, action: `BAZAAR_PARTICIPATION_${decision}`, targetType: 'merchant_bazaar', targetId: merchantId });
+    const r = await svc.decideParticipation(merchantId, decision, admin.id, optText(fd, 'note'));
+    await writeAudit({ adminUserId: admin.id, action: `BAZAAR_PARTICIPATION_${decision}`, targetType: 'merchant_bazaar', targetId: merchantId, after: { withdrawnMatches: r.withdrawn } });
     revalidateBazaar();
-    return decision === 'APPROVED' ? '참여를 승인했습니다. 이제 매칭 대상에 포함됩니다.' : '처리했습니다.';
+    if (decision === 'APPROVED') return '참여를 승인했습니다. 이제 매칭 대상에 포함됩니다.';
+    return r.withdrawn ? `처리했습니다. 응답 대기 중이던 매칭 제안 ${r.withdrawn}건을 철회하고 접수 상태로 되돌렸습니다.` : '처리했습니다.';
   });
 }
 
@@ -131,7 +150,10 @@ export async function cancelDonationAction(_p: AdminActionState, fd: FormData) {
 export async function registerInboundAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
     await assertBazaarEnabled();
+    assertBazaarOperator(admin);
     const donationId = text(fd, 'donationId');
+    // 검수 사진을 먼저 검사한다(형식·크기·개수). 틀리면 검수 결과도 저장하지 않는다.
+    const photos = await svc.prepareDonationFiles(fd.getAll('photos').filter((f): f is File => f instanceof File).map((file) => ({ kind: 'INSPECTION' as const, file })));
     const items = await prisma.inKindItem.findMany({ where: { donationId }, select: { id: true, name: true } });
     const result = text(fd, 'result') as 'PASS' | 'PARTIAL' | 'FAIL';
     if (!['PASS', 'PARTIAL', 'FAIL'].includes(result)) throw new Error('검수 결과를 골라 주세요.');
@@ -154,9 +176,7 @@ export async function registerInboundAction(_p: AdminActionState, fd: FormData) 
       disposition: text(fd, 'disposition') === 'DISPOSED' ? 'DISPOSED' : 'RETURNED',
       note: optText(fd, 'note'),
     });
-    for (const f of fd.getAll('photos')) {
-      if (f instanceof File && f.size > 0) await svc.saveDonationFile(donationId, 'INSPECTION', f, admin.id);
-    }
+    if (photos.length) await svc.attachDonationFiles(donationId, photos, admin.id, [...svc.INSPECTION_PHOTO_STATUSES, 'RETURNED']);
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_INBOUND', targetType: 'in_kind_donation', targetId: donationId, after: { result } });
     revalidateBazaar();
     return result === 'FAIL' ? '불합격으로 등록했습니다(반송·폐기).' : '입고·검수를 등록했습니다. 기관이 검수를 확정하면 영수증이 발급됩니다.';
@@ -167,6 +187,7 @@ export async function closeDonationAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
     await assertBazaarEnabled();
     await svc.closeDonation(text(fd, 'donationId'), admin.id);
+    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_DONATION_CLOSE', targetType: 'in_kind_donation', targetId: text(fd, 'donationId') });
     revalidateBazaar();
     return '기부 건을 종결했습니다.';
   });
@@ -195,6 +216,9 @@ export async function reissueReceiptAction(_p: AdminActionState, fd: FormData) {
     return `영수증 ${r.receiptNo} 를 새로 발급했습니다.`;
   });
 }
+
+// 영수증 무효·재발급은 스위치가 꺼져도 동작한다(발급된 현물 영수증은 법정 서류 — 정정 경로가 있어야 한다).
+// 꺼져 있을 때는 /admin/in-kind-receipts 화면에서 쓴다.
 
 // ------------------------------------------------------------------ 상품
 
@@ -229,11 +253,14 @@ export async function listProductAction(_p: AdminActionState, fd: FormData) {
 export async function endProductAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
     await assertBazaarEnabled();
+    assertBazaarOperator(admin);
     const id = text(fd, 'productId');
-    await svc.endProduct(id, admin.id, text(fd, 'remainingAction'));
-    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_PRODUCT_END', targetType: 'bazaar_product', targetId: id, after: { remainingAction: text(fd, 'remainingAction') } });
+    const r = await svc.endProduct(id, admin.id, text(fd, 'remainingAction'));
+    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_PRODUCT_END', targetType: 'bazaar_product', targetId: id, after: { remainingAction: text(fd, 'remainingAction'), returnedQty: r.returnedQty } });
     revalidateBazaar();
-    return '판매를 종료했습니다.';
+    return r.correctionNeeded
+      ? `판매를 종료했습니다. 기부자에게 돌려준 ${r.returnedQty}개는 기부가 아니므로 현물 영수증을 무효 처리한 뒤 재발급해 금액을 정정해 주세요(기부 건 상세).`
+      : '판매를 종료했습니다.';
   });
 }
 
@@ -281,7 +308,9 @@ export async function liveStatusAction(_p: AdminActionState, fd: FormData) {
     const id = text(fd, 'liveId');
     const status = text(fd, 'status');
     if (status === 'URL') {
-      await svc.updateLiveUrl(id, text(fd, 'broadcastUrl'));
+      const r = await svc.updateLiveUrl(id, text(fd, 'broadcastUrl'));
+      // 공개 화면에 걸리는 주소라 바꾼 사람·전후 값을 남긴다(점검 낮음).
+      await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_LIVE_URL', targetType: 'bazaar_live', targetId: id, before: { broadcastUrl: r.before }, after: { broadcastUrl: text(fd, 'broadcastUrl') } });
       revalidateBazaar();
       return '방송 주소를 저장했습니다.';
     }
@@ -298,12 +327,14 @@ export async function liveStatusAction(_p: AdminActionState, fd: FormData) {
 export async function createSaleBatchAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
     await assertBazaarEnabled();
+    assertBazaarOperator(admin);
     const file = fd.get('file');
     let csvText = text(fd, 'rowsText');
     let source: 'MANUAL' | 'CSV' = 'MANUAL';
     if (file instanceof File && file.size > 0) {
-      if (file.size > 2 * 1024 * 1024) throw new Error('파일은 2MB 이하만 올릴 수 있습니다.');
-      csvText = await file.text();
+      if (file.size > BAZAAR_CSV_MAX_BYTES) throw new Error('파일은 2MB 이하만 올릴 수 있습니다.');
+      // 엑셀 기본 저장(CP949)도 읽는다(점검 B-M5).
+      csvText = decodeCsvBytes(new Uint8Array(await file.arrayBuffer())).text;
       source = 'CSV';
     }
     if (!csvText.trim()) throw new Error('판매 결과를 입력하거나 파일을 올려 주세요.');
@@ -337,6 +368,7 @@ export async function approveSaleBatchAction(_p: AdminActionState, fd: FormData)
 export async function rejectSaleBatchAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
     await assertBazaarEnabled();
+    assertBazaarOperator(admin);
     const id = text(fd, 'batchId');
     await svc.rejectSaleBatch(id, admin.id, text(fd, 'reason'));
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_SALE_BATCH_REJECT', targetType: 'bazaar_sale_batch', targetId: id });
@@ -346,6 +378,8 @@ export async function rejectSaleBatchAction(_p: AdminActionState, fd: FormData) 
 }
 
 // ------------------------------------------------------------------ 정산(스위치가 꺼져도 동작)
+// 꺼져도 이미 승인된 판매의 정산 집계·확정·이월·지급은 계속 처리한다(확정 정산은 계속 지급 — 2026-11-05 결정).
+// 꺼진 동안에는 새 판매 결과를 받지 않으므로 새 원장은 생기지 않는다.
 
 export async function generateSettlementsAction(_p: AdminActionState, fd: FormData) {
   return run(async (admin) => {
@@ -364,12 +398,30 @@ export async function confirmSettlementAction(_p: AdminActionState, fd: FormData
   return run(async (admin) => {
     assertMoneyAdmin(admin);
     const id = text(fd, 'settlementId');
-    await svc.confirmSettlement(id, admin.id);
-    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_SETTLEMENT_CONFIRM', targetType: 'bazaar_settlement', targetId: id });
+    const r = await svc.confirmSettlement(id, admin.id);
+    await writeAudit({ adminUserId: admin.id, action: r.status === 'CARRIED' ? 'BAZAAR_SETTLEMENT_CARRY' : 'BAZAAR_SETTLEMENT_CONFIRM', targetType: 'bazaar_settlement', targetId: id, after: { payout: r.payout.toString(), carriedToMonth: r.carriedToMonth } });
     revalidatePath('/admin/bazaar', 'layout');
     revalidatePath('/admin/in-kind-settlements');
     revalidatePath('/studio/bazaar', 'layout');
+    if (r.status === 'CARRIED')
+      return r.carriedToMonth
+        ? `지급액이 ${Number(r.payout).toLocaleString('ko-KR')}원이라 지급하지 않고 ${r.carriedToMonth} 정산으로 넘겼습니다. 다음 정산에서 차감됩니다.`
+        : '지급액이 0원이라 지급 없이 정산을 마감했습니다.';
     return '정산을 확정했습니다. 지급일에 이체한 뒤 지급 완료를 기록해 주세요.';
+  });
+}
+
+/** 0원 이하로 확정만 되어 남아 있던 정산(이전 데이터)을 다음 달로 넘긴다. */
+export async function carryOverSettlementAction(_p: AdminActionState, fd: FormData) {
+  return run(async (admin) => {
+    assertMoneyAdmin(admin);
+    const id = text(fd, 'settlementId');
+    const r = await svc.carryOverSettlement(id, admin.id);
+    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_SETTLEMENT_CARRY', targetType: 'bazaar_settlement', targetId: id, after: { payout: r.payout.toString(), carriedToMonth: r.carriedToMonth } });
+    revalidatePath('/admin/bazaar', 'layout');
+    revalidatePath('/admin/in-kind-settlements');
+    revalidatePath('/studio/bazaar', 'layout');
+    return r.carriedToMonth ? `${r.carriedToMonth} 정산으로 넘겼습니다.` : '지급 없이 정산을 마감했습니다.';
   });
 }
 
