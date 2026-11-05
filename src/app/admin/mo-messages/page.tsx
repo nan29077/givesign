@@ -5,6 +5,7 @@ import { AdminField, AdminInput, AdminSelect, MerchantOptions, FilterBar, Pager 
 import { shortId } from '@/components/admin/mask';
 import { PAGE_SIZE, parsePage, clampPage } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
+import { merchantSelectOptions } from '@/server/services/admin-options';
 import { requireAdmin } from '@/server/auth';
 import { formatNumber } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
@@ -55,7 +56,7 @@ export default async function AdminMoMessagesPage({
     ...(from || to ? { receivedAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
   };
 
-  const [total, messages, grouped, merchants] = await Promise.all([
+  const [total, messages, grouped, { merchants, truncated: merchantsTruncated }] = await Promise.all([
     prisma.moInboundMessage.count({ where }),
     prisma.moInboundMessage.findMany({
       where,
@@ -71,7 +72,7 @@ export default async function AdminMoMessagesPage({
       },
     }),
     prisma.moInboundMessage.groupBy({ by: ['result'], _count: { _all: true } }),
-    prisma.merchantProfile.findMany({ orderBy: { displayName: 'asc' }, select: { id: true, displayName: true, code: true } }),
+    merchantSelectOptions({ approvedOnly: false, include: [merchantId] }),
   ]);
 
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -118,7 +119,7 @@ export default async function AdminMoMessagesPage({
         </AdminField>
         <AdminField label="사회복지기관" className="w-52">
           <AdminSelect name="merchantId" defaultValue={merchantId ?? ''}>
-            <MerchantOptions merchants={merchants} />
+            <MerchantOptions merchants={merchants} truncated={merchantsTruncated} />
           </AdminSelect>
         </AdminField>
         <AdminField label="수신번호" className="w-40">

@@ -108,6 +108,40 @@ export async function logShippingReveal(input: {
 }
 
 /**
+ * 파트너 API 로 바꾼 보안 민감 설정(웹훅 등록·해제 등) 감사 기록.
+ * 세션 사용자가 없으므로 키 id 와 요청 IP 로 행위자를 남긴다. 비밀값은 넣지 않는다.
+ */
+export async function logPartnerAudit(input: {
+  req: Request;
+  merchantId: string;
+  keyId?: string | null;
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  after?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await prisma.adminAuditLog.create({
+      data: {
+        id: newId(),
+        adminId: null,
+        actorRole: 'SYSTEM',
+        actorLabel: `partner-api:${input.keyId ?? '-'}`,
+        action: input.action,
+        targetType: input.targetType,
+        targetId: input.targetId ?? null,
+        beforeValue: null as unknown as object,
+        afterValue: { by: 'partner-api', merchantId: input.merchantId, keyId: input.keyId ?? null, ...(input.after ?? {}) } as object,
+        ip: clientIpFromRequest(input.req),
+        userAgent: input.req.headers.get('user-agent') ?? null,
+      },
+    });
+  } catch (e) {
+    logger.warn('파트너 감사 기록 실패', { action: input.action, message: (e as Error).message });
+  }
+}
+
+/**
  * 샌드박스 전용 라우트 가드.
  *
  * 운영 키로 샌드박스를 호출하면 막는다.

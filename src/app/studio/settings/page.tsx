@@ -25,6 +25,7 @@ import {
   deleteMtTemplateAction,
   createWebhookAction,
   deleteWebhookAction,
+  restoreWebhookAction,
   testWebhookAction,
 } from '@/app/actions/studio';
 import {
@@ -122,13 +123,14 @@ export default async function StudioSettingsPage({
       take: 20,
     }),
     prisma.merchantMtTemplate.findMany({
-      where: { merchantId },
+      where: { merchantId, archivedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 30,
     }),
     prisma.merchantWebhook.findMany({
       where: { merchantId },
-      orderBy: { createdAt: 'desc' },
+      // 사용 중인 것을 먼저, 보관(해제)한 것은 뒤에 둔다.
+      orderBy: [{ archivedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }],
       take: 10,
     }),
     prisma.webhookDelivery.findMany({
@@ -596,7 +598,12 @@ export default async function StudioSettingsPage({
                 <div>
                   <p className="text-[13px] font-bold text-ink-900">상단 배너</p>
                   <p className="mb-2 mt-0.5 text-[12px] text-ink-400">
-                    자동으로 두면 사회복지기관마다 정해진 기본 배너가 쓰입니다. 특정 배너로 고정하거나 직접 올릴 수 있습니다.
+                    간편 후원 화면(/c/기관코드)의 상단 배너입니다. 자동으로 두면 기관마다 정해진 기본 배너가 쓰입니다.
+                    특정 배너로 고정하거나 직접 올릴 수 있습니다. 후원페이지(/donate/기관코드)의 배너는{' '}
+                    <Link href="/studio/donation-page" className="font-semibold text-brand-700 underline">
+                      후원페이지 설정
+                    </Link>
+                    에서 따로 정합니다.
                   </p>
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                     {/* "자동" 을 명시적인 선택지로 둔다. 예전에는 저장하는 순간
@@ -654,7 +661,12 @@ export default async function StudioSettingsPage({
                     />
                   </div>
                   <p className="mt-2 text-[11.5px] text-ink-400">
-                    지금 적용 중: {merchant.bannerUrl ? '고정 배너' : `자동 (${defaultBannerFor(merchant.id)})`}
+                    간편 후원 화면에 지금 적용 중:{' '}
+                    {merchant.bannerUrl
+                      ? DEFAULT_BANNERS.includes(merchant.bannerUrl as (typeof DEFAULT_BANNERS)[number])
+                        ? `고정 (기본 ${DEFAULT_BANNERS.indexOf(merchant.bannerUrl as (typeof DEFAULT_BANNERS)[number]) + 1})`
+                        : '직접 올린 배너'
+                      : `자동 (기본 ${DEFAULT_BANNERS.indexOf(defaultBannerFor(merchant.id) as (typeof DEFAULT_BANNERS)[number]) + 1})`}
                   </p>
                 </div>
 
@@ -827,7 +839,13 @@ export default async function StudioSettingsPage({
                     {webhooks.map((w) => (
                       <li key={w.id} className="rounded-xl border border-ink-200 bg-white px-3 py-2.5">
                         <div className="flex flex-wrap items-center gap-2">
-                          {w.active ? <Badge tone="success">사용 중</Badge> : <Badge tone="neutral">중지</Badge>}
+                          {w.archivedAt ? (
+                            <Badge tone="neutral">해제됨(보관)</Badge>
+                          ) : w.active ? (
+                            <Badge tone="success">사용 중</Badge>
+                          ) : (
+                            <Badge tone="neutral">중지</Badge>
+                          )}
                           {w.lastStatus ? (
                             <Badge tone={w.lastStatus < 300 ? 'success' : 'danger'}>{`최근 ${w.lastStatus}`}</Badge>
                           ) : null}
@@ -838,19 +856,30 @@ export default async function StudioSettingsPage({
                           {w.events ? w.events.split(',').filter(Boolean).join(', ') : '모든 이벤트'}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <InlineActionForm
-                            action={testWebhookAction}
-                            fields={{ webhookId: w.id }}
-                            submitLabel="테스트 발송"
-                            variant="secondary"
-                          />
-                          <InlineActionForm
-                            action={deleteWebhookAction}
-                            fields={{ webhookId: w.id }}
-                            submitLabel="해제"
-                            variant="danger"
-                            confirmMessage="이 주소로는 더 이상 이벤트가 가지 않습니다. 해제할까요?"
-                          />
+                          {w.archivedAt ? (
+                            <InlineActionForm
+                              action={restoreWebhookAction}
+                              fields={{ webhookId: w.id }}
+                              submitLabel="되살리기"
+                              variant="secondary"
+                            />
+                          ) : (
+                            <>
+                              <InlineActionForm
+                                action={testWebhookAction}
+                                fields={{ webhookId: w.id }}
+                                submitLabel="테스트 발송"
+                                variant="secondary"
+                              />
+                              <InlineActionForm
+                                action={deleteWebhookAction}
+                                fields={{ webhookId: w.id }}
+                                submitLabel="해제"
+                                variant="danger"
+                                confirmMessage="이 주소로는 더 이상 이벤트가 가지 않습니다. 전송 이력은 남고, 나중에 되살릴 수 있습니다. 해제할까요?"
+                              />
+                            </>
+                          )}
                         </div>
                       </li>
                     ))}

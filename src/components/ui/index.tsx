@@ -37,13 +37,18 @@ const buttonSizes: Record<ButtonSize, string> = {
   lg: 'h-14 px-6 text-[15px] rounded-2xl w-full',
 };
 
+/**
+ * 기본 type 은 "button" 이다. HTML 기본값(submit)이면 폼 안의 보조 버튼이 실수로 폼을 제출한다.
+ * 제출 버튼은 반드시 type="submit" 을 적는다(2026-11-05 점검 E 에서 모든 사용처를 확인했다).
+ */
 export function Button({
   variant = 'primary',
   size = 'md',
   className,
+  type = 'button',
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return <button className={cx(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...props} />;
+  return <button type={type} className={cx(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...props} />;
 }
 
 export function LinkButton({
@@ -272,8 +277,13 @@ export function Notice({
     : tone === 'success' ? 'border-success-500/30 bg-success-50'
     : tone === 'brand' ? 'border-brand-200 bg-brand-50'
     : 'border-ink-200 bg-white';
+  // 서버 액션 결과처럼 나중에 끼워지는 안내를 스크린리더가 읽도록 live region 으로 둔다. 위험(danger)은 즉시 알린다.
   return (
-    <div className={cx('rounded-xl border px-4 py-3', border)}>
+    <div
+      role={tone === 'danger' ? 'alert' : 'status'}
+      aria-live={tone === 'danger' ? 'assertive' : 'polite'}
+      className={cx('rounded-xl border px-4 py-3', border)}
+    >
       {title ? <p className="mb-1 text-[13px] font-bold text-ink-900">{title}</p> : null}
       <div className="text-[13px] leading-relaxed text-ink-700">{children}</div>
     </div>

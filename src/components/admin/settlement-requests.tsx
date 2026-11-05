@@ -78,6 +78,7 @@ function SingleStatusForm({ row, disabled }: { row: SettlementRow; disabled: boo
         <input type="hidden" name="requestId" value={row.id} />
         <select
           name="status"
+          aria-label="변경할 정산 상태"
           defaultValue={options[0].value}
           disabled={disabled}
           className="h-8 w-full rounded-lg border border-ink-200 px-2 text-[12px] disabled:bg-ink-50 disabled:text-ink-400"
@@ -90,10 +91,12 @@ function SingleStatusForm({ row, disabled }: { row: SettlementRow; disabled: boo
         </select>
         <input
           name="memo"
+          aria-label="상태 변경 사유"
           placeholder="사유 (반려·지급실패는 필수)"
           className="h-8 w-full rounded-lg border border-ink-200 px-2 text-[12px] outline-none focus:border-brand-400"
         />
         <button
+          type="submit"
           disabled={disabled || pending}
           className="h-8 w-full rounded-lg bg-ink-900 text-[12px] font-bold text-white disabled:opacity-50"
         >
@@ -187,6 +190,7 @@ export function SettlementRequestsPanel({
             {hidden(selectedIds)}
             <input
               name="memo"
+              aria-label="일괄 처리 사유"
               placeholder="반려/처리 사유"
               disabled={!canEdit}
               className="h-8 w-40 rounded-lg border border-ink-200 px-2 text-[12px] outline-none focus:border-brand-400 disabled:bg-ink-50 disabled:text-ink-300"

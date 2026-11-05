@@ -328,23 +328,30 @@ export async function monthlyTrend(merchantId: string, months = 6, now = new Dat
   const y = kstNow.getUTCFullYear();
   const mo = kstNow.getUTCMonth();
   const start = kstStartOfMonth(new Date(Date.UTC(y, mo - (months - 1), 1)));
-  const rows = await prisma.charge.findMany({
-    where: { merchantId, status: { in: PAID_STATUSES }, isTest: false, paidAt: { gte: start } },
-    select: { amount: true, paidAt: true, recurringId: true },
-  });
+  // 결제 전건을 메모리로 가져오지 않고 DB 에서 KST 월별로 합산한다.
+  const statuses = PAID_STATUSES.map((st) => String(st));
+  const rows = await prisma.$queryRaw<Array<{ month: string; total: bigint; recurring: bigint; count: number }>>`
+    SELECT to_char(paid_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM') AS month,
+           COALESCE(SUM(amount), 0)::bigint AS total,
+           COALESCE(SUM(CASE WHEN recurring_id IS NOT NULL THEN amount ELSE 0 END), 0)::bigint AS recurring,
+           COUNT(*)::int AS count
+      FROM charge
+     WHERE merchant_id = ${merchantId}
+       AND status::text = ANY(${statuses}::text[])
+       AND is_test = false
+       AND paid_at >= ${start}
+     GROUP BY 1`;
   const buckets = new Map<string, { total: bigint; recurring: bigint; count: number }>();
   for (let i = months - 1; i >= 0; i -= 1) {
     const d = new Date(Date.UTC(y, mo - i, 1));
     buckets.set(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, { total: 0n, recurring: 0n, count: 0 });
   }
   for (const r of rows) {
-    const kst = new Date(r.paidAt!.getTime() + 9 * 3600000);
-    const key = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, '0')}`;
-    const b = buckets.get(key);
+    const b = buckets.get(r.month);
     if (!b) continue;
-    b.total += r.amount;
-    b.count += 1;
-    if (r.recurringId) b.recurring += r.amount;
+    b.total = BigInt(r.total);
+    b.recurring = BigInt(r.recurring);
+    b.count = Number(r.count);
   }
   return [...buckets.entries()].map(([month, v]) => ({ month, ...v }));
 }

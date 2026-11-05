@@ -7,6 +7,7 @@ import { ActionButton, ActionForm, SelectActionForm } from '@/components/admin/a
 import { createMoNumber, assignMoNumber, changeMoNumberStatus } from '@/app/actions/admin/transactions';
 import { canManageMoney } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
+import { merchantSelectOptions } from '@/server/services/admin-options';
 import { requireAdmin } from '@/server/auth';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
@@ -38,7 +39,7 @@ export default async function AdminMoNumbersPage({
     ...(q ? { OR: [{ phoneNumber: { contains: q.replace(/[\s-]/g, '') } }, { keyword: { contains: q.toUpperCase() } }, { merchant: { displayName: { contains: q } } }] } : {}),
   };
 
-  const [numbers, grouped, costSum, approvedMerchants] = await Promise.all([
+  const [numbers, grouped, costSum, { merchants: approvedMerchants, truncated: merchantsTruncated }] = await Promise.all([
     prisma.merchantMoNumber.findMany({
       where,
       orderBy: [{ status: 'asc' }, { phoneNumber: 'asc' }],
@@ -51,11 +52,8 @@ export default async function AdminMoNumbersPage({
     }),
     prisma.merchantMoNumber.groupBy({ by: ['status'], _count: { _all: true }, _sum: { monthlyCost: true } }),
     prisma.merchantMoNumber.aggregate({ _sum: { monthlyCost: true } }),
-    prisma.merchantProfile.findMany({
-      where: { status: 'APPROVED' },
-      orderBy: { displayName: 'asc' },
-      select: { id: true, displayName: true, code: true },
-    }),
+    // 선택 상자용 기관은 상한까지만(기관이 수천이면 행마다 수천 개 옵션이 그려진다).
+    merchantSelectOptions(),
   ]);
 
   const countOf = (s: MoNumberStatus) => grouped.find((g) => g.status === s)?._count._all ?? 0;
@@ -193,6 +191,9 @@ export default async function AdminMoNumbersPage({
                       options={[
                         { value: '', label: '사회복지기관 선택' },
                         ...approvedMerchants.map((c) => ({ value: c.id, label: `${c.displayName} (${c.code})` })),
+                        ...(merchantsTruncated
+                          ? [{ value: '', label: '이름순 상위 기관만 표시 — 없으면 기관 상세에서 배정' }]
+                          : []),
                       ]}
                       submitLabel="배정"
                       confirm="선택한 사회복지기관에 이 수신번호를 배정합니다."

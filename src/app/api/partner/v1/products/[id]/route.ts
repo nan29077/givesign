@@ -1,8 +1,7 @@
 import { prisma } from '@/server/db';
 import { authenticatePartner } from '@/server/services/partner-auth';
-import { serializeProduct, validateProduct } from '@/server/services/partner-products';
+import { serializeProduct, updatePartnerProduct } from '@/server/services/partner-products';
 import { authError, denyTestKey, jsonError, jsonOk, logPartnerCall } from '../../_shared';
-import type { Prisma } from '@/generated/prisma/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,14 +28,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (testDenied) return testDenied;
 
   const { id } = await ctx.params;
-  const owned = await prisma.chargeProduct.findFirst({
-    where: { id, merchantId: auth.merchantId },
-    select: { id: true },
-  });
-  if (!owned) {
-    await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 404, errorCode: 'NOT_FOUND' });
-    return jsonError(404, 'NOT_FOUND', '해당 상품을 찾을 수 없습니다.');
-  }
 
   let body: Record<string, unknown>;
   try {
@@ -45,18 +36,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return jsonError(400, 'INVALID_JSON', '본문이 올바른 JSON 이 아닙니다.');
   }
 
-  const checked = validateProduct(body, { partial: true });
-  if (!checked.ok) {
-    await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 400, errorCode: 'INVALID_PRODUCT' });
-    return jsonError(400, 'INVALID_PRODUCT', checked.message);
+  // 콘솔과 같은 규칙(종류 변경 금지·보관 상품 수정 금지·금액 범위·FEATURE_GOODS)을 서비스에서 판단한다.
+  const result = await updatePartnerProduct(auth.merchantId, id, body);
+  if (!result.ok) {
+    await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: result.status, errorCode: result.code });
+    return jsonError(result.status, result.code, result.message);
   }
-
-  const row = await prisma.chargeProduct.update({
-    where: { id },
-    data: checked.data as Prisma.ChargeProductUncheckedUpdateInput,
-  });
   await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 200 });
-  return jsonOk({ product: serializeProduct(row) });
+  return jsonOk({ product: serializeProduct(result.product) });
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {

@@ -41,7 +41,8 @@ export default async function AdminHolidaysPage({
 
   const [holidays, missingYears] = await Promise.all([
     prisma.publicHoliday.findMany({
-      where: { date: { gte: `${year}-01-01`, lte: `${year}-12-31` } },
+      // 삭제(보관)한 날짜는 숨긴다. 같은 날짜를 다시 등록하면 되살아난다.
+      where: { date: { gte: `${year}-01-01`, lte: `${year}-12-31` }, archivedAt: null },
       orderBy: { date: 'asc' },
     }),
     // 임시공휴일은 매년 갑자기 지정되므로, 올해·내년 공휴일이 비어있으면 정산일 계산이

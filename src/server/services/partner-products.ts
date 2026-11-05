@@ -2,6 +2,9 @@ import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import type { ChargeProduct, Prisma } from '@/generated/prisma/client';
 import type { DigitalProductType, FulfillmentMode, ProductKind } from '@/generated/prisma/enums';
+import {
+  PRODUCT_LIMIT_PER_KIND, PRODUCT_NAME_MAX, amountRangeError, effectiveAmountRange, goodsKindError,
+} from '@/server/services/product-rules';
 
 /**
  * 사회복지기관 상품 동기화 API 의 검증·직렬화.
@@ -12,9 +15,13 @@ import type { DigitalProductType, FulfillmentMode, ProductKind } from '@/generat
  * 규칙
  *  - 상품은 지난 결제가 참조하므로 삭제하지 않고 보관 처리(archive)한다.
  *  - 재고는 결제 승인 시점에 상품 단위 잠금 안에서 차감된다. 여기서는 값만 바꾼다.
+ *  - 기관 콘솔과 같은 규칙을 쓴다(`product-rules.ts`): FEATURE_GOODS 가 꺼지면 DIGITAL 만,
+ *    금액은 1원 이상 + 기관 범위 ∩ 한도 정책, 종류별 상한 PRODUCT_LIMIT_PER_KIND,
+ *    보관되지 않은 항목끼리 이름 중복 금지, 등록 후 종류 변경 금지, 보관된 항목은 수정 불가.
  */
 
-export const PRODUCT_MAX = 200;
+/** 종류별 상한. 콘솔(MAX_CHARGE_PRODUCTS)과 같은 값이다. */
+export const PRODUCT_MAX = PRODUCT_LIMIT_PER_KIND;
 
 export interface ProductInput {
   kind?: string;
@@ -69,6 +76,8 @@ export function validateProduct(
   if (input.kind !== undefined) {
     const kind = String(input.kind).toUpperCase();
     if (!KINDS.includes(kind)) return { ok: false, message: 'kind 는 DIGITAL 또는 PHYSICAL 이어야 합니다.' };
+    const kindErr = goodsKindError(kind);
+    if (kindErr) return { ok: false, message: kindErr };
     data.kind = kind as ProductKind;
   } else if (!partial) {
     data.kind = 'DIGITAL' as ProductKind;
@@ -88,15 +97,16 @@ export function validateProduct(
   if (input.name !== undefined) {
     const name = String(input.name).trim();
     if (!name) return { ok: false, message: 'name 이 필요합니다.' };
-    data.name = name.slice(0, 60);
+    data.name = name.slice(0, PRODUCT_NAME_MAX);
   } else if (!partial) {
     return { ok: false, message: 'name 이 필요합니다.' };
   }
 
   if (input.amount !== undefined) {
     const amount = Number(input.amount);
-    if (!Number.isInteger(amount) || amount < 0) {
-      return { ok: false, message: 'amount 는 0 이상의 정수(원)여야 합니다.' };
+    // 0원 항목은 결제할 수 없다(콘솔도 1원 이상만 받는다).
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      return { ok: false, message: 'amount 는 1 이상의 정수(원)여야 합니다.' };
     }
     data.amount = BigInt(amount);
   } else if (!partial) {
@@ -150,28 +160,121 @@ export function validateProduct(
   return { ok: true, data };
 }
 
-/** 상품 1건 생성. 개수 상한을 넘으면 거절한다. */
-export async function createPartnerProduct(merchantId: string, input: ProductInput) {
-  const count = await prisma.chargeProduct.count({ where: { merchantId, archivedAt: null } });
-  if (count >= PRODUCT_MAX) {
-    return { ok: false as const, message: `상품은 ${PRODUCT_MAX}개까지 등록할 수 있습니다.` };
+type ExistingRow = Pick<ChargeProduct, 'id' | 'kind' | 'archivedAt'>;
+
+/**
+ * 검증된 값이 기존 행(있으면)과 합쳐졌을 때 콘솔 규칙을 지키는지 본다.
+ * - 종류 변경 금지(과거 주문의 배송 유무가 뒤집힌다)
+ * - 기존 행이 DIGITAL 이 아니면 기능이 꺼진 동안 수정 불가
+ * - 금액 범위(콘솔과 같은 함수)
+ */
+function checkAgainstRules(
+  data: Record<string, unknown>,
+  found: ExistingRow | undefined,
+  range: { min: bigint; max: bigint } | null,
+): string | null {
+  if (found) {
+    if (data.kind !== undefined && data.kind !== found.kind) {
+      return 'kind 는 등록 후 바꿀 수 없습니다. 새 상품으로 등록해 주세요.';
+    }
+    const kindErr = goodsKindError(found.kind);
+    if (kindErr) return kindErr;
+    // 종류는 저장된 값으로 고정한다.
+    delete data.kind;
   }
+  const kind = String(data.kind ?? found?.kind ?? 'DIGITAL');
+  if (data.amount !== undefined) {
+    const err = amountRangeError(data.amount as bigint, range, kind);
+    if (err) return err;
+  }
+  return null;
+}
+
+/** 같은 이름의 사용 중(보관 안 됨) 항목이 있는지. */
+async function nameTaken(merchantId: string, name: string, exceptId?: string) {
+  const dup = await prisma.chargeProduct.findFirst({
+    where: { merchantId, name, archivedAt: null, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true },
+  });
+  return Boolean(dup);
+}
+
+function isUniqueViolation(e: unknown) {
+  return (e as { code?: string }).code === 'P2002';
+}
+
+/** 상품 1건 생성. 종류별 상한을 넘으면 거절한다. */
+export async function createPartnerProduct(merchantId: string, input: ProductInput) {
   const checked = validateProduct(input, { partial: false });
   if (!checked.ok) return { ok: false as const, message: checked.message };
 
-  // 검증을 통과한 값만 담겨 있으므로 여기서 한 번만 Prisma 입력 타입으로 좁힌다.
-  const row = await prisma.chargeProduct.create({
-    data: { id: newId(), merchantId, ...checked.data } as Prisma.ChargeProductUncheckedCreateInput,
+  const rule = checkAgainstRules(checked.data, undefined, await effectiveAmountRange(merchantId));
+  if (rule) return { ok: false as const, message: rule };
+
+  const kind = checked.data.kind as ProductKind;
+  const count = await prisma.chargeProduct.count({ where: { merchantId, kind, archivedAt: null } });
+  if (count >= PRODUCT_MAX) {
+    return { ok: false as const, message: `상품은 종류별로 ${PRODUCT_MAX}개까지 등록할 수 있습니다.` };
+  }
+  if (await nameTaken(merchantId, String(checked.data.name))) {
+    return { ok: false as const, message: '같은 이름의 상품이 이미 있습니다.' };
+  }
+
+  try {
+    // 검증을 통과한 값만 담겨 있으므로 여기서 한 번만 Prisma 입력 타입으로 좁힌다.
+    const row = await prisma.chargeProduct.create({
+      data: { id: newId(), merchantId, sortOrder: count, ...checked.data } as Prisma.ChargeProductUncheckedCreateInput,
+    });
+    return { ok: true as const, product: row };
+  } catch (e) {
+    if (isUniqueViolation(e)) return { ok: false as const, message: '같은 이름 또는 sku 의 상품이 이미 있습니다.' };
+    throw e;
+  }
+}
+
+/**
+ * 상품 1건 수정 (PATCH).
+ * 보관된 상품은 고치지 않는다 — 되살리려면 일괄 동기화로 다시 보내거나 콘솔에서 복원한다.
+ */
+export async function updatePartnerProduct(merchantId: string, id: string, input: ProductInput) {
+  const found = await prisma.chargeProduct.findFirst({
+    where: { id, merchantId },
+    select: { id: true, kind: true, name: true, amount: true, archivedAt: true },
   });
-  return { ok: true as const, product: row };
+  if (!found) return { ok: false as const, status: 404, code: 'NOT_FOUND', message: '해당 상품을 찾을 수 없습니다.' };
+  if (found.archivedAt) {
+    return { ok: false as const, status: 409, code: 'ARCHIVED', message: '보관(판매 중지)된 상품은 수정할 수 없습니다.' };
+  }
+
+  const checked = validateProduct(input, { partial: true });
+  if (!checked.ok) return { ok: false as const, status: 400, code: 'INVALID_PRODUCT', message: checked.message };
+  const rule = checkAgainstRules(checked.data, found, await effectiveAmountRange(merchantId));
+  if (rule) return { ok: false as const, status: 400, code: 'INVALID_PRODUCT', message: rule };
+  if (checked.data.name !== undefined && (await nameTaken(merchantId, String(checked.data.name), id))) {
+    return { ok: false as const, status: 400, code: 'INVALID_PRODUCT', message: '같은 이름의 상품이 이미 있습니다.' };
+  }
+
+  try {
+    const row = await prisma.chargeProduct.update({
+      where: { id },
+      data: checked.data as Prisma.ChargeProductUncheckedUpdateInput,
+    });
+    return { ok: true as const, product: row };
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      return { ok: false as const, status: 400, code: 'INVALID_PRODUCT', message: '같은 이름 또는 sku 의 상품이 이미 있습니다.' };
+    }
+    throw e;
+  }
 }
 
 /**
  * 일괄 동기화.
  *
  * sku 를 열쇠로 삼는다. 이미 있는 sku 는 내용을 맞추고, 없는 sku 는 새로 만든다.
- * `archiveMissing` 이 true 면 목록에 없는 상품을 보관 처리한다 — 사회복지기관 사이트에서
+ * `archiveMissing` 이 true 면 목록에 없는 상품을 보관 처리한다 — 기관 사이트에서
  * 내린 상품이 기브싸인에는 계속 팔리는 상태로 남는 것을 막기 위한 것이다.
+ * 반영 뒤 종류별 사용 중 개수가 상한을 넘거나 이름이 겹치면 전부 되돌린다.
  */
 export async function syncPartnerProducts(
   merchantId: string,
@@ -190,18 +293,23 @@ export async function syncPartnerProducts(
 
   const existing = await prisma.chargeProduct.findMany({ where: { merchantId, sku: { in: skus } } });
   const bySku = new Map(existing.map((p) => [p.sku!, p]));
+  const range = await effectiveAmountRange(merchantId);
 
   // 쓰기를 시작하기 전에 전부 검사한다.
   // 100건 중 50번째에서 형식 오류가 나면 앞 49건만 반영된 채 400 이 돌아가고,
-  // 사회복지기관은 어디까지 반영됐는지 모른 채 같은 요청을 다시 보낸다.
+  // 기관은 어디까지 반영됐는지 모른 채 같은 요청을 다시 보낸다.
   const plan: { sku: string; found: (typeof existing)[number] | undefined; data: Record<string, unknown> }[] = [];
   for (const item of withSku) {
     const sku = String(item.sku).trim();
     const found = bySku.get(sku);
     const checked = validateProduct(item, { partial: Boolean(found) });
     if (!checked.ok) return { ok: false as const, message: `${sku}: ${checked.message}` };
+    const rule = checkAgainstRules(checked.data, found, range);
+    if (rule) return { ok: false as const, message: `${sku}: ${rule}` };
     plan.push({ sku, found, data: checked.data as Record<string, unknown> });
   }
+
+  class RuleError extends Error {}
 
   // 반영은 한 트랜잭션에서. 도중에 실패하면 아무것도 바뀌지 않은 상태로 되돌아간다.
   try {
@@ -233,15 +341,27 @@ export async function syncPartnerProducts(
         archived = result.count;
       }
 
+      // 반영 결과가 콘솔 상한을 넘으면 전부 되돌린다.
+      const perKind = await tx.chargeProduct.groupBy({
+        by: ['kind'],
+        where: { merchantId, archivedAt: null },
+        _count: { _all: true },
+      });
+      const over = perKind.find((k) => k._count._all > PRODUCT_MAX);
+      if (over) {
+        throw new RuleError(`반영하면 ${over.kind} 상품이 ${over._count._all}개가 됩니다. 종류별로 ${PRODUCT_MAX}개까지 쓸 수 있습니다.`);
+      }
+
       return { ok: true as const, created, updated, archived };
     });
   } catch (e) {
-    // (merchantId, sku) 유니크 위반 — 같은 요청이 동시에 두 번 들어와 둘 다 "없음" 으로
-    // 판단한 경우다. 재시도하면 뒤 요청은 갱신 경로를 타므로 그대로 다시 보내면 된다.
-    if ((e as { code?: string }).code === 'P2002') {
+    if (e instanceof RuleError) return { ok: false as const, message: e.message };
+    // (merchantId, sku) 또는 사용 중 이름 유니크 위반 — 같은 요청이 동시에 두 번 들어왔거나
+    // 보낸 이름이 다른 사용 중 상품과 겹친 경우다.
+    if (isUniqueViolation(e)) {
       return {
         ok: false as const,
-        message: '같은 sku 로 동시에 처리 중인 요청이 있습니다. 잠시 후 다시 보내 주세요.',
+        message: '같은 sku 로 동시에 처리 중인 요청이 있거나, 같은 이름의 사용 중 상품이 있습니다. 이름을 확인한 뒤 다시 보내 주세요.',
       };
     }
     throw e;

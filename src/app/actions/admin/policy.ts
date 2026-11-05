@@ -54,10 +54,16 @@ export async function saveLimitPolicy(_prev: AdminActionState, fd: FormData): Pr
     const values = readLimitFields(fd);
     const active = bool(fd, 'active');
     const effectiveFrom = optDate(fd, 'effectiveFrom', '적용 시작일') ?? new Date();
+    // 수수료 정책(settlement.ts)과 같은 규칙: 시작일을 과거로 잡으면 다른 정책의 종료일이 과거로
+    // 박혀 이력이 소급 변경된다. 하루치 여유(시차·자정 경계)만 허용한다.
+    const isPast = (d: Date) => d.getTime() < Date.now() - 86_400_000;
 
     if (id) {
       const before = await prisma.chargeLimitPolicy.findUnique({ where: { id } });
       if (!before) throw new Error('한도 정책을 찾을 수 없습니다.');
+      if (before.effectiveFrom.getTime() !== effectiveFrom.getTime() && isPast(effectiveFrom)) {
+        throw new Error('적용 시작일을 과거로 옮길 수 없습니다. 지난 기간에 어떤 한도가 적용됐는지가 바뀝니다.');
+      }
 
       await prisma.chargeLimitPolicy.update({ where: { id }, data: { ...values, active, effectiveFrom } });
       await writeAudit({
@@ -88,23 +94,24 @@ export async function saveLimitPolicy(_prev: AdminActionState, fd: FormData): Pr
     const merchantId = scope === 'MERCHANT' ? requiredId(fd, 'merchantId', '사회복지기관') : null;
     const payerId = scope === 'PAYER' ? requiredId(fd, 'payerId', '후원자') : null;
 
-    if (scope === 'GLOBAL' && active) {
+    if (isPast(effectiveFrom)) {
+      throw new Error('적용 시작일을 과거로 잡을 수 없습니다. 기존 정책의 종료일이 과거로 바뀌어 이력이 소급 변경됩니다.');
+    }
+    // 같은 대상(전역 / 그 기관 / 그 후원자)끼리만 기간을 맞춘다. 예전에는 전역에만 이 검사가 있어
+    // 기관·후원자 범위는 같은 대상에 열린 정책이 여러 건 쌓였다(화면은 둘 다 "현재 적용").
+    const target = { scope, merchantId, payerId } as const;
+    if (active) {
       // 겹치는 기간만 막는다.
       //
       // 예전에는 "활성 전역 정책이 있으면" 무조건 거절했다. 그래서 시행일이 미래인 정책을
       // 등록하려면 현행 정책을 먼저 비활성화해야 했고, toggleLimitPolicy 가 effectiveTo 를
-      // 즉시 박으므로 오늘~새 시행일 사이에 적용 가능한 전역 정책이 하나도 없는 구간이 생겼다.
+      // 즉시 박으므로 오늘~새 시행일 사이에 적용 가능한 정책이 하나도 없는 구간이 생겼다.
       // 그 기간에는 코드 기본값(FALLBACK_POLICY)이 조용히 적용된다.
       const overlapping = await prisma.chargeLimitPolicy.count({
-        where: {
-          scope: 'GLOBAL',
-          active: true,
-          effectiveTo: null,
-          effectiveFrom: { gte: effectiveFrom },
-        },
+        where: { ...target, active: true, effectiveTo: null, effectiveFrom: { gte: effectiveFrom } },
       });
       if (overlapping > 0) {
-        throw new Error('같은 날 또는 그 이후에 시행되는 전역 정책이 이미 있습니다. 그 정책을 먼저 마감해 주세요.');
+        throw new Error('같은 날 또는 그 이후에 시행되는 같은 범위 정책이 이미 있습니다. 그 정책을 먼저 마감해 주세요.');
       }
     }
     if (merchantId) {
@@ -117,10 +124,10 @@ export async function saveLimitPolicy(_prev: AdminActionState, fd: FormData): Pr
     }
 
     const created = await prisma.$transaction(async (tx) => {
-      if (scope === 'GLOBAL' && active) {
-        // 시행 중인 전역 정책은 새 정책의 시행일까지 그대로 살려 둔다(공백 구간 방지).
+      if (active) {
+        // 시행 중인 같은 대상 정책은 새 정책의 시행일까지 그대로 살려 둔다(공백 구간 방지).
         await tx.chargeLimitPolicy.updateMany({
-          where: { scope: 'GLOBAL', active: true, effectiveTo: null, effectiveFrom: { lt: effectiveFrom } },
+          where: { ...target, active: true, effectiveTo: null, effectiveFrom: { lt: effectiveFrom } },
           data: { effectiveTo: effectiveFrom },
         });
       }
@@ -146,14 +153,36 @@ export async function toggleLimitPolicy(_prev: AdminActionState, fd: FormData): 
     const id = requiredId(fd, 'id', '한도 정책');
     const before = await prisma.chargeLimitPolicy.findUnique({
       where: { id },
-      select: { id: true, active: true, scope: true },
+      select: { id: true, active: true, scope: true, merchantId: true, payerId: true, effectiveFrom: true, effectiveTo: true },
     });
     if (!before) throw new Error('한도 정책을 찾을 수 없습니다.');
 
     const active = !before.active;
+    const now = new Date();
+    if (active) {
+      // 다시 켜면 종료일을 지우므로 [시작일, 무기한) 이 된다. 같은 대상의 다른 활성 정책과 기간이 겹치면
+      // 화면은 둘 다 "현재 적용" 인데 실제로는 하나만 적용된다. 겹치면 거절하고 새 정책 등록을 안내한다.
+      const overlap = await prisma.chargeLimitPolicy.count({
+        where: {
+          id: { not: id },
+          scope: before.scope,
+          merchantId: before.merchantId,
+          payerId: before.payerId,
+          active: true,
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: before.effectiveFrom } }],
+        },
+      });
+      if (overlap > 0) {
+        throw new Error('기간이 겹치는 같은 범위 정책이 있어 다시 켤 수 없습니다. 필요한 값으로 새 정책을 등록해 주세요.');
+      }
+    }
     await prisma.chargeLimitPolicy.update({
       where: { id },
-      data: { active, effectiveTo: active ? null : new Date() },
+      data: {
+        active,
+        // 끌 때 이미 지난 종료일이 있으면 그 값을 지킨다(이력 소급 변경 방지).
+        effectiveTo: active ? null : before.effectiveTo && before.effectiveTo < now ? before.effectiveTo : now,
+      },
     });
     await writeAudit({
       adminUserId: admin.id,
@@ -259,7 +288,17 @@ export async function createBannedWord(_prev: AdminActionState, fd: FormData): P
     if (!bannedNeedle(word)) throw new Error('공백이나 기호(. _ - * ~ = + /)만으로는 금칙어를 만들 수 없습니다.');
 
     const dup = await prisma.bannedWord.findFirst({ where: { scope: 'GLOBAL', word } });
-    if (dup) throw new Error('이미 등록된 전역 금칙어입니다.');
+    if (dup && !dup.archivedAt) throw new Error('이미 등록된 전역 금칙어입니다.');
+    if (dup) {
+      // 삭제(보관)했던 단어를 다시 등록하면 되살린다.
+      await prisma.bannedWord.update({ where: { id: dup.id }, data: { archivedAt: null, active: true, action } });
+      await writeAudit({
+        adminUserId: admin.id, action: 'BANNED_WORD_RESTORE', targetType: 'BannedWord', targetId: dup.id,
+        before: { word, action: dup.action, archivedAt: dup.archivedAt }, after: { word, action, scope: 'GLOBAL' },
+      });
+      revalidatePath('/admin/moderation');
+      return `금칙어 "${word}" 를 다시 등록했습니다.`;
+    }
 
     const created = await prisma.bannedWord.create({
       data: { id: newId(), word, action, scope: 'GLOBAL', active: true },
@@ -284,7 +323,8 @@ export async function deleteBannedWord(_prev: AdminActionState, fd: FormData): P
     if (!before) throw new Error('금칙어를 찾을 수 없습니다.');
     if (before.scope !== 'GLOBAL') throw new Error('사회복지기관 개별 금칙어는 통합 관리자에서 삭제할 수 없습니다.');
 
-    await prisma.bannedWord.delete({ where: { id } });
+    // 하드 삭제 대신 보관한다. 같은 단어를 다시 등록하면 되살아난다.
+    await prisma.bannedWord.update({ where: { id }, data: { archivedAt: new Date(), active: false } });
     await writeAudit({
       adminUserId: admin.id,
       action: 'BANNED_WORD_DELETE',

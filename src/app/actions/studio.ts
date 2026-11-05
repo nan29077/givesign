@@ -8,7 +8,7 @@ import { requireMerchant, writeAudit } from '@/server/auth';
 import { RETURN_SHIPMENT_STATUSES, shipmentStatusLabel } from '@/lib/labels';
 import { newId } from '@/lib/id';
 import { accountTail4, decrypt, encrypt, isValidResident, maskName, maskPhone, maskResident, normalizeResident } from '@/lib/crypto';
-import { resolvePolicy } from '@/server/services/limits';
+import { amountRangeError, effectiveAmountRange, goodsKindError, PRODUCT_NAME_MAX } from '@/server/services/product-rules';
 import { issueMerchantApiKey } from '@/server/services/partner-auth';
 import { formatWon } from '@/lib/money';
 import { loadBannedWords, sendMt } from '@/server/services/charge-flow';
@@ -21,7 +21,9 @@ import { env, featureGoodsEnabled } from '@/lib/env';
 import { getPublicBaseUrl } from '@/server/public-base-url';
 import { bannedNeedle, filterContent } from '@/server/services/content-filter';
 import { upsertMerchantTemplate } from '@/server/services/merchant-mt';
-import { WEBHOOK_EVENT_META, deliverOnce, registerWebhook } from '@/server/services/webhooks';
+import {
+  WEBHOOK_EVENT_META, WEBHOOK_MAX, archiveWebhook, deliverOnce, registerWebhook, restoreWebhook,
+} from '@/server/services/webhooks';
 import {
   MAX_EXTRA_IMAGES, noticeCategoryOf, optionsToStorage, parseOptionLines, parseOptionsJson,
 } from '@/server/services/products';
@@ -277,25 +279,6 @@ export async function undoPointsGivenAction(
 // ===========================================================================
 
 /**
- * 사회복지기관이 고를 수 있는 유효 금액 범위.
- * 관리자 지정 사회복지기관 범위 ∩ 한도 정책 범위 — 여기를 벗어난 금액은 결제 접수 시 AMOUNT_RANGE 로
- * 전부 실패하므로, 상품을 만드는 단계에서 미리 막는다.
- */
-async function effectiveAmountRange(merchantId: string) {
-  const [merchant, policy] = await Promise.all([
-    prisma.merchantProfile.findUnique({
-      where: { id: merchantId },
-      select: { minAmount: true, maxAmount: true },
-    }),
-    resolvePolicy(merchantId, null),
-  ]);
-  if (!merchant) return null;
-  const min = merchant.minAmount > policy.minAmount ? merchant.minAmount : policy.minAmount;
-  const max = merchant.maxAmount < policy.maxAmount ? merchant.maxAmount : policy.maxAmount;
-  return { min, max };
-}
-
-/**
  * 직접 입력 설정.
  *
  * 허용 여부뿐 아니라 사회복지기관 자체 범위·배수 단위까지 받는다.
@@ -435,13 +418,13 @@ export async function updateApiKeyIpsAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const keyId = text(formData, 'keyId');
     if (!keyId) return { ok: false, message: '키를 찾을 수 없습니다.' };
 
     const key = await prisma.merchantApiKey.findFirst({
       where: { id: keyId, merchantId, revokedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, prefix: true, allowedIps: true },
     });
     if (!key) return { ok: false, message: '유효한 키를 찾을 수 없습니다.' };
 
@@ -455,9 +438,16 @@ export async function updateApiKeyIpsAction(
     const bad = list.find((v) => !isIpv4OrCidr(v));
     if (bad) return { ok: false, message: `IP 형식이 올바르지 않습니다: ${bad} (예: 203.0.113.10 또는 203.0.113.0/24)` };
 
+    const nextIps = list.length > 0 ? list.join(',') : null;
     await prisma.merchantApiKey.update({
       where: { id: keyId },
-      data: { allowedIps: list.length > 0 ? list.join(',') : null },
+      data: { allowedIps: nextIps },
+    });
+    // 보안 민감 변경: 누가 언제 어느 IP 에서 허용목록을 바꿨는지 남긴다.
+    await writeAudit({
+      actorUserId: userId, action: 'API_KEY_IP_UPDATE', targetType: 'merchant_api_key', targetId: key.id,
+      before: { merchantId, prefix: key.prefix, allowedIps: key.allowedIps },
+      after: { merchantId, prefix: key.prefix, allowedIps: nextIps },
     });
     revalidatePath('/studio/settings');
     return {
@@ -550,27 +540,20 @@ async function parseProductForm(
   }
   const kind = kindRaw as ProductKind;
 
-  const name = text(formData, 'name').slice(0, 40);
+  // 실물·문서 기능이 꺼져 있으면 생성·수정 모두 DIGITAL 만 받는다(파트너 API 와 같은 판단).
+  const kindErr = goodsKindError(kind);
+  if (kindErr) return { ok: false, message: kindErr };
+
+  const name = text(formData, 'name').slice(0, PRODUCT_NAME_MAX);
   if (!name) return { ok: false, message: '상품 이름을 입력해 주세요.' };
 
   const amount = parseAmount(text(formData, 'amount'));
   if (amount === null || amount <= 0n) return { ok: false, message: '판매 금액은 숫자만 입력해 주세요.' };
 
+  // 금액 범위는 파트너 API 와 같은 함수로 검사한다. 실물은 배송비가 더해지므로 상품값만으로 한도를 넘으면 팔 수 없다.
   const range = await effectiveAmountRange(merchantId);
-  if (!range) return { ok: false, message: '사회복지기관 정보를 찾을 수 없습니다.' };
-  if (range.min > range.max) {
-    return { ok: false, message: '관리자 설정과 한도 정책이 충돌해 만들 수 있는 금액이 없습니다. 고객센터로 문의해 주세요.' };
-  }
-  if (amount < range.min || amount > range.max) {
-    // 실물은 여기에 배송비까지 더해져 결제되므로, 상품값만으로도 한도를 넘으면 아예 팔 수 없다.
-    return {
-      ok: false,
-      message:
-        kind === 'PHYSICAL'
-          ? `실물 상품 가격은 ${formatWon(range.min)} ~ ${formatWon(range.max)} 사이여야 합니다. (결제 시 배송비가 더해지므로 한도를 꽉 채우지 마세요)`
-          : `판매 금액은 ${formatWon(range.min)} ~ ${formatWon(range.max)} 사이여야 합니다.`,
-    };
-  }
+  const rangeErr = amountRangeError(amount, range, kind);
+  if (rangeErr || !range) return { ok: false, message: rangeErr ?? '기관 정보를 찾을 수 없습니다.' };
 
   const description = text(formData, 'description').slice(0, PRODUCT_DESCRIPTION_MAX) || null;
   // 상품 이미지 주소도 프로필·배너와 같은 기준으로 검증한다.
@@ -922,6 +905,8 @@ export async function restoreChargeProductAction(
       select: { id: true, name: true, kind: true },
     });
     if (!current) return { ok: false, message: '보관된 상품을 찾을 수 없습니다.' };
+    const kindErr = goodsKindError(current.kind);
+    if (kindErr) return { ok: false, message: kindErr };
 
     // 되살리면 다시 상한을 차지한다. 상한을 넘으면 되돌릴 수 없다.
     const count = await prisma.chargeProduct.count({
@@ -959,6 +944,8 @@ export async function duplicateChargeProductAction(
 
     const src = await prisma.chargeProduct.findFirst({ where: { id, merchantId, archivedAt: null } });
     if (!src) return { ok: false, message: '상품을 찾을 수 없습니다.' };
+    const kindErr = goodsKindError(src.kind);
+    if (kindErr) return { ok: false, message: kindErr };
 
     const count = await prisma.chargeProduct.count({
       where: { merchantId, kind: src.kind, archivedAt: null },
@@ -970,7 +957,7 @@ export async function duplicateChargeProductAction(
     // 이름이 겹치면 결제 화면에서 구분되지 않는다. 빈 번호를 찾아 붙인다.
     let name = '';
     for (let i = 2; i <= 20; i += 1) {
-      const candidate = `${src.name} (${i})`.slice(0, 40);
+      const candidate = `${src.name} (${i})`.slice(0, PRODUCT_NAME_MAX);
       const exists = await prisma.chargeProduct.findFirst({
         where: { merchantId, name: candidate, archivedAt: null },
         select: { id: true },
@@ -1066,6 +1053,8 @@ export async function adjustProductStockAction(
       select: { id: true, name: true },
     });
     if (!current) return { ok: false, message: '실물 상품을 찾을 수 없습니다.' };
+    const kindErr = goodsKindError('PHYSICAL');
+    if (kindErr) return { ok: false, message: kindErr };
 
     // 비우면 '무제한'으로 되돌린다.
     if (!raw) {
@@ -1096,9 +1085,15 @@ export async function toggleChargeProductActiveAction(
 
     const current = await prisma.chargeProduct.findFirst({
       where: { id, merchantId, archivedAt: null },
-      select: { id: true, name: true, active: true },
+      select: { id: true, name: true, active: true, kind: true },
     });
     if (!current) return { ok: false, message: '상품을 찾을 수 없습니다.' };
+
+    // 숨기는 방향은 언제나 허용한다(기능을 끈 뒤 남은 실물 상품을 내리는 길). 노출은 기능이 켜져 있어야 한다.
+    if (!current.active) {
+      const kindErr = goodsKindError(current.kind);
+      if (kindErr) return { ok: false, message: kindErr };
+    }
 
     if (current.active) {
       // 마지막 노출 상품을 숨기면서 직접 입력도 꺼져 있으면 결제가 아예 막힌다.
@@ -1129,6 +1124,8 @@ export async function saveShippingPolicyAction(
   formData: FormData,
 ): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
+    // 주문·배송 기능은 FEATURE_GOODS 가 켜진 경우에만 연다(/studio/orders 404 와 같은 기준).
+    if (!featureGoodsEnabled()) return { ok: false, message: '주문·배송 기능이 꺼져 있습니다.' };
     const baseFee = parseAmount(text(formData, 'baseFee'));
     if (baseFee === null || baseFee < 0n) return { ok: false, message: '기본 배송비는 0 이상 숫자로 입력해 주세요.' };
     if (baseFee > 100_000n) return { ok: false, message: '기본 배송비가 너무 큽니다. 100,000원 이하로 입력해 주세요.' };
@@ -1341,7 +1338,16 @@ export async function createBannedWordAction(
     }
 
     const exists = await prisma.bannedWord.findFirst({ where: { merchantId, word, scope: 'MERCHANT' } });
-    if (exists) return { ok: false, message: '이미 등록된 금칙어입니다.' };
+    if (exists && !exists.archivedAt) return { ok: false, message: '이미 등록된 금칙어입니다.' };
+    if (exists) {
+      // 삭제(보관)했던 단어를 다시 등록하면 되살린다.
+      await prisma.bannedWord.update({
+        where: { id: exists.id },
+        data: { archivedAt: null, active: true, action: parsed.data.action },
+      });
+      revalidatePath('/studio/moderation');
+      return { ok: true, message: `금칙어 "${word}"를 다시 등록했습니다.` };
+    }
 
     await prisma.bannedWord.create({
       data: { id: newId(), word, action: parsed.data.action, scope: 'MERCHANT', merchantId, active: true },
@@ -1358,8 +1364,8 @@ export async function toggleBannedWordAction(
 ): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
     const id = text(formData, 'id');
-    const row = await prisma.bannedWord.findUnique({ where: { id }, select: { merchantId: true, scope: true, active: true } });
-    if (!row || row.merchantId !== merchantId || row.scope !== 'MERCHANT') {
+    const row = await prisma.bannedWord.findUnique({ where: { id }, select: { merchantId: true, scope: true, active: true, archivedAt: true } });
+    if (!row || row.merchantId !== merchantId || row.scope !== 'MERCHANT' || row.archivedAt) {
       return { ok: false, message: '본인이 등록한 금칙어만 변경할 수 있습니다.' };
     }
 
@@ -1380,9 +1386,10 @@ export async function deleteBannedWordAction(
       return { ok: false, message: '본인이 등록한 금칙어만 삭제할 수 있습니다.' };
     }
 
-    await prisma.bannedWord.delete({ where: { id } });
+    // 하드 삭제 대신 보관한다. 같은 단어를 다시 등록하면 되살아난다.
+    await prisma.bannedWord.update({ where: { id }, data: { archivedAt: new Date(), active: false } });
     revalidatePath('/studio/moderation');
-    return { ok: true, message: '금칙어를 삭제했습니다.' };
+    return { ok: true, message: '금칙어를 삭제했습니다. 같은 단어를 다시 등록하면 되살아납니다.' };
   });
 }
 
@@ -1737,7 +1744,7 @@ export async function createApiKeyAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const active = await prisma.merchantApiKey.count({ where: { merchantId, revokedAt: null } });
     if (active >= API_KEY_MAX_ACTIVE) {
       return { ok: false, message: `유효한 키는 최대 ${API_KEY_MAX_ACTIVE}개까지 둘 수 있습니다. 쓰지 않는 키를 먼저 폐기해 주세요.` };
@@ -1766,6 +1773,11 @@ export async function createApiKeyAction(
     if (ips.length > 0) {
       await prisma.merchantApiKey.update({ where: { id: issued.id }, data: { allowedIps: ips.join(',') } });
     }
+    // 원문 키·서명 비밀키는 남기지 않는다. 접두사·모드·이름·IP 만.
+    await writeAudit({
+      actorUserId: userId, action: 'API_KEY_ISSUE', targetType: 'merchant_api_key', targetId: issued.id,
+      after: { merchantId, prefix: issued.prefix, mode: issued.mode, name: issued.name, allowedIps: ips.join(',') || null },
+    });
 
     revalidatePath('/studio/settings');
     return {
@@ -1786,7 +1798,7 @@ export async function revokeApiKeyAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const id = text(formData, 'keyId');
     if (!id) return { ok: false, message: '폐기할 키를 선택해 주세요.' };
 
@@ -1796,6 +1808,11 @@ export async function revokeApiKeyAction(
       data: { revokedAt: new Date() },
     });
     if (result.count === 0) return { ok: false, message: '이미 폐기되었거나 존재하지 않는 키입니다.' };
+    const revoked = await prisma.merchantApiKey.findUnique({ where: { id }, select: { prefix: true, mode: true, name: true } });
+    await writeAudit({
+      actorUserId: userId, action: 'API_KEY_REVOKE', targetType: 'merchant_api_key', targetId: id,
+      after: { merchantId, prefix: revoked?.prefix ?? null, mode: revoked?.mode ?? null, name: revoked?.name ?? null },
+    });
 
     revalidatePath('/studio/settings');
     return { ok: true, message: '연동 키를 폐기했습니다.' };
@@ -1888,6 +1905,8 @@ export async function updateShipmentAction(
   formData: FormData,
 ): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
+    // 주문·배송 기능은 FEATURE_GOODS 가 켜진 경우에만 연다(/studio/orders 404 와 같은 기준).
+    if (!featureGoodsEnabled()) return { ok: false, message: '주문·배송 기능이 꺼져 있습니다.' };
     const chargeId = text(formData, 'chargeId');
     if (!chargeId) return { ok: false, message: '주문을 찾을 수 없습니다.' };
 
@@ -2021,6 +2040,8 @@ export async function bulkShipAction(
   formData: FormData,
 ): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
+    // 주문·배송 기능은 FEATURE_GOODS 가 켜진 경우에만 연다(/studio/orders 404 와 같은 기준).
+    if (!featureGoodsEnabled()) return { ok: false, message: '주문·배송 기능이 꺼져 있습니다.' };
     const carrier = text(formData, 'carrier').slice(0, 30);
     if (!carrier) return { ok: false, message: '택배사를 입력해 주세요.' };
 
@@ -2112,6 +2133,7 @@ export async function revealShipmentAddressAction(
   | { ok: true; receiver: string; phoneMasked: string; address: string; zipCode: string }
   | { ok: false; message: string }
 > {
+  if (!featureGoodsEnabled()) return { ok: false, message: '주문·배송 기능이 꺼져 있습니다.' };
   let merchantId: string;
   let userId: string;
   try {
@@ -2224,7 +2246,7 @@ export async function saveMtTemplateAction(
   });
 }
 
-/** 발송 템플릿 삭제. 이미 나간 문자 이력은 남는다. */
+/** 발송 템플릿 삭제(보관). 이미 나간 문자 이력이 코드를 가리키므로 행은 남긴다. 같은 코드로 다시 저장하면 되살아난다. */
 export async function deleteMtTemplateAction(
   _prev: StudioActionState,
   formData: FormData,
@@ -2234,11 +2256,14 @@ export async function deleteMtTemplateAction(
     if (!id) return { ok: false, message: '삭제할 템플릿을 선택해 주세요.' };
 
     // 본인 사회복지기관 템플릿인지 반드시 확인한다.
-    const result = await prisma.merchantMtTemplate.deleteMany({ where: { id, merchantId } });
+    const result = await prisma.merchantMtTemplate.updateMany({
+      where: { id, merchantId, archivedAt: null },
+      data: { archivedAt: new Date() },
+    });
     if (result.count === 0) return { ok: false, message: '이미 삭제되었거나 존재하지 않는 템플릿입니다.' };
 
     revalidatePath('/studio/settings');
-    return { ok: true, message: '템플릿을 삭제했습니다.' };
+    return { ok: true, message: '템플릿을 삭제했습니다. 같은 코드로 다시 저장하면 되살아납니다.' };
   });
 }
 
@@ -2246,8 +2271,6 @@ export async function deleteMtTemplateAction(
 // 웹훅 (이벤트 구독)
 // ===========================================================================
 
-/** 사회복지기관당 등록할 수 있는 수신 URL 수. API 라우트와 같은 값을 쓴다. */
-const WEBHOOK_MAX = 5;
 
 /**
  * 수신 URL 등록.
@@ -2259,8 +2282,9 @@ export async function createWebhookAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
-    const count = await prisma.merchantWebhook.count({ where: { merchantId } });
+  return withMerchant(async (merchantId, userId) => {
+    // 보관(해제)한 수신 URL 은 상한에 세지 않는다.
+    const count = await prisma.merchantWebhook.count({ where: { merchantId, archivedAt: null } });
     if (count >= WEBHOOK_MAX) {
       return { ok: false, message: `수신 URL 은 최대 ${WEBHOOK_MAX}개까지 등록할 수 있습니다.` };
     }
@@ -2275,6 +2299,11 @@ export async function createWebhookAction(
       description: text(formData, 'description') || null,
     });
     if (!result.ok) return { ok: false, message: result.message };
+    // 결제 완료 이벤트 수신지는 보안 민감 설정이다. 비밀키는 남기지 않는다.
+    await writeAudit({
+      actorUserId: userId, action: 'WEBHOOK_REGISTER', targetType: 'merchant_webhook', targetId: result.webhook.id,
+      after: { merchantId, url: result.webhook.url, events: result.webhook.events },
+    });
 
     revalidatePath('/studio/settings');
     return {
@@ -2288,20 +2317,51 @@ export async function createWebhookAction(
   });
 }
 
-/** 수신 URL 해제. 전송 이력도 함께 지워진다. */
+/**
+ * 수신 URL 해제(보관).
+ * 하드 삭제하면 전송 이력(전달 증적)까지 사라진다. 행과 이력은 남기고 더 보내지 않는다.
+ * 보관함에서 되살릴 수 있다(restoreWebhookAction).
+ */
 export async function deleteWebhookAction(
   _prev: StudioActionState,
   formData: FormData,
 ): Promise<StudioActionState> {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const id = text(formData, 'webhookId');
     if (!id) return { ok: false, message: '해제할 수신 URL 을 선택해 주세요.' };
 
-    const result = await prisma.merchantWebhook.deleteMany({ where: { id, merchantId } });
-    if (result.count === 0) return { ok: false, message: '이미 해제되었거나 존재하지 않는 수신 URL 입니다.' };
+    const archived = await archiveWebhook(merchantId, id);
+    if (!archived) return { ok: false, message: '이미 해제되었거나 존재하지 않는 수신 URL 입니다.' };
+    await writeAudit({
+      actorUserId: userId, action: 'WEBHOOK_ARCHIVE', targetType: 'merchant_webhook', targetId: id,
+      after: { merchantId, url: archived.url },
+    });
 
     revalidatePath('/studio/settings');
-    return { ok: true, message: '수신 URL 을 해제했습니다.' };
+    return { ok: true, message: '수신 URL 을 해제했습니다. 전송 이력은 남아 있고, 보관함에서 되살릴 수 있습니다.' };
+  });
+}
+
+/** 보관한 수신 URL 되살리기. 서명 비밀키는 그대로다. */
+export async function restoreWebhookAction(
+  _prev: StudioActionState,
+  formData: FormData,
+): Promise<StudioActionState> {
+  return withMerchant(async (merchantId, userId) => {
+    const id = text(formData, 'webhookId');
+    if (!id) return { ok: false, message: '되살릴 수신 URL 을 선택해 주세요.' };
+    const count = await prisma.merchantWebhook.count({ where: { merchantId, archivedAt: null } });
+    if (count >= WEBHOOK_MAX) {
+      return { ok: false, message: `사용 중인 수신 URL 이 이미 ${WEBHOOK_MAX}개입니다. 먼저 다른 URL 을 해제해 주세요.` };
+    }
+    const restored = await restoreWebhook(merchantId, id);
+    if (!restored) return { ok: false, message: '보관된 수신 URL 을 찾을 수 없습니다.' };
+    await writeAudit({
+      actorUserId: userId, action: 'WEBHOOK_RESTORE', targetType: 'merchant_webhook', targetId: id,
+      after: { merchantId, url: restored.url },
+    });
+    revalidatePath('/studio/settings');
+    return { ok: true, message: '수신 URL 을 되살렸습니다. 새 이벤트부터 다시 받습니다.' };
   });
 }
 
@@ -2312,12 +2372,11 @@ export async function testWebhookAction(
 ): Promise<StudioActionState> {
   return withMerchant(async (merchantId) => {
     const id = text(formData, 'webhookId');
-    const hook = await prisma.merchantWebhook.findFirst({ where: { id, merchantId } });
+    const hook = await prisma.merchantWebhook.findFirst({ where: { id, merchantId, archivedAt: null } });
     if (!hook) return { ok: false, message: '존재하지 않는 수신 URL 입니다.' };
 
     const eventId = newId();
-    const delivery = await prisma.merchantWebhook.update({ where: { id: hook.id }, data: {} }).then(() =>
-      prisma.webhookDelivery.create({
+    const delivery = await prisma.webhookDelivery.create({
         data: {
           id: newId(),
           merchantId,
@@ -2333,8 +2392,7 @@ export async function testWebhookAction(
           }),
           nextAttemptAt: new Date(),
         },
-      }),
-    );
+      });
 
     const ok = await deliverOnce(delivery.id);
     const after = await prisma.webhookDelivery.findUnique({

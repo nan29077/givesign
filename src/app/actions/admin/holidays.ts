@@ -35,7 +35,17 @@ export async function createHolidayAction(_prev: AdminActionState, fd: FormData)
     const kind = enumValue(fd, 'kind', HOLIDAY_KINDS, '공휴일 종류');
     const memo = optText(fd, 'memo');
 
-    const existing = await prisma.publicHoliday.findUnique({ where: { date }, select: { name: true } });
+    const existing = await prisma.publicHoliday.findUnique({ where: { date }, select: { id: true, name: true, archivedAt: true } });
+    if (existing?.archivedAt) {
+      // 삭제(보관)했던 날짜를 다시 등록하면 되살린다.
+      await prisma.publicHoliday.update({ where: { id: existing.id }, data: { archivedAt: null, active: true, name, kind, memo } });
+      await writeAudit({
+        adminUserId: admin.id, action: 'HOLIDAY_RESTORE', targetType: 'PublicHoliday', targetId: existing.id,
+        before: { date, name: existing.name, archivedAt: existing.archivedAt }, after: { date, name, kind, memo },
+      });
+      revalidatePath('/admin/holidays');
+      return `${formatDateKeyKo(date)} "${name}" 을(를) 공휴일로 다시 등록했습니다.`;
+    }
     if (existing) {
       throw new Error(`${date} 는 이미 "${existing.name}"(으)로 등록되어 있습니다. 등록된 항목을 수정해 주세요.`);
     }
@@ -67,7 +77,7 @@ export async function updateHolidayAction(_prev: AdminActionState, fd: FormData)
     const memo = optText(fd, 'memo');
 
     const before = await prisma.publicHoliday.findUnique({ where: { id } });
-    if (!before) throw new Error('공휴일을 찾을 수 없습니다.');
+    if (!before || before.archivedAt) throw new Error('공휴일을 찾을 수 없습니다.');
 
     await prisma.publicHoliday.update({ where: { id }, data: { name, kind, active, memo } });
     await writeAudit({
@@ -89,9 +99,10 @@ export async function deleteHolidayAction(_prev: AdminActionState, fd: FormData)
 
     const id = requiredId(fd, 'id', '공휴일');
     const before = await prisma.publicHoliday.findUnique({ where: { id } });
-    if (!before) throw new Error('공휴일을 찾을 수 없습니다.');
+    if (!before || before.archivedAt) throw new Error('공휴일을 찾을 수 없습니다.');
 
-    await prisma.publicHoliday.delete({ where: { id } });
+    // 하드 삭제 대신 보관한다(정산일 계산 근거 이력 보존). 같은 날짜를 다시 등록하면 되살아난다.
+    await prisma.publicHoliday.update({ where: { id }, data: { archivedAt: new Date(), active: false } });
     await writeAudit({
       adminUserId: admin.id,
       action: 'HOLIDAY_DELETE',

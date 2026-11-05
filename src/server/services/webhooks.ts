@@ -199,6 +199,41 @@ export async function registerWebhook(input: {
 }
 
 /**
+ * 수신 URL 보관(해제).
+ *
+ * 하드 삭제하면 전송 이력(webhook_delivery, cascade)까지 사라져 "결제 완료 이벤트가 그 기관에
+ * 전달됐는가" 를 사후에 증명할 수 없다. 행은 남기고 active=false + archivedAt 으로 내린다.
+ * 남은 대기 건은 더 보내지 않도록 DEAD 로 닫는다(수신 URL 을 되살린 뒤 필요하면 재전송한다).
+ */
+export async function archiveWebhook(merchantId: string, id: string) {
+  return prisma.$transaction(async (tx) => {
+    const hit = await tx.merchantWebhook.updateMany({
+      where: { id, merchantId, archivedAt: null },
+      data: { active: false, archivedAt: new Date() },
+    });
+    if (hit.count === 0) return null;
+    await tx.webhookDelivery.updateMany({
+      where: { webhookId: id, status: 'PENDING' },
+      data: { status: 'DEAD', nextAttemptAt: null, error: '수신 URL 이 해제(보관)되어 전송을 멈췄습니다.' },
+    });
+    return tx.merchantWebhook.findUnique({ where: { id }, select: { id: true, url: true, events: true } });
+  });
+}
+
+/** 보관한 수신 URL 되살리기. 상한(WEBHOOK_MAX)은 호출하는 쪽이 확인한다. */
+export async function restoreWebhook(merchantId: string, id: string) {
+  const hit = await prisma.merchantWebhook.updateMany({
+    where: { id, merchantId, archivedAt: { not: null } },
+    data: { active: true, archivedAt: null },
+  });
+  if (hit.count === 0) return null;
+  return prisma.merchantWebhook.findUnique({ where: { id }, select: { id: true, url: true, events: true } });
+}
+
+/** 기관당 사용 중 수신 URL 상한. 콘솔·API 공통. */
+export const WEBHOOK_MAX = 5;
+
+/**
  * 이벤트 발행.
  *
  * 구독 중인 수신 URL 수만큼 전송 건을 적재하고, 즉시 한 번 보내 본다.
@@ -210,7 +245,7 @@ export async function emitMerchantEvent(
   data: Record<string, unknown>,
 ): Promise<void> {
   try {
-    const hooks = await prisma.merchantWebhook.findMany({ where: { merchantId, active: true } });
+    const hooks = await prisma.merchantWebhook.findMany({ where: { merchantId, active: true, archivedAt: null } });
     const targets = hooks.filter((h) => !h.events || h.events.split(',').filter(Boolean).includes(type));
     if (targets.length === 0) return;
 
@@ -258,6 +293,14 @@ export async function deliverOnce(deliveryId: string): Promise<boolean> {
     include: { webhook: true },
   });
   if (!delivery || delivery.status === 'SENT') return false;
+  if (delivery.webhook.archivedAt) {
+    // 보관된 수신 URL 로는 보내지 않는다. 대기로 남겨 두면 크론이 계속 집어 가므로 닫는다.
+    await prisma.webhookDelivery.updateMany({
+      where: { id: delivery.id, status: 'PENDING' },
+      data: { status: 'DEAD', nextAttemptAt: null, error: '수신 URL 이 해제(보관)되어 전송을 멈췄습니다.' },
+    });
+    return false;
+  }
   if (!delivery.webhook.active) return false;
 
   const timestamp = Math.floor(Date.now() / 1000).toString();

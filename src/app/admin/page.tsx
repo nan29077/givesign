@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { Activity, Flag, Wallet } from 'lucide-react';
 import { PageHeader } from '@/components/layout/console-shell';
-import { Card, CardTitle, SectionTitle, StatTile, Table, Th, Td, Badge, EmptyState, LinkButton } from '@/components/ui';
+import { Card, CardTitle, SectionTitle, StatTile, Table, Th, Td, Badge, EmptyState, LinkButton, Notice } from '@/components/ui';
 import { SafetyBanner } from '@/components/admin/safety-banner';
 import { BannerStrip } from '@/components/public/banner-strip';
 import { PAID_CHARGE_STATUSES } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
 import { requireAdmin } from '@/server/auth';
+import { checkBaseData } from '@/server/services/base-data-check';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst, kstStartOfDay, kstStartOfMonth } from '@/lib/datetime';
 import { chargeStatusLabel } from '@/lib/labels';
@@ -35,14 +36,16 @@ export default async function AdminDashboardPage() {
     openRisks,
     openInquiries,
     recentCharges,
+    baseDataProblems,
   ] = await Promise.all([
     prisma.charge.aggregate({
-      where: { status: { in: PAID_CHARGE_STATUSES }, paidAt: { gte: todayStart } },
+      // 기관 대시보드(fundraising.ts)와 같은 기준: 승인 시각(paidAt) + 테스트 거래 제외.
+      where: { status: { in: PAID_CHARGE_STATUSES }, paidAt: { gte: todayStart }, isTest: false },
       _count: { _all: true },
       _sum: { amount: true },
     }),
     prisma.charge.aggregate({
-      where: { status: { in: PAID_CHARGE_STATUSES }, paidAt: { gte: monthStart } },
+      where: { status: { in: PAID_CHARGE_STATUSES }, paidAt: { gte: monthStart }, isTest: false },
       _count: { _all: true },
       _sum: { amount: true },
     }),
@@ -72,6 +75,8 @@ export default async function AdminDashboardPage() {
         payer: { select: { phoneMasked: true } },
       },
     }),
+    // 기준 데이터(현행 약관·전역 수수료/한도 정책)가 비면 조용히 기본값으로 돌아간다. 눈에 띄게 알린다.
+    checkBaseData().catch(() => [] as string[]),
   ]);
 
   const successRate = txTotal === 0 ? null : Math.round((txApproved / txTotal) * 1000) / 10;
@@ -182,6 +187,21 @@ export default async function AdminDashboardPage() {
 
       <div className="space-y-5">
         <SafetyBanner />
+        {baseDataProblems.length > 0 ? (
+          <Notice tone="danger" title="기준 데이터가 비어 있습니다">
+            <ul className="list-disc pl-4">
+              {baseDataProblems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+            <p className="mt-1">
+              <Link href="/admin/terms" className="underline">약관 관리</Link> ·{' '}
+              <Link href="/admin/fees" className="underline">수수료 정책</Link> ·{' '}
+              <Link href="/admin/policies" className="underline">한도 정책</Link> 에서 채워 주세요.
+              운영 DB 에서 <code>npm run db:seed</code> 를 실행하면 없는 기준 데이터만 넣습니다(계정·샘플은 만들지 않음).
+            </p>
+          </Notice>
+        ) : null}
         <BannerStrip position="CONSOLE_TOP" />
 
         {/*

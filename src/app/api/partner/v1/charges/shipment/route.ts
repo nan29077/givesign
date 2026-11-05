@@ -1,3 +1,4 @@
+import { featureGoodsEnabled } from '@/lib/env';
 import { prisma } from '@/server/db';
 import { authenticatePartner } from '@/server/services/partner-auth';
 import { PAID_STATUSES } from '@/components/studio/shared';
@@ -42,6 +43,12 @@ export async function POST(req: Request) {
       status: auth.status, errorCode: auth.code, message: auth.message,
     });
     return authError(auth);
+  }
+
+  // 실물 주문·배송 기능은 FEATURE_GOODS 가 켜진 경우에만 연다(콘솔 /studio/orders 와 같은 기준).
+  if (!featureGoodsEnabled()) {
+    await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 404, errorCode: 'FEATURE_DISABLED' });
+    return jsonError(404, 'FEATURE_DISABLED', '주문·배송 기능이 꺼져 있습니다.');
   }
 
   let body: ShipBody;

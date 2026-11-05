@@ -1,11 +1,15 @@
 import { authenticatePartner } from '@/server/services/partner-auth';
-import { syncPartnerProducts } from '@/server/services/partner-products';
+import { PRODUCT_MAX, syncPartnerProducts } from '@/server/services/partner-products';
 import { authError, denyTestKey, jsonError, jsonOk, logPartnerCall } from '../../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const MAX_ITEMS = 200;
+/**
+ * 한 요청의 최대 건수. 종류(DIGITAL·PHYSICAL)별 사용 중 상한이 PRODUCT_MAX(콘솔과 같음)라
+ * 그 두 배를 넘는 목록은 반영해도 상한을 넘는다.
+ */
+const MAX_ITEMS = PRODUCT_MAX * 2;
 
 /**
  * POST /api/partner/v1/products/bulk

@@ -28,9 +28,9 @@ export async function approveMerchantMtTemplate(
     const id = requiredId(fd, 'templateId', '템플릿');
     const before = await prisma.merchantMtTemplate.findUnique({
       where: { id },
-      select: { code: true, status: true, body: true, merchantId: true },
+      select: { code: true, status: true, body: true, merchantId: true, archivedAt: true },
     });
-    if (!before) throw new Error('존재하지 않는 템플릿입니다.');
+    if (!before || before.archivedAt) throw new Error('존재하지 않는 템플릿입니다.');
     if (before.status === 'APPROVED') throw new Error('이미 승인된 템플릿입니다.');
 
     await prisma.merchantMtTemplate.update({

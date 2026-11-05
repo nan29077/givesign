@@ -1,13 +1,13 @@
 import { prisma } from '@/server/db';
 import { authenticatePartner } from '@/server/services/partner-auth';
-import { WEBHOOK_EVENTS, registerWebhook } from '@/server/services/webhooks';
-import { authError, denyTestKey, jsonError, jsonOk, logPartnerCall } from '../_shared';
+import { WEBHOOK_EVENTS, WEBHOOK_MAX, registerWebhook } from '@/server/services/webhooks';
+import { authError, denyTestKey, jsonError, jsonOk, logPartnerAudit, logPartnerCall } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** 사회복지기관당 등록할 수 있는 수신 URL 수. */
-const MAX_WEBHOOKS = 5;
+const MAX_WEBHOOKS = WEBHOOK_MAX;
 
 /**
  * GET /api/partner/v1/webhooks — 등록된 수신 URL 목록
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
   if (testDenied) return testDenied;
 
   const rows = await prisma.merchantWebhook.findMany({
-    where: { merchantId: auth.merchantId },
+    where: { merchantId: auth.merchantId, archivedAt: null },
     orderBy: { createdAt: 'desc' },
   });
   await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 200 });
@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     }).then(() => jsonError(400, 'INVALID_JSON', '본문이 올바른 JSON 이 아닙니다.'));
   }
 
-  const count = await prisma.merchantWebhook.count({ where: { merchantId: auth.merchantId } });
+  const count = await prisma.merchantWebhook.count({ where: { merchantId: auth.merchantId, archivedAt: null } });
   if (count >= MAX_WEBHOOKS) {
     await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 400, errorCode: 'TOO_MANY_WEBHOOKS' });
     return jsonError(400, 'TOO_MANY_WEBHOOKS', `수신 URL 은 ${MAX_WEBHOOKS}개까지 등록할 수 있습니다.`);
@@ -90,6 +90,11 @@ export async function POST(req: Request) {
     return jsonError(400, 'INVALID_WEBHOOK', result.message);
   }
 
+  await logPartnerAudit({
+    req, merchantId: auth.merchantId, keyId: auth.keyId,
+    action: 'WEBHOOK_REGISTER', targetType: 'merchant_webhook', targetId: result.webhook.id,
+    after: { url: result.webhook.url, events: result.webhook.events },
+  });
   await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 200, message: 'webhook registered' });
   return jsonOk({
     id: result.webhook.id,

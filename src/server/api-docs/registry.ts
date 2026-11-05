@@ -431,15 +431,15 @@ export const API_CATEGORIES: ApiCategory[] = [
         signed: true,
         params: [
           { name: 'name', in: 'body', type: 'string', required: true, description: '상품 이름' },
-          { name: 'amount', in: 'body', type: 'number', required: true, description: '결제 금액(원, 정수)' },
-          { name: 'kind', in: 'body', type: 'string', description: 'DIGITAL(기본) | PHYSICAL' },
+          { name: 'amount', in: 'body', type: 'number', required: true, description: '결제 금액(원, 1 이상 정수). 기관 금액 범위와 한도 정책 안이어야 함' },
+          { name: 'kind', in: 'body', type: 'string', description: 'DIGITAL(기본) | PHYSICAL. PHYSICAL 은 실물 상품 기능이 켜진 경우에만. 등록 후 바꿀 수 없음' },
           { name: 'digitalType', in: 'body', type: 'string', description: 'POINT | VOUCHER | PASS | CONTENT' },
           { name: 'sku', in: 'body', type: 'string', description: '사회복지기관 상품 코드. 일괄 동기화의 열쇠' },
           { name: 'stock', in: 'body', type: 'number', description: '재고. null 이면 무제한' },
           { name: 'fulfillment', in: 'body', type: 'string', description: 'MANUAL | API | INSTANT' },
         ],
       },
-      { method: 'PATCH', path: '/products/{id}', summary: '상품 수정', status: 'LIVE', signed: true, description: '보낸 항목만 바꿉니다. 보내지 않은 항목은 그대로 둡니다.' },
+      { method: 'PATCH', path: '/products/{id}', summary: '상품 수정', status: 'LIVE', signed: true, description: '보낸 항목만 바꿉니다. 보내지 않은 항목은 그대로 둡니다. kind 는 바꿀 수 없고, 보관된 상품은 409 ARCHIVED 로 거절합니다.' },
       { method: 'DELETE', path: '/products/{id}', summary: '판매 중지(보관 처리)', status: 'LIVE', signed: true, notes: ['실제로 삭제하지 않습니다. 지난 주문에서는 그대로 보입니다.'] },
       {
         method: 'PATCH',
@@ -459,7 +459,7 @@ export const API_CATEGORIES: ApiCategory[] = [
         status: 'LIVE',
         signed: true,
         params: [
-          { name: 'items', in: 'body', type: 'object[]', required: true, description: '상품 목록. 모든 항목에 sku 가 필요합니다 (최대 200건)' },
+          { name: 'items', in: 'body', type: 'object[]', required: true, description: '상품 목록. 모든 항목에 sku 가 필요합니다 (최대 24건, 종류별 사용 중 상품은 12개까지)' },
           { name: 'archiveMissing', in: 'body', type: 'boolean', description: 'true 면 목록에 없는 상품을 판매 중지' },
         ],
       },

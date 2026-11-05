@@ -183,7 +183,7 @@ export async function POST(req: Request) {
     const template = await prisma.merchantMtTemplate.findUnique({
       where: { merchantId_code: { merchantId: auth.merchantId, code: templateCode } },
     });
-    if (!template) {
+    if (!template || template.archivedAt) {
       await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 404, errorCode: 'TEMPLATE_NOT_FOUND' });
       return jsonError(404, 'TEMPLATE_NOT_FOUND', '등록되지 않은 템플릿 코드입니다.');
     }

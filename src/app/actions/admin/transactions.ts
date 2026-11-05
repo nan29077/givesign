@@ -99,10 +99,13 @@ export async function assignMoNumber(_prev: AdminActionState, fd: FormData): Pro
     if (!merchant) throw new Error('사회복지기관을 찾을 수 없습니다.');
     if (merchant.status !== 'APPROVED') throw new Error('승인된 사회복지기관에만 번호를 배정할 수 있습니다.');
 
-    await prisma.merchantMoNumber.update({
-      where: { id },
+    // 확인 후 갱신이면 두 관리자가 동시에 같은 번호를 다른 기관에 배정할 때 둘 다 통과한다.
+    // 배정 가능한 상태일 때만 바꾸는 조건부 갱신으로 한쪽만 성공시킨다.
+    const assigned = await prisma.merchantMoNumber.updateMany({
+      where: { id, status: { notIn: ['ASSIGNED', 'DISABLED'] } },
       data: { status: 'ASSIGNED', merchantId, assignedAt: new Date(), releasedAt: null },
     });
+    if (assigned.count === 0) throw new Error('방금 다른 관리자가 이 번호를 배정했거나 상태가 바뀌었습니다. 새로고침 후 다시 확인해 주세요.');
     await writeAudit({
       adminUserId: admin.id,
       action: 'MO_NUMBER_ASSIGN',

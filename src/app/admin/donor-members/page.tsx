@@ -7,6 +7,7 @@ import { PAGE_SIZE, canWrite, clampPage, parsePage } from '@/components/admin/co
 import { setDonorMemberStatusAction } from '@/app/actions/admin/donor-members';
 import { OrgLogo } from '@/components/brand/org-logo';
 import { prisma } from '@/server/db';
+import { merchantSelectOptions } from '@/server/services/admin-options';
 import { requireAdmin } from '@/server/auth';
 import { formatNumber } from '@/lib/money';
 import { formatKst, kstStartOfDay } from '@/lib/datetime';
@@ -45,7 +46,7 @@ export default async function AdminDonorMembersPage({
     ...(q ? { OR: [{ email: { contains: q.toLowerCase() } }, { name: { contains: q } }] } : {}),
   };
 
-  const [total, rows, merchants, byMerchant, all, today, linked] = await Promise.all([
+  const [total, rows, { merchants, truncated: merchantsTruncated }, byMerchant, all, today, linked] = await Promise.all([
     prisma.donorMember.count({ where }),
     prisma.donorMember.findMany({
       where,
@@ -54,7 +55,10 @@ export default async function AdminDonorMembersPage({
       take: PAGE_SIZE,
       include: { merchant: { select: { id: true, code: true, displayName: true, avatarUrl: true } } },
     }),
-    prisma.merchantProfile.findMany({ where: { status: 'APPROVED' }, orderBy: { displayName: 'asc' }, select: { id: true, code: true, displayName: true } }),
+    // 선택 상자용 기관은 상한까지만. 회원이 있는 기관(칩)은 상한 밖이어도 넣는다.
+    prisma.donorMember
+      .groupBy({ by: ['merchantId'], where: { status: { not: 'WITHDRAWN' } } })
+      .then((g) => merchantSelectOptions({ include: [merchantId, ...g.map((x) => x.merchantId)] })),
     prisma.donorMember.groupBy({ by: ['merchantId'], where: { status: { not: 'WITHDRAWN' } }, _count: { _all: true } }),
     prisma.donorMember.count({ where: { status: { not: 'WITHDRAWN' } } }),
     prisma.donorMember.count({ where: { createdAt: { gte: kstStartOfDay() } } }),
@@ -100,7 +104,7 @@ export default async function AdminDonorMembersPage({
       <FilterBar action="/admin/donor-members" resetHref="/admin/donor-members">
         <AdminField label="소속 기관" className="w-60">
           <AdminSelect name="merchantId" defaultValue={merchantId}>
-            <MerchantOptions merchants={merchants} allLabel="전체 기관" />
+            <MerchantOptions merchants={merchants} allLabel="전체 기관" truncated={merchantsTruncated} />
           </AdminSelect>
         </AdminField>
         <AdminField label="상태" className="w-32">

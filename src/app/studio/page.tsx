@@ -18,9 +18,9 @@ import { prisma } from '@/server/db';
 import { getStudioPendingCounts } from '@/server/services/studio-pending';
 import { getSettlementSummary } from '@/server/services/settlement';
 import { formatNumber, formatWon } from '@/lib/money';
-import { kstMonthKey, kstStartOfDay } from '@/lib/datetime';
+import { kstDateKey, kstMonthKey, kstStartOfDay } from '@/lib/datetime';
 import { moNumberStatusLabel } from '@/lib/labels';
-import { featureGoodsEnabled } from '@/lib/env';
+import { env, featureGoodsEnabled } from '@/lib/env';
 import { campaignProgress, daysLeft } from '@/lib/fundraising';
 import { ProgressBar } from '@/components/public/progress-bar';
 import { listCampaigns, merchantDonationSummary, monthlyTrend } from '@/server/services/fundraising';
@@ -52,13 +52,14 @@ export default async function StudioDashboardPage() {
     recent,
     orgCode,
   ] = await Promise.all([
+    // 금액·성공 건수는 "이달 모금"(merchantDonationSummary)과 같은 기준: 승인 시각(paidAt) + 테스트 거래 제외.
     prisma.charge.aggregate({
-      where: { merchantId, receivedAt: { gte: todayStart }, status: { in: PAID_STATUSES } },
+      where: { merchantId, paidAt: { gte: todayStart }, status: { in: PAID_STATUSES }, isTest: false },
       _sum: { amount: true },
     }),
     prisma.moInboundMessage.count({ where: { merchantId, receivedAt: { gte: todayStart } } }),
     prisma.charge.count({
-      where: { merchantId, receivedAt: { gte: todayStart }, status: { in: PAID_STATUSES } },
+      where: { merchantId, paidAt: { gte: todayStart }, status: { in: PAID_STATUSES }, isTest: false },
     }),
     prisma.charge.count({
       where: { merchantId, receivedAt: { gte: todayStart }, status: 'PAYMENT_FAILED' },
@@ -116,11 +117,13 @@ export default async function StudioDashboardPage() {
     merchantDonationSummary(merchantId),
     listCampaigns(merchantId),
     monthlyTrend(merchantId, 6),
-    receiptCandidates(merchantId, new Date().getFullYear()),
+    // 연도는 KST 로 자른다. 서버(UTC) 연도를 쓰면 1월 1일 0~9시에 전년도 기준으로 나온다.
+    receiptCandidates(merchantId, Number(kstDateKey().slice(0, 4))),
   ]);
   const openCampaigns = campaignsAll.filter((c) => c.open);
   const receiptPending = receiptCandidatesNow.filter((c) => c.ready).length;
   const goodsEnabled = featureGoodsEnabled();
+  const mockMode = env.payment.provider === 'mock' || env.safety.safeMode;
   const ordersPending = pending.orders;
   const pointsPending = pending.points;
 
@@ -253,7 +256,8 @@ export default async function StudioDashboardPage() {
           </Link>
         ) : null}
 
-        {/* mock 안내: 큰 박스 대신 한 줄 띠 */}
+        {/* mock 안내: 결제사가 mock 이거나 SAFE_MODE 일 때만 띄운다. 실결제 운영에서 "실제 거래가 아닙니다" 로 오안내하지 않게. */}
+        {mockMode ? (
         <p className="flex items-start gap-2 rounded-xl border border-warning-500/25 bg-warning-50 px-3.5 py-2.5 text-[12px] leading-relaxed text-ink-700">
           <Info size={15} strokeWidth={1.8} className="mt-0.5 shrink-0 text-warning-500" />
           <span>
@@ -261,11 +265,12 @@ export default async function StudioDashboardPage() {
             아닙니다.
           </span>
         </p>
+        ) : null}
 
         {/* 1) 핵심 수치 — 카드 8개 대신 한 판에 정리 */}
         <Card padded={false} className="overflow-hidden">
           <div className="grid grid-cols-2 divide-ink-100 lg:grid-cols-4 lg:divide-x">
-            <Metric label="오늘 접수 금액" value={formatWon(todayAmount._sum.amount ?? 0n)} accent />
+            <Metric label="오늘 후원 금액" value={formatWon(todayAmount._sum.amount ?? 0n)} accent />
             <Metric label="오늘 문자 수신" value={`${formatNumber(todayMessages)}건`} />
             <Metric
               label="결제 성공"
