@@ -163,7 +163,7 @@ export function registerReceiptBatchHandler() {
       if (!Number.isInteger(taxYear)) throw new ApprovalError('귀속 연도가 올바르지 않습니다.');
       const prev = ctx.state as BatchProgress;
       const doneSet = new Set(prev.done ?? []);
-      const r = await issueReceiptsBulk(req.merchantId, taxYear, ctx.userId, { deadline: ctx.deadline, skipPayers: doneSet });
+      const r = await issueReceiptsBulk(req.merchantId, taxYear, ctx.userId, { deadline: ctx.deadline, skipPayers: doneSet, now: ctx.now });
       for (const d of r.details) doneSet.add(d.payerId);
       const state: BatchProgress = {
         done: [...doneSet],

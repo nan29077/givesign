@@ -58,7 +58,7 @@ export interface ApprovalHandler {
    * deadline 까지만 일하고 남은 일이 있으면 done=false 로 돌려준다(다음 배치가 이어서 한다).
    * state 는 실행 사이에 이어지는 값(payload.progress 에 저장)이다.
    */
-  execute?(req: ApprovalRow, ctx: { userId: string; deadline: Date; state: Record<string, unknown> }): Promise<{
+  execute?(req: ApprovalRow, ctx: { userId: string; deadline: Date; now: () => Date; state: Record<string, unknown> }): Promise<{
     done: boolean;
     message: string;
     state: Record<string, unknown>;
@@ -243,7 +243,7 @@ export async function runQueuedApprovals(opts: { now?: () => Date; budgetMs?: nu
     const state = (payload.progress ?? {}) as Record<string, unknown>;
     try {
       if (!handler?.execute) throw new ApprovalError('이 요청을 처리할 수 있는 기능이 연결되지 않았습니다.');
-      const out = await handler.execute(toRow(q), { userId: q.decidedBy ?? 'SYSTEM', deadline, state });
+      const out = await handler.execute(toRow(q), { userId: q.decidedBy ?? 'SYSTEM', deadline, now: clock, state });
       const nextPayload = { ...payload, progress: out.state } as Prisma.InputJsonValue;
       if (out.done) {
         await prisma.approvalRequest.updateMany({

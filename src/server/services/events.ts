@@ -23,36 +23,59 @@ import { logger } from '@/lib/logger';
  *  - payload 에 개인정보 원문(전화번호·이름 원문·주민번호)을 넣지 않는다. ID 와 금액·마스킹 값만.
  */
 
+/**
+ * 이벤트 종류. 각 종류의 발생처와 소비자(2026-11-06 점검 A 낮음 — 정리).
+ * "기록만" 은 지금 소비자가 없고 감사·통계·이후 소비자를 위해 남기는 것이다(발생은 업무 트랜잭션 뒤 Safe 기록).
+ * 발생처가 없던 `supporter.dormant`·`agreement.issued` 는 뺐다(다시 쓰려면 발생처와 함께 넣는다).
+ */
 export const DOMAIN_EVENT_TYPES = [
+  /** 결제 성공 — charge-flow·payment-reconcile(같은 트랜잭션). 소비자: merchant-alert·supporter-link·campaign-goal·journeys */
   'charge.paid',
+  /** 환불 완료 — refund.ts(같은 트랜잭션). 소비자: journey-refund(진행 중 저니 취소) */
   'charge.refunded',
+  /** 정기후원 약정 — recurring.ts. 소비자: merchant-alert·supporter-link */
   'recurring.pledged',
+  /** 정기후원 조건 변경 — recurring.ts. 기록만(약정서 새 판은 업무 함수가 직접 만든다) */
   'recurring.changed',
+  /** 출금 실패·결제수단 해지로 정지 — recurring.ts. 소비자: journeys(재개 안내) */
   'recurring.suspended',
+  /** 재개 — recurring.ts. 기록만 */
   'recurring.resumed',
+  /** 해지 — recurring.ts. 기록만 */
   'recurring.canceled',
+  /** 출금 성공마다(누적 횟수 포함) — recurring.ts. 소비자: journeys(기관 설정 횟수에서 누적 감사장) */
   'recurring.milestone',
+  /** 봉사 신청 — volunteers.ts. 소비자: merchant-alert·supporter-link */
   'volunteer.applied',
+  /** 봉사 승인 — volunteers.ts. 기록만 */
   'volunteer.approved',
+  /** 봉사 반려 — volunteers.ts. 기록만 */
   'volunteer.rejected',
+  /** 봉사 활동 기록 — volunteers.ts. 소비자: journeys(감사 문자·확인서) */
   'volunteer.activity_recorded',
+  /** 누적 봉사 시간 이정표 — volunteers.ts. 소비자: journeys(봉사 감사장) */
   'volunteer.milestone',
+  /** 기부금영수증 발급 — receipts.ts(같은 트랜잭션). 소비자: journeys(연말 감사장 — 연 1회 발급 기관만) */
   'receipt.issued',
+  /** 연간 영수증 승인 요청 생성 — receipt-batch.ts. 소비자: merchant-alert */
   'receipt.batch_ready',
+  /** 캠페인 목표 달성 — campaign-goal 소비자. 소비자: merchant-alert */
   'campaign.goal_reached',
+  /** 콘텐츠 승인 — content.ts. 기록만 */
   'content.approved',
+  /** 콘텐츠 게시 — content.ts. 기록만 */
   'content.published',
-  'agreement.issued',
+  /** 약정서 전자서명 완료 — agreements.ts. 소비자: merchant-alert */
   'agreement.signed',
+  /** 전자문서 봉투 완료 — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign */
   'document.signed',
-  'supporter.dormant',
-  /** 연초: 지난해 후원자 중 영수증 정보 미등록자(영수증 배치가 낸다) */
+  /** 연초: 지난해 후원자 중 영수증 정보 미등록자(영수증 배치가 낸다). 소비자: journeys */
   'receipt.info_needed',
-  /** 봉사 회차 전날(저니 배치가 낸다) */
+  /** 봉사 회차 전날(저니 배치가 낸다, 9~21시). 소비자: journeys */
   'volunteer.shift_reminder_due',
-  /** 매월 발급 기관: 지난해 결제 건이 모두 영수증에 묶임(연말 감사장 — 영수증 배치가 낸다) */
+  /** 매월 발급 기관: 지난해 결제 건이 모두 영수증에 묶임(영수증 배치, 1~2월). 소비자: journeys(연말 감사장) */
   'receipt.year_closed',
-  /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — 발급 문서·약정서 상태 반영 재확인 */
+  /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign */
   'document.closed',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
