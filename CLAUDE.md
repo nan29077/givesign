@@ -236,10 +236,29 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **도메인 이벤트(아웃박스).** 업무 트랜잭션 안에서 `emitDomainEvent(…, tx)` 로 `domain_event` 에 남긴다(`dedupe_key` 유니크). 결제 성공(`charge.paid`)은 승인·정산 원장과 같은 트랜잭션이다. 후속 일(알림·명단 연결·목표 달성·저니)은 소비자로만 붙인다 — `executePayment` 등 업무 함수에 후속 호출을 새로 하드코딩하지 않는다. payload 에 개인정보 원문을 넣지 않는다.
 - 소비자는 `event-consumers.ts` `registerDefaultConsumers()` 에 등록하고 `/api/cron/events`(1분)가 (이벤트, 소비자) 1회 처리한다. 실패 소비자만 백오프 재시도, 6회 소진 시 FAILED(관리자 자동화 > 배치·이벤트에서 재처리).
 - **배치는 `src/server/cron-registry.ts` 에 선언**하고 라우트는 공용 `runCronJob`(인증·소유자 잠금·`cron_heartbeat` 실행 기록)만 쓴다. 잠금을 직접 구현하지 않는다. 수신 배치(emma-mo)만 `failOpenLock`.
-- **승인 요청(`approval_request`).** "시스템이 준비하고 사람이 승인" 하는 일은 `requestApproval` + `registerApprovalHandler(kind)` 로 만든다. 결정은 PENDING→PROCESSING 조건부 선점, 처리기 실패 시 PENDING 으로 되돌림.
-- **저니(`src/server/services/journeys`).** 정의는 코드에 고정(광고성 단계 없음), 기관은 `/studio/journeys` 에서 켜기·단계별 '승인 후 보내기'·값만 바꾼다. 실행은 (저니, 이벤트) 유일. 발송 단계 공통 보호: 탈퇴·차단·`notice_opt_out_at` → 멈춤, 야간 21~9시 KST → 다음 날 9시(`JOURNEY_QUIET_HOURS=off` 로만 끔), 후원자당 7일 3건 상한 → 하루 보류(14번 넘으면 건너뜀). 문서 단계는 `issuePurposeDocument` 만 부른다.
-- **영수증 연간 준비.** `receiptCycle=YEARLY` 기관은 1~2월 `/api/cron/receipts` 가 발급 가능자를 승인 요청(RECEIPT_BATCH, 주 1회·대기 중이면 새로 안 쌓음)으로 올리고, 미등록자에게는 `receipt.info_needed` → 저니가 등록 방법을 안내한다. 발급은 담당자 승인 후에만.
+- **승인 요청(`approval_request`).** "시스템이 준비하고 사람이 승인" 하는 일은 `requestApproval` + `registerApprovalHandler(kind)` 로 만든다. 결정은 PENDING→PROCESSING 조건부 선점, 처리기 실패 시 PENDING 으로 되돌림. 오래 걸리는 일은 `execute` 로 QUEUED → 배치 실행(아래 점검 조치 규칙).
+- **저니(`src/server/services/journeys`).** 정의는 코드에 고정(광고성 단계 없음), 기관은 `/studio/journeys` 에서 켜기·단계별 '승인 후 보내기'·값만 바꾼다. 실행은 (저니, 이벤트) 유일. 발송 단계 공통 보호: 탈퇴·차단·`notice_opt_out_at` → 멈춤, 야간 21~9시 KST → 다음 날 9시(`JOURNEY_QUIET_HOURS=off` 로만 끔), 후원자당 7일 3건 상한 → 하루 보류(단계마다 14번 넘으면 건너뜀), 발송 전 예약(`journey:{runId}:{stepKey}`). 문서 단계는 `issuePurposeDocument` 만 부른다.
+- **영수증 연간 준비.** `receiptCycle=YEARLY` 기관은 1~2월 `/api/cron/receipts` 가 발급 가능자를 승인 요청(RECEIPT_BATCH, 주 1회·대기·실행 중이면 새로 안 쌓음)으로 올리고, 미등록자에게는 `receipt.info_needed` → 저니가 등록 방법을 안내한다. 발급은 담당자 승인 후 events 배치가 나눠 실행. MONTHLY 기관에는 같은 배치가 `receipt.year_closed` 를 낸다.
 - **통합 승인 대기함(`/studio/inbox`).** 승인 요청 + 콘텐츠 검토 + 봉사 신청 + 제출 문서 + 신고를 원천 테이블에서 모은다(복사하지 않음). 자동화 준비도(`automationReadiness`)는 같은 화면 위쪽에 — 빠진 항목이 무엇을 멈추는지 적는다.
+
+### 2026-11-06 정밀 점검(자동화) 조치로 생긴 규칙
+
+상세: `docs/2026-11-06_후원자동화_라이브바자회_정밀점검보고서.md` A-1~A-4, A-M1~A-M7. 테스트 `tests/automation-fixes-2026-11-06.test.ts`.
+
+- **오래 걸리는 승인은 배치가 실행한다.** 처리기에 `execute`(시간 상한 `deadline`·이어 갈 `state`)를 두면 승인은 `QUEUED` 로만 기록하고 `/api/cron/events` 의 `runQueuedApprovals`(선점 = 잡는 순간 + `APPROVAL_RUN_LEASE_MS`)가 나눠 실행한다. 진행은 `payload.progress`, 결과 문구는 `approval_request.result`, 5회 실패면 `FAILED`(승인 대기함 "막힌 일"에서 다시 실행). 영수증 일괄 발급(RECEIPT_BATCH)이 이 방식이다 — 서버 액션 안에서 수백 건을 돌리지 않는다.
+- `PROCESSING` 이 15분 넘게 남으면 `recoverStaleApprovals` 가 `PENDING` 으로 되돌린다. 그래서 **승인 처리기는 다시 불러도 같은 결과**여야 한다(이미 반영됐으면 성공). 처리기가 끝난 뒤 결과 기록이 실패해도 `PENDING` 으로 되돌리지 않는다. 대기함·관리자 배치 화면은 처리 중·실행 대기·실패를 보여 준다.
+- **`charge.paid` 는 `charge-events.ts` 의 `emitChargePaid` 로만** 남긴다(정상 결제·관리자 수동 확정 모두, 승인 트랜잭션 안). payload 에 표시 이름을 넣지 않는다 — 이름이 필요하면 결제 건을 읽고 익명이면 "익명의 후원자"(`chargeDonorLabel`).
+- **선점 시각은 잡는 순간**(`new Date()`/`elapsedClock`)이다. 배치 시작 시각을 선점 시각으로 쓰지 않는다. 배치마다 시간 상한(이벤트 60초·저니 90초·승인 실행 60초)을 두고, `events` 잠금 TTL(300초) ≥ 선점 유지(5분).
+- **저니 발송 단계는 보내기 전에 예약한다.** 후원자 단위 advisory lock 아래에서 7일 상한을 다시 세고 `journey_step_log.dedupe_key = journey:{runId}:{stepKey}` 로 `SENDING` 행을 만든다. 같은 키가 있으면 다시 보내지 않는다(문서 단계는 발급 dedupeKey 로 결과만 맞춤). 보내지 않았으면 예약 행을 지운다. 7일 상한 기준은 (기관, 후원자) 그대로다(전체 기준 여부는 운영 결정).
+- 단계가 넘어가면 보류 횟수(`context.deferrals`)를 0 으로. 결제에서 시작한 실행은 `context.chargeId` 로 **발송 직전 결제가 `PAID_STATUSES` 인지** 다시 보고, `charge.refunded` 소비자(`journey-refund`)가 진행 중 실행·승인 요청을 취소한다.
+- 저니 `accept(ev, params)` 는 기관 설정값을 받는다. `recurring.milestone` 은 **출금 성공마다**(누적 횟수 포함) 나고, 정기후원 누적 감사는 기관이 적은 횟수에서만 실행을 만든다(고정 목록 없음).
+- 봉사 전날 안내: 이벤트는 KST 9~21시에만 만들고, 발송 직전 신청 `APPROVED`·같은 회차·시작 30분 이상 전인지 다시 본다.
+- **연말 감사장**: 연 1회 발급(YEARLY) 기관은 `receipt.issued`, 매월 발급(MONTHLY) 기관은 `receipt.year_closed`(1~2월 영수증 배치가 지난해 결제가 모두 영수증에 묶인 후원자에게 1회)로만 시작한다. 끝나지 않은 해의 영수증으로는 보내지 않는다. `receipt.issued` payload 에 `receiptNo`·`receiptCycle` 이 있다(영수증번호 머지).
+- **약정 새 판**이 생기면 이전 판 서명 요청을 닫는다(internal 봉투는 시스템 취소 — 열기 전이면 환원, 그 외 EXPIRED). 조건 변경(금액·출금일·캠페인)은 약정당 하루 `AGREEMENT_CHANGES_PER_DAY`(3)회, 넘기면 바꾸기 전에 거절. internal 서명 화면 본문은 약정서 스냅샷 본문(`bodyOverride`). 잔액 부족으로 서명 요청이 막히면 기관에 하루 1회 알린다.
+- **서명용 머지 PDF 는 비공개 저장소**(`EDocSnapshot.pdfObject`, `pdfUrl` 은 null)다. 서명 화면은 `/sign/[토큰]/pdf`(본인확인 쿠키), 기관은 `/studio/e-documents/[id]/pdf` 로만 읽는다(`snapshotPdfHref`). 머지 PDF 를 만들기 전에 잔액을 보고(`assertSendable`), 봉투·발급이 이루어지지 않으면 만든 파일을 지운다. 기관이 머지 필드 없이 보내는 서식 원본 PDF 는 예전처럼 공개 주소다.
+- 봉투 거절·만료·취소는 같은 트랜잭션에 `document.closed` 를 남기고 `purpose-document-sign` 소비자가 반영한다. `/api/cron/edoc` 의 `reconcileClosedEnvelopes` 가 남은 불일치를 맞춘다.
+- 후원자 탈퇴 → `closeDocumentsForWithdrawnPayer`(열람 토큰 삭제·진행 중 서명 봉투 시스템 취소). `/l/[토큰]` 은 기관이 `APPROVED` 가 아니거나 후원자가 탈퇴했으면 열지 않는다. 열람 문서 재발송은 토큰·발송 시각 조건부 선점(동시 클릭 1회).
+- `RECURRING_CHANGE` 용도는 자동 발송 경로가 없다(`MANUAL_ONLY_PURPOSES` — 전자문서 센터에서 직접 보냄). 이벤트 종류마다 발생처·소비자를 `events.ts` 주석에 적는다. 발생처 없는 종류를 만들지 않는다.
 
 ## 용도별 자동 발송 문서 (2026-11-06)
 
