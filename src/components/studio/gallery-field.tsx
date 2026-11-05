@@ -73,6 +73,7 @@ export function GalleryField({
         <input
           ref={fileRef}
           type="file"
+          aria-label="이미지 파일 선택"
           multiple
           accept="image/png,image/jpeg,image/webp,image/gif"
           className="hidden"

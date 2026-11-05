@@ -7,6 +7,7 @@ import { tokenHash } from '@/lib/crypto';
 import { completeRegistrationAction } from '@/app/actions/registration';
 import { LinkShell } from '../link-shell';
 import { CompleteRedirect } from '../complete-redirect';
+import { formatMoNumber } from '@/lib/mo-number';
 
 /**
  * 결제창(현재는 Mock) 복귀 처리 화면.
@@ -201,13 +202,13 @@ export default async function RegistrationCompletePage({
                 </span>
               }
             />
-            {merchant ? <DataRow label="결제 대상" value={merchant.displayName} /> : null}
+            {merchant ? <DataRow label="후원 대상" value={merchant.displayName} /> : null}
             {moNumber ? (
               <DataRow
-                label="결제 수신번호"
+                label="후원 문자 번호"
                 value={
                   <span>
-                    {moNumber.phoneNumber}
+                    {formatMoNumber(moNumber.phoneNumber)}
                     {moNumber.keyword ? <span className="text-ink-400"> ({moNumber.keyword} 로 시작)</span> : null}
                   </span>
                 }
@@ -221,10 +222,10 @@ export default async function RegistrationCompletePage({
           </p>
         </Card>
 
-        <Notice tone="brand" title="이제 같은 번호로 문자를 보내면 결제가 접수됩니다">
-          문자를 보내면 결제 PIN 입력 링크가 발송되고, PIN 을 입력하면 등록한
-          {resultMethod === 'CARD' ? ' 카드로 결제 금액이 결제됩니다' : ' 계좌에서 결제 금액이 출금됩니다'}. 문자 1건마다
-          결제가 요청되니 반복 발송에 주의해 주세요.
+        <Notice tone="brand" title="이제 같은 번호로 문자를 보내면 후원이 접수됩니다">
+          문자를 보내면 PIN 입력 링크가 발송되고, PIN 을 입력하면 등록한
+          {resultMethod === 'CARD' ? ' 카드로 후원 금액이 결제됩니다' : ' 계좌에서 후원 금액이 출금됩니다'}. 문자 1건마다
+          출금이 요청되니 반복 발송에 주의해 주세요.
         </Notice>
 
         {moNumber ? (
@@ -252,9 +253,9 @@ export default async function RegistrationCompletePage({
             <CardTitle>자동출금 해지 방법</CardTitle>
           </div>
           <ul className="space-y-2 text-[13px] leading-relaxed text-ink-700">
-            <li>마이페이지의 결제수단 관리에서 등록한 계좌를 해지하면 이후 문자 결제가 진행되지 않습니다.</li>
+            <li>마이페이지의 결제수단 관리에서 등록한 계좌를 해지하면 이후 문자 후원이 진행되지 않습니다.</li>
             <li>고객센터로 해지를 요청하셔도 즉시 처리됩니다.</li>
-            <li>해지 후에는 문자를 보내도 결제가 진행되지 않으며, 다시 이용하려면 계좌를 새로 등록해야 합니다.</li>
+            <li>해지 후에는 문자를 보내도 출금이 진행되지 않으며, 다시 이용하려면 계좌를 새로 등록해야 합니다.</li>
           </ul>
           <div className="mt-3 flex items-center gap-4">
             <Link href="/my/account" className="text-[13px] font-semibold text-brand-700">

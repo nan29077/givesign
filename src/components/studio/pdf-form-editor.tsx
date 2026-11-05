@@ -176,6 +176,10 @@ export function PdfFormEditor({
         for (let n = 1; n <= doc.numPages; n++) {
           const page = await doc.getPage(n);
           const vp1 = page.getViewport({ scale: 1 });
+          // 글꼴 객체(commonObjs)는 연산 목록을 처리할 때 채워진다. 그리지 않고 목록만 받아
+          // 원본 글꼴 이름(BaseFont)을 읽는다 — 이걸 빼면 pdf.js 내부 이름(g_d0_f2)으로 대체되어
+          // 편집기가 "대체 글꼴"로 예측하고 서버도 원본 글꼴을 재사용하지 못한다(2026-11-05 회귀).
+          await page.getOperatorList();
           const text = await page.getTextContent();
           const nameOf = (key: string) => {
             try {

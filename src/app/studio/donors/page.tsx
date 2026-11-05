@@ -101,13 +101,13 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
       <Card className="mb-4">
         <form className="grid gap-3 sm:grid-cols-[1fr_180px_180px_auto]" method="get">
           <Input name="q" defaultValue={q} placeholder="이름 또는 번호 끝자리 검색" />
-          <Select name="filter" defaultValue={filter}>
+          <Select name="filter" aria-label="후원자 구분" defaultValue={filter}>
             <option value="all">전체</option>
             <option value="recurring">정기후원자</option>
             <option value="lapsed">90일 이상 후원 없음</option>
             <option value="receipt">영수증 정보 등록</option>
           </Select>
-          <Select name="sort" defaultValue={sort}>
+          <Select name="sort" aria-label="정렬 기준" defaultValue={sort}>
             <option value="recent">최근 후원순</option>
             <option value="amount">누적 금액순</option>
             <option value="count">후원 횟수순</option>

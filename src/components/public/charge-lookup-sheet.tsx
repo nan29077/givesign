@@ -12,7 +12,7 @@ import {
 const initial: LookupState = { ok: false, step: 'phone' };
 
 /**
- * 결제내역 확인 바텀시트.
+ * 후원내역 확인 바텀시트.
  *
  * 로그인 없이 휴대폰 번호로 후원 내역을 확인한다.
  * 후원 내역은 개인정보라, 번호 입력만으로는 열지 않고
@@ -115,7 +115,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="결제내역 확인"
+        aria-label="후원내역 확인"
         className={cx(
           'absolute inset-x-0 bottom-0 mx-auto flex h-[72dvh] max-h-[720px] w-full max-w-[640px] flex-col',
           'rounded-t-[28px] bg-white shadow-[0_-18px_60px_rgba(23,22,26,0.28)] transition-transform duration-300 ease-out',
@@ -131,7 +131,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
                 <ReceiptText size={21} strokeWidth={1.85} />
               </span>
               <div>
-                <h2 className="text-[18px] font-black tracking-[-0.03em] text-ink-900">결제내역</h2>
+                <h2 className="text-[18px] font-black tracking-[-0.03em] text-ink-900">후원내역</h2>
                 <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
                   로그인 없이 휴대폰 번호로 내 후원 내역을 확인합니다.
                 </p>
@@ -155,7 +155,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
               <div className="rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3.5">
                 <p className="flex items-center gap-1.5 text-[12.5px] font-bold text-brand-800">
                   <Info size={14} strokeWidth={1.6} />
-                  결제내역 확인 안내
+                  후원내역 확인 안내
                 </p>
                 <ul className="mt-2 space-y-1.5 text-[12.5px] leading-relaxed text-ink-700">
                   <li>· 문자를 보낸 휴대폰 번호를 그대로 입력해 주세요.</li>
@@ -219,7 +219,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
               {!verifyState.ok && verifyState.message ? <Notice tone="danger">{verifyState.message}</Notice> : null}
 
               <Button type="submit" size="lg" disabled={verifying}>
-                {verifying ? '확인 중' : '결제내역 확인'}
+                {verifying ? '확인 중' : '후원내역 확인'}
               </Button>
 
               <button
@@ -254,7 +254,7 @@ export function ChargeLookupSheet({ open, onClose }: { open: boolean; onClose: (
                 <div className="rounded-2xl border border-ink-100 px-4 py-8 text-center">
                   <p className="text-[14px] font-bold text-ink-900">후원 내역이 없습니다</p>
                   <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
-                    이 번호로 처리된 문자후원이 없습니다. 서비스에 안내된 번호로 문자를 보내 결제하면 이곳에서 확인할 수 있습니다.
+                    이 번호로 처리된 문자후원이 없습니다. 서비스에 안내된 번호로 문자를 보내 후원하면 이곳에서 확인할 수 있습니다.
                   </p>
                 </div>
               ) : (

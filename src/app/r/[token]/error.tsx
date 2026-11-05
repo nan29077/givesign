@@ -31,12 +31,12 @@ export default function SecureLinkError({
             화면을 불러오지 못했습니다
           </h1>
           <p className="mt-2 text-[13.5px] leading-relaxed text-ink-500">
-            일시적인 오류입니다. <strong className="font-bold text-ink-900">결제는 진행되지 않았습니다.</strong> 아래
+            일시적인 오류입니다. <strong className="font-bold text-ink-900">출금은 진행되지 않았습니다.</strong> 아래
             버튼으로 다시 시도해 주세요.
           </p>
           <p className="mt-2 text-[12.5px] leading-relaxed text-ink-400">
-            같은 화면이 계속 나오면 이 링크는 그대로 두고, 사회복지기관의 결제 수신번호로 문자를 다시 보내 주세요. 출금
-            여부가 걱정되면 홈 화면의 &lsquo;결제내역 확인&rsquo; 에서 휴대폰 번호로 조회할 수 있습니다.
+            같은 화면이 계속 나오면 이 링크는 그대로 두고, 기관의 후원 문자 번호로 문자를 다시 보내 주세요. 출금
+            여부가 걱정되면 홈 화면의 &lsquo;후원내역&rsquo; 에서 휴대폰 번호로 조회할 수 있습니다.
           </p>
           {process.env.NODE_ENV !== 'production' && error?.message ? (
             <pre className="mt-3 overflow-x-auto rounded-xl bg-ink-50 p-3 text-[11.5px] leading-relaxed text-ink-500">

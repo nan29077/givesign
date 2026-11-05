@@ -168,7 +168,8 @@ export function WebChargePinPanel({
     setMessage('');
     setCustomAmount('');
     setAmountMode('preset');
-    setAmount(chargeOptions[0]?.amount ?? null);
+    // 처음 화면과 같게 금액은 미선택으로 되돌린다(후원자가 직접 고르게).
+    setAmount(null);
     setRequestId('');
     setComposeDone(false);
     setView(initial);

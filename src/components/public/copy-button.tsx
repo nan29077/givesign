@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui';
 
-/** 결제 수신번호 / 예시 문구 복사 버튼. 클립보드 미지원 환경에서는 안내 문구를 표시한다. */
+/** 후원 문자 번호 / 예시 문구 복사 버튼. 클립보드 미지원 환경에서는 안내 문구를 표시한다. */
 export function CopyButton({ value, label = '복사' }: { value: string; label?: string }) {
   const [copied, setCopied] = React.useState(false);
   const [failed, setFailed] = React.useState(false);

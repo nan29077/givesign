@@ -25,6 +25,7 @@ import { SelectAmountPanel } from './select-amount-panel';
 import { loadSelectAmountContext } from '@/server/services/charge-select';
 import { currentTermsList } from '@/server/services/terms';
 import { getPaymentAdapter } from '@/server/adapters/payment';
+import { formatMoNumber } from '@/lib/mo-number';
 
 /**
  * MT 문자로 발송된 1회용 보안링크 진입점.
@@ -37,7 +38,7 @@ import { getPaymentAdapter } from '@/server/adapters/payment';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: '기브싸인 결제 확인',
+  title: '기브싸인 후원 확인',
   robots: { index: false, follow: false },
 };
 
@@ -102,11 +103,11 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
           <h1 className="text-[16px] font-extrabold text-ink-900">확인 시간이 지났습니다</h1>
         </div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
-          확인 시간이 지나 결제가 자동 취소되었습니다. 결제는 진행되지 않았습니다.
+          확인 시간이 지나 후원 요청이 자동 취소되었습니다. 출금은 진행되지 않았습니다.
         </p>
         <div className="mt-3">
           <Notice tone="neutral">
-            다시 결제하시려면 사회복지기관 번호로 문자를 새로 보내주세요. 새 확인 링크가 발송됩니다.
+            다시 후원하시려면 기관의 후원 문자 번호로 문자를 새로 보내주세요. 새 확인 링크가 발송됩니다.
           </Notice>
         </div>
       </Card>
@@ -125,7 +126,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
         </p>
         <div className="mt-3">
           <Notice tone="neutral">
-            같은 링크를 다시 열어도 중복 결제는 발생하지 않습니다. 결과가 확인되지 않으면 고객센터로 문의해 주세요.
+            같은 링크를 다시 열어도 중복 출금은 발생하지 않습니다. 결과가 확인되지 않으면 고객센터로 문의해 주세요.
           </Notice>
         </div>
       </Card>
@@ -139,7 +140,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
         <h1 className="text-[16px] font-extrabold text-ink-900">유효하지 않은 링크입니다</h1>
       </div>
       <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
-        주소가 잘못되었거나 더 이상 사용할 수 없는 링크입니다. 결제는 진행되지 않았습니다.
+        주소가 잘못되었거나 더 이상 사용할 수 없는 링크입니다. 출금은 진행되지 않았습니다.
       </p>
       <div className="mt-3">
         <Notice tone="warning" title="주의">
@@ -222,7 +223,7 @@ async function RegisterScreen({ token }: { token: string }) {
       <Card>
         <p className="text-[12px] font-semibold text-brand-700">최초 1회 계좌 등록</p>
         <h1 className="mt-1 text-[20px] font-extrabold leading-snug tracking-tight text-ink-900">
-          {ctx.merchantName ?? '사회복지기관'} 결제를 위한
+          {ctx.merchantName ?? '사회복지기관'} 후원을 위한
           <br />
           계좌 등록과 이용 동의
         </h1>
@@ -230,14 +231,14 @@ async function RegisterScreen({ token }: { token: string }) {
           보내주신 문자로는 아직 후원되지 않았습니다. 아래 내용을 확인하고 등록을 완료해 주세요.
         </p>
         <div className="mt-3">
-          <DataRow label="결제 대상" value={ctx.merchantName ?? '-'} />
+          <DataRow label="후원 대상" value={ctx.merchantName ?? '-'} />
           <DataRow
-            label="결제 수신번호"
+            label="후원 문자 번호"
             value={
               moNumber ? (
                 <span className="inline-flex items-center gap-1.5">
                   <Phone size={14} strokeWidth={1.7} className="text-brand-700" />
-                  {moNumber.phoneNumber}
+                  {formatMoNumber(moNumber.phoneNumber)}
                   {moNumber.keyword ? <span className="text-ink-400">({moNumber.keyword} 로 시작)</span> : null}
                 </span>
               ) : (
@@ -250,7 +251,7 @@ async function RegisterScreen({ token }: { token: string }) {
       </Card>
 
       <Notice tone="danger" title="문자를 보내면 계좌에서 출금이 요청됩니다">
-        등록을 마친 뒤 위 결제 수신번호로 문자를 보내면 후원 금액을 고르는 링크가 옵니다. 금액을 고르고 PIN 을
+        등록을 마친 뒤 위 후원 문자 번호로 문자를 보내면 후원 금액을 고르는 링크가 옵니다. 금액을 고르고 PIN 을
         입력해야 등록한 계좌에서 출금이 요청됩니다. 문자를 보내는 것만으로는 출금되지 않습니다.
       </Notice>
 
@@ -287,11 +288,11 @@ async function RegisterScreen({ token }: { token: string }) {
         <DataRow label="사회복지기관별 1일 최대" value={formatWon(policy.perMerchantDailyLimit)} />
         <DataRow label="신규 후원자 첫날 최대" value={formatWon(policy.newPayerFirstDayLimit)} />
         <DataRow
-          label="연속 결제 제한"
+          label="연속 후원 제한"
           value={`${policy.velocityWindowSec}초 내 ${policy.velocityMaxCount}건`}
         />
         <p className="mt-2 text-[12px] leading-relaxed text-ink-400">
-          한도를 초과하면 결제가 진행되지 않고 문자로 안내됩니다. 한도는 마이페이지에서 더 낮게 설정할 수 있습니다.
+          한도를 초과하면 출금이 진행되지 않고 문자로 안내됩니다. 한도는 마이페이지에서 더 낮게 설정할 수 있습니다.
         </p>
       </Card>
 
@@ -303,10 +304,10 @@ async function RegisterScreen({ token }: { token: string }) {
           <CardTitle>취소·환불과 이용 제한</CardTitle>
         </div>
         <ul className="space-y-2 text-[13px] leading-relaxed text-ink-700">
-          <li>결제 완료 후 사회복지기관에 후원이 반영되기 전까지는 고객센터를 통해 취소를 요청할 수 있습니다.</li>
-          <li>이미 후원이 반영된 결제는 원칙적으로 취소가 어려우며, 오류·중복 결제 등은 확인 후 환불 처리됩니다.</li>
+          <li>출금 완료 후 기관에 후원이 반영되기 전까지는 고객센터를 통해 취소를 요청할 수 있습니다.</li>
+          <li>이미 반영된 후원은 원칙적으로 취소가 어려우며, 오류·중복 출금 등은 확인 후 환불 처리됩니다.</li>
           <li>환불은 출금된 계좌로 처리되며, 처리까지 영업일 기준 시간이 소요될 수 있습니다.</li>
-          <li>결제 실패가 반복되면 이용이 일시 잠금되며, 관리자 확인 후 해제됩니다.</li>
+          <li>출금 실패가 반복되면 이용이 일시 잠금되며, 관리자 확인 후 해제됩니다.</li>
           <li className="flex gap-2">
             <Ban size={16} strokeWidth={1.7} className="mt-0.5 shrink-0 text-danger-500" />
             <span>만 19세 미만은 이용할 수 없습니다. 본인 명의 계좌로만 등록해 주세요.</span>

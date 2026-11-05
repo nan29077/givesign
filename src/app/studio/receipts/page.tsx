@@ -52,7 +52,7 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
         description="연말정산용 기부금영수증을 발급하고 국세청 제출 명세를 준비합니다. 발급은 결제 성공 건만 합산하며 환불된 건은 자동으로 제외됩니다."
         action={
           <form method="get" className="flex items-center gap-2">
-            <Select name="year" defaultValue={String(year)} className="h-11 w-[130px]">
+            <Select name="year" aria-label="귀속 연도" defaultValue={String(year)} className="h-11 w-[130px]">
               {years.map((y) => <option key={y} value={y}>{y}년 귀속</option>)}
             </Select>
             <button className="h-11 rounded-xl bg-ink-900 px-4 text-[14px] font-extrabold text-white">조회</button>

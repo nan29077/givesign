@@ -82,6 +82,7 @@ export function ImageUploadField({
           <input
             ref={fileRef}
             type="file"
+            aria-label="이미지 파일 선택"
             accept="image/png,image/jpeg,image/webp,image/gif"
             className="hidden"
             onChange={(e) => {

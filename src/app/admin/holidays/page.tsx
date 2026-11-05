@@ -84,7 +84,7 @@ export default async function AdminHolidaysPage({
               <AdminInput name="name" placeholder="예: 설날" required />
             </AdminField>
             <AdminField label="종류">
-              <AdminSelect name="kind" defaultValue="STATUTORY">
+              <AdminSelect name="kind" aria-label="휴일 구분" defaultValue="STATUTORY">
                 {KIND_OPTIONS.map((k) => (
                   <option key={k} value={k}>
                     {holidayKindLabel[k].text}
@@ -160,7 +160,7 @@ export default async function AdminHolidaysPage({
                         <input type="hidden" name="id" value={h.id} />
                         <div className="flex w-56 flex-col gap-1.5">
                           <AdminInput name="name" defaultValue={h.name} placeholder="명칭" required />
-                          <AdminSelect name="kind" defaultValue={h.kind}>
+                          <AdminSelect name="kind" aria-label="휴일 구분" defaultValue={h.kind}>
                             {KIND_OPTIONS.map((k) => (
                               <option key={k} value={k}>
                                 {holidayKindLabel[k].text}

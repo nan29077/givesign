@@ -71,7 +71,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
         <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" method="get">
           <input type="hidden" name="seg" value={seg} />
           <Input name="q" defaultValue={q} placeholder="이름 · 번호 끝자리 · 태그" />
-          <Select name="role" defaultValue={role}>
+          <Select name="role" aria-label="구성원 구분" defaultValue={role}>
             <option value="all">구분 전체</option>
             {(['DONOR', 'VOLUNTEER', 'BOTH', 'CONTACT'] as const).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
           </Select>
