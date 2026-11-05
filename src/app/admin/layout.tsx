@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { ConsoleShell, type NavGroup } from '@/components/layout/console-shell';
 import { requireAdmin, type SessionUser } from '@/server/auth';
 import { AdminPermissionBanner } from '@/components/admin/permission-banner';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,12 +71,29 @@ const groups: NavGroup[] = [
   {
     title: '시스템·보안',
     items: [
+      { href: '/admin/site-settings', label: '사이트 설정', icon: 'settings' },
       { href: '/admin/admins', label: '관리자 권한', icon: 'admins' },
       { href: '/admin/audit', label: '감사로그', icon: 'audit' },
       { href: '/admin/simulator', label: 'MO 시뮬레이터', icon: 'simulator' },
     ],
   },
 ];
+
+/** 라이브 바자회 메뉴. 스위치가 켜져 있을 때만 붙는다(꺼지면 메뉴 자체가 없다). */
+const bazaarGroup: NavGroup = {
+  title: '라이브 바자회',
+  items: [
+    { href: '/admin/bazaar', label: '바자회 현황', icon: 'dashboard' },
+    { href: '/admin/bazaar/donations', label: '현물 기부 관리', icon: 'donors' },
+    { href: '/admin/bazaar/givers', label: '기부자 대장', icon: 'users' },
+    { href: '/admin/bazaar/merchants', label: '참여 기관', icon: 'merchants' },
+    { href: '/admin/bazaar/products', label: '판매 상품', icon: 'products' },
+    { href: '/admin/bazaar/lives', label: '편성·셀러', icon: 'campaigns' },
+    { href: '/admin/bazaar/sales', label: '판매 결과 입력', icon: 'payments' },
+    { href: '/admin/in-kind-settlements', label: '정산·대사', icon: 'settlement' },
+    { href: '/admin/bazaar/settings', label: '바자회 설정', icon: 'settings' },
+  ],
+};
 
 const permissionLabel: Record<string, string> = {
   SUPER_ADMIN: '최고 관리자',
@@ -112,7 +130,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
   if (!admin) redirect(`/login?next=${encodeURIComponent(await resolveAdminNextPath())}`);
 
-  const visibleGroups = groups
+  const bazaarOn = await isLiveBazaarEnabled();
+  // 바자회 메뉴는 '정산·수수료' 다음에 끼운다.
+  const allGroups = bazaarOn ? [...groups.slice(0, 4), bazaarGroup, ...groups.slice(4)] : groups;
+  const visibleGroups = allGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.href !== '/admin/inquiries' || admin?.adminPermission === 'SUPER_ADMIN'),

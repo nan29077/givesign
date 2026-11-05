@@ -29,6 +29,8 @@ enum UserRole {
   PAYER
   MERCHANT
   ADMIN
+  /// 현물 기부 회원(라이브 바자회). 기업/개인 구분은 in_kind_donor.donor_type
+  GIVER
 
   @@map("user_role")
 }
@@ -414,6 +416,7 @@ model User {
   payerProfile    PayerProfile?
   merchantProfile MerchantProfile?
   adminProfile    AdminProfile?
+  inKindDonor     InKindDonor?
   sessions        UserSession[]
   consents        ConsentRecord[]
   notifications   Notification[]
@@ -700,6 +703,11 @@ model MerchantProfile {
   receipts              DonationReceipt[]
   receiptExports        ReceiptExport[]
   donorMembers          DonorMember[]
+  inKindDonations       InKindDonation[]
+  inKindReceipts        InKindReceipt[]
+  bazaarProducts        BazaarProduct[]
+  bazaarSettlements     BazaarSettlement[]
+  bazaarParticipation   MerchantBazaar?
   edocWallet            EDocWallet?
   edocLedger            EDocLedger[]
   edocSubscriptions     EDocSubscription[]
@@ -3850,4 +3858,484 @@ model DonorEmailToken {
 
   @@index([memberId, createdAt])
   @@map("donor_email_token")
+}
+
+// ===========================================================================
+// 라이브 바자회 (현물 기부 → 기관 영수증 → 셀러브릭스 방송 판매 → 기관 정산)
+//  - 전체 기능은 system_setting 'live_bazaar.enabled' 로 켜고 끈다(src/server/services/bazaar-settings.ts).
+//  - 1단계는 셀러브릭스와 연동하지 않는다. 판매 결과는 관리자가 입력·파일 업로드하고(source=MANUAL|CSV),
+//    2단계에서 같은 판매 결과 표에 API 공급원을 붙인다.
+//  - 판매 구조: 기관 → 회사(기브싸인 운영사) 위탁판매. 판매 금액에서 수수료(기본 30%)를 뺀 금액이 기관 귀속.
+//  - 상태값은 문자열 상수로 둔다(src/lib/bazaar.ts). 원장·상태 이력은 append-only(DB 트리거).
+// ===========================================================================
+
+/// 현물 기부 회원 정보. 기업(CORPORATE)/개인(INDIVIDUAL). 연락처·주민번호는 해시+암호화+마스킹 3분리.
+model InKindDonor {
+  id                 String   @id
+  userId             String   @unique @map("user_id")
+  /// CORPORATE | INDIVIDUAL
+  donorType          String   @map("donor_type")
+  /// 기업: 상호 / 개인: 성명
+  displayName        String   @map("display_name")
+  /// 기업 사업자등록번호(숫자 10자리). 법인 영수증 발급에 쓴다.
+  businessNo         String?  @map("business_no")
+  representativeName String?  @map("representative_name")
+  contactName        String   @map("contact_name")
+  phoneEnc           String   @map("phone_enc")
+  phoneHash          String   @map("phone_hash")
+  phoneMasked        String   @map("phone_masked")
+  address            String?
+  /// 개인 영수증용 성명·주민등록번호(발급·명세 생성에서만 복호화)
+  legalName          String?  @map("legal_name")
+  residentNoEnc      String?  @map("resident_no_enc")
+  residentNoHash     String?  @map("resident_no_hash")
+  residentNoMasked   String?  @map("resident_no_masked")
+  /// 연말정산 간소화(국세청 제출) 동의 — 개인만 의미가 있다.
+  hometaxOptIn       Boolean  @default(true) @map("hometax_opt_in")
+  adminNote          String?  @map("admin_note")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  donations InKindDonation[]
+  receipts  InKindReceipt[]
+
+  @@index([donorType, createdAt])
+  @@index([phoneHash])
+  @@index([businessNo])
+  @@map("in_kind_donor")
+}
+
+/// 현물 기부 1건(여러 품목). 상태 흐름은 src/lib/bazaar.ts DONATION_STATUS.
+model InKindDonation {
+  id                   String    @id
+  /// 표시용 번호 IKD-YYYYMMDD-XXXX
+  donationNo           String    @unique @map("donation_no")
+  donorId              String    @map("donor_id")
+  /// 매칭이 확정된 기관(수락 전에는 비어 있다)
+  merchantId           String?   @map("merchant_id")
+  status               String
+  title                String
+  /// DESIGNATED(기관 지정) | RECOMMEND(추천 받기) | ANY(상관없음)
+  matchMode            String    @map("match_mode")
+  preferredMerchantId  String?   @map("preferred_merchant_id")
+  brandPublic          Boolean   @default(false) @map("brand_public")
+  minSalePrice         BigInt?   @map("min_sale_price")
+  /// MERCHANT_USE | TRANSFER | RETURN
+  unsoldAction         String    @map("unsold_action")
+  /// SEND(직접 발송) | PICKUP(수거 요청)
+  deliveryMethod       String    @map("delivery_method")
+  donorMessage         String?   @map("donor_message")
+  declaredTotal        BigInt    @map("declared_total")
+  confirmedTotal       BigInt?   @map("confirmed_total")
+  valuationConfirmedAt DateTime? @map("valuation_confirmed_at") @db.Timestamptz(3)
+  pledgeName           String?   @map("pledge_name")
+  pledgeSnapshot       Json?     @map("pledge_snapshot")
+  pledgeHash           String?   @map("pledge_hash")
+  pledgedAt            DateTime? @map("pledged_at") @db.Timestamptz(3)
+  shippingCarrier      String?   @map("shipping_carrier")
+  shippingTrackingNo   String?   @map("shipping_tracking_no")
+  shippedAt            DateTime? @map("shipped_at") @db.Timestamptz(3)
+  cancelReason         String?   @map("cancel_reason")
+  closedAt             DateTime? @map("closed_at") @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  donor      InKindDonor       @relation(fields: [donorId], references: [id], onDelete: Restrict)
+  merchant   MerchantProfile?  @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  items      InKindItem[]
+  valuations InKindValuation[]
+  matches    InKindMatch[]
+  logs       InKindStatusLog[]
+  files      InKindFile[]
+  inbound    InKindInbound?
+  receipts   InKindReceipt[]
+  products   BazaarProduct[]
+
+  @@index([donorId, createdAt])
+  @@index([merchantId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("in_kind_donation")
+}
+
+model InKindItem {
+  id                String    @id
+  donationId        String    @map("donation_id")
+  seq               Int
+  name              String
+  category          String
+  quantity          Int
+  /// NEW | UNOPENED | LIKE_NEW | USED
+  condition         String
+  expiryDate        DateTime? @map("expiry_date") @db.Date
+  declaredUnitValue BigInt    @map("declared_unit_value")
+  /// 가액 확정 시 단가
+  unitValue         BigInt?   @map("unit_value")
+  receivedQty       Int?      @map("received_qty")
+  acceptedQty       Int?      @map("accepted_qty")
+  inspectNote       String?   @map("inspect_note")
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  product  BazaarProduct?
+
+  @@unique([donationId, seq])
+  @@map("in_kind_item")
+}
+
+/// 가액 협의 이력. 제안·역제안·수락·확정이 모두 한 줄씩 쌓인다.
+model InKindValuation {
+  id          String   @id
+  donationId  String   @map("donation_id")
+  /// DONOR | MERCHANT | ADMIN
+  actorType   String   @map("actor_type")
+  actorUserId String?  @map("actor_user_id")
+  /// PROPOSE | COUNTER | ACCEPT | CONFIRM | RECALC
+  kind        String
+  total       BigInt
+  /// {itemId: unitValue(string)}
+  itemValues  Json     @map("item_values")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@index([donationId, createdAt])
+  @@map("in_kind_valuation")
+}
+
+/// 기관 매칭 제안. 기관이 수락해야 확정된다. 기한이 지나면 수락할 수 없다.
+model InKindMatch {
+  id         String    @id
+  donationId String    @map("donation_id")
+  merchantId String    @map("merchant_id")
+  /// PROPOSED | ACCEPTED | REJECTED | EXPIRED | WITHDRAWN
+  status     String
+  proposedBy String    @map("proposed_by")
+  proposedAt DateTime  @default(now()) @map("proposed_at") @db.Timestamptz(3)
+  deadline   DateTime  @db.Timestamptz(3)
+  decidedAt  DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedBy  String?   @map("decided_by")
+  reason     String?
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, status, proposedAt])
+  @@index([donationId, proposedAt])
+  @@map("in_kind_match")
+}
+
+/// 상태 변경 이력(append-only)
+model InKindStatusLog {
+  id          String   @id
+  donationId  String   @map("donation_id")
+  fromStatus  String?  @map("from_status")
+  toStatus    String   @map("to_status")
+  /// DONOR | MERCHANT | ADMIN | SYSTEM
+  actorType   String   @map("actor_type")
+  actorUserId String?  @map("actor_user_id")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Restrict)
+
+  @@index([donationId, createdAt])
+  @@map("in_kind_status_log")
+}
+
+/// 기부 관련 파일(물품 사진·가액 근거·검수 사진). 비공개 저장소에 두고 권한 확인 후 내려준다.
+model InKindFile {
+  id          String   @id
+  donationId  String   @map("donation_id")
+  /// PHOTO | EVIDENCE | INSPECTION
+  kind        String
+  objectName  String   @map("object_name")
+  fileName    String   @map("file_name")
+  contentType String   @map("content_type")
+  size        Int
+  uploadedBy  String   @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@index([donationId, kind])
+  @@map("in_kind_file")
+}
+
+/// 입고·검수(기브싸인 창고·3PL). 기관 검수 확정 후 영수증이 발급된다.
+model InKindInbound {
+  id                  String    @id
+  donationId          String    @unique @map("donation_id")
+  warehouse           String
+  receivedAt          DateTime  @map("received_at") @db.Timestamptz(3)
+  inspectedBy         String    @map("inspected_by")
+  /// PASS | PARTIAL | FAIL
+  result              String
+  note                String?
+  /// 반송비(불합격 반송) 금액과 부담 주체 NONE | MERCHANT | GIVESIGN
+  returnCost          BigInt    @default(0) @map("return_cost")
+  returnCostBearer    String    @default("NONE") @map("return_cost_bearer")
+  /// FAIL 일 때 처리: RETURNED | DISPOSED
+  disposition         String?
+  merchantConfirmedAt DateTime? @map("merchant_confirmed_at") @db.Timestamptz(3)
+  merchantConfirmedBy String?   @map("merchant_confirmed_by")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  donation InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@map("in_kind_inbound")
+}
+
+/// 현물 기부금영수증. 금전 영수증(donation_receipt)과 번호 체계를 나눈다: {기관코드}-{연도}-H{6자리}.
+/// 스위치를 꺼도 기관 기부금영수증 메뉴·홈택스 명세에는 계속 포함한다(법정 서류).
+model InKindReceipt {
+  id             String    @id
+  merchantId     String    @map("merchant_id")
+  donationId     String    @map("donation_id")
+  donorId        String    @map("donor_id")
+  taxYear        Int       @map("tax_year")
+  seq            Int
+  receiptNo      String    @unique @map("receipt_no")
+  totalAmount    BigInt    @map("total_amount")
+  donationCode   String    @map("donation_code")
+  donorType      String    @map("donor_type")
+  donorSnapshot  Json      @map("donor_snapshot")
+  issuerSnapshot Json      @map("issuer_snapshot")
+  /// [{name, quantity, unitValue, amount}]
+  items          Json
+  /// 개인 기부자 주민번호 암호문(명세 생성에서만 복호화)
+  residentNoEnc  String?   @map("resident_no_enc")
+  /// 기부일(입고일)
+  donatedAt      DateTime  @map("donated_at") @db.Timestamptz(3)
+  /// ISSUED | VOID
+  status         String    @default("ISSUED")
+  issuedBy       String    @map("issued_by")
+  issuedAt       DateTime  @default(now()) @map("issued_at") @db.Timestamptz(3)
+  voidedAt       DateTime? @map("voided_at") @db.Timestamptz(3)
+  voidReason     String?   @map("void_reason")
+  voidedBy       String?   @map("voided_by")
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  donation InKindDonation  @relation(fields: [donationId], references: [id], onDelete: Restrict)
+  donor    InKindDonor     @relation(fields: [donorId], references: [id], onDelete: Restrict)
+
+  @@unique([merchantId, taxYear, seq])
+  @@index([merchantId, taxYear, status])
+  @@index([donorId, issuedAt])
+  @@index([donationId])
+  @@map("in_kind_receipt")
+}
+
+/// 기관의 바자회 참여(위탁판매 계약 동의 + 최고관리자 승인). 승인 기관만 매칭 대상이다.
+model MerchantBazaar {
+  merchantId          String    @id @map("merchant_id")
+  /// APPLIED | APPROVED | REJECTED | SUSPENDED
+  status              String
+  neededItems         String?   @map("needed_items")
+  consignmentName     String    @map("consignment_name")
+  consignmentAgreedAt DateTime  @map("consignment_agreed_at") @db.Timestamptz(3)
+  consignmentVersion  String    @map("consignment_version")
+  mailOrderRegNo      String?   @map("mail_order_reg_no")
+  appliedAt           DateTime  @default(now()) @map("applied_at") @db.Timestamptz(3)
+  decidedAt           DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedBy           String?   @map("decided_by")
+  note                String?
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@index([status, appliedAt])
+  @@map("merchant_bazaar")
+}
+
+/// 기브싸인 소속 셀러 명단(기브싸인 로그인 없음. 방송은 셀러브릭스 계정으로 한다).
+model BazaarSeller {
+  id             String   @id
+  name           String
+  sellerbricksId String   @map("sellerbricks_id")
+  phoneEnc       String?  @map("phone_enc")
+  phoneMasked    String?  @map("phone_masked")
+  active         Boolean  @default(true)
+  memo           String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  lives BazaarLive[]
+
+  @@map("bazaar_seller")
+}
+
+/// 판매 상품(검수 확정된 품목 1개 = 상품 1개). 셀러브릭스에는 상품명 앞 추적 코드로 등록한다.
+model BazaarProduct {
+  id              String    @id
+  /// GSB-000123 (셀러브릭스 상품명 앞에 붙이는 추적 코드)
+  trackingCode    String    @unique @map("tracking_code")
+  merchantId      String    @map("merchant_id")
+  donationId      String    @map("donation_id")
+  itemId          String    @unique @map("item_id")
+  name            String
+  salePrice       BigInt    @map("sale_price")
+  shippingFee     BigInt    @default(0) @map("shipping_fee")
+  quantity        Int
+  perPersonLimit  Int       @map("per_person_limit")
+  /// DRAFT(판매 등록 대기) | LISTED(셀러브릭스 등록 완료) | ENDED(판매 종료)
+  status          String    @default("DRAFT")
+  externalRef     String?   @map("external_ref")
+  listedAt        DateTime? @map("listed_at") @db.Timestamptz(3)
+  endedAt         DateTime? @map("ended_at") @db.Timestamptz(3)
+  /// 판매 종료 시 미판매 수량 처리 MERCHANT_USE | TRANSFER | RETURN | DISPOSE
+  remainingAction String?   @map("remaining_action")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant  MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  donation  InKindDonation   @relation(fields: [donationId], references: [id], onDelete: Restrict)
+  item      InKindItem       @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  saleLines BazaarSaleLine[]
+
+  @@index([merchantId, status])
+  @@index([donationId])
+  @@map("bazaar_product")
+}
+
+/// 바자회 방송 편성. 기관이 승인한다. 방송은 셀러브릭스에서 한다(broadcastUrl).
+model BazaarLive {
+  id           String    @id
+  merchantId   String    @map("merchant_id")
+  sellerId     String    @map("seller_id")
+  title        String
+  scheduledAt  DateTime  @map("scheduled_at") @db.Timestamptz(3)
+  broadcastUrl String?   @map("broadcast_url")
+  /// [productId]
+  productIds   Json      @default("[]") @map("product_ids")
+  /// PROPOSED | APPROVED | REJECTED | DONE | CANCELED
+  status       String    @default("PROPOSED")
+  note         String?
+  createdBy    String    @map("created_by")
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedBy    String?   @map("decided_by")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  seller  BazaarSeller      @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  batches BazaarSaleBatch[]
+
+  @@index([merchantId, scheduledAt])
+  @@index([status, scheduledAt])
+  @@map("bazaar_live")
+}
+
+/// 판매 결과 입력 묶음. 입력자와 승인자가 달라야 승인된다. 승인 때 원장에 반영한다.
+model BazaarSaleBatch {
+  id           String    @id
+  liveId       String?   @map("live_id")
+  title        String
+  /// MANUAL | CSV | (2단계) API
+  source       String
+  /// DRAFT | APPROVED | REJECTED
+  status       String    @default("DRAFT")
+  createdBy    String    @map("created_by")
+  approvedBy   String?   @map("approved_by")
+  approvedAt   DateTime? @map("approved_at") @db.Timestamptz(3)
+  rejectReason String?   @map("reject_reason")
+  /// 원장 귀속 월(KST YYYY-MM). 승인 때 정한다.
+  month        String?
+  note         String?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  live  BazaarLive?      @relation(fields: [liveId], references: [id], onDelete: SetNull)
+  lines BazaarSaleLine[]
+
+  @@index([status, createdAt])
+  @@map("bazaar_sale_batch")
+}
+
+model BazaarSaleLine {
+  id           String   @id
+  batchId      String   @map("batch_id")
+  productId    String   @map("product_id")
+  merchantId   String   @map("merchant_id")
+  soldQty      Int      @map("sold_qty")
+  grossAmount  BigInt   @map("gross_amount")
+  refundQty    Int      @default(0) @map("refund_qty")
+  refundAmount BigInt   @default(0) @map("refund_amount")
+  returnCost   BigInt   @default(0) @map("return_cost")
+  /// NONE | MERCHANT | GIVESIGN
+  returnBearer String   @default("NONE") @map("return_bearer")
+  note         String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  batch   BazaarSaleBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  product BazaarProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([batchId])
+  @@index([productId])
+  @@map("bazaar_sale_line")
+}
+
+/// 바자회 정산 원장(append-only). 금액은 기관 수취 기준 부호(+ 증가, - 차감).
+/// SALE + / REFUND - / FEE -(수수료, 공급가액·부가세 분리 기록) / RETURN_COST - / PAYOUT -(지급)
+model BazaarLedger {
+  id             String   @id
+  merchantId     String   @map("merchant_id")
+  month          String
+  entryType      String   @map("entry_type")
+  amount         BigInt
+  supplyAmount   BigInt?  @map("supply_amount")
+  vatAmount      BigInt?  @map("vat_amount")
+  productId      String?  @map("product_id")
+  batchId        String?  @map("batch_id")
+  settlementId   String?  @map("settlement_id")
+  idempotencyKey String   @unique @map("idempotency_key")
+  memo           String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, month])
+  @@index([batchId])
+  @@map("bazaar_ledger")
+}
+
+/// 기관 월 정산(월 1회, 익월 지급일). 스위치를 꺼도 확정된 정산은 계속 지급한다.
+model BazaarSettlement {
+  id          String    @id
+  merchantId  String    @map("merchant_id")
+  month       String
+  gross       BigInt
+  refund      BigInt
+  fee         BigInt
+  feeVat      BigInt    @map("fee_vat")
+  returnCost  BigInt    @map("return_cost")
+  payout      BigInt
+  /// DRAFT | CONFIRMED | PAID
+  status      String    @default("DRAFT")
+  dueDate     DateTime  @map("due_date") @db.Date
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz(3)
+  confirmedBy String?   @map("confirmed_by")
+  paidAt      DateTime? @map("paid_at") @db.Timestamptz(3)
+  paidBy      String?   @map("paid_by")
+  transferRef String?   @map("transfer_ref")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@unique([merchantId, month])
+  @@index([status, dueDate])
+  @@map("bazaar_settlement")
+}
+
+/// 월 대사: 기브싸인 판매 합계 ↔ 셀러브릭스 창고 정산금(관리자 입력)
+model BazaarReconcile {
+  id             String   @id
+  month          String
+  externalAmount BigInt   @map("external_amount")
+  internalAmount BigInt   @map("internal_amount")
+  diff           BigInt
+  note           String?
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([month, createdAt])
+  @@map("bazaar_reconcile")
 }

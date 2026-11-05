@@ -1,3 +1,4 @@
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/server/db';
@@ -85,7 +86,12 @@ export async function POST(req: Request) {
   await createSession(user.id);
   await kv.del(key);
 
-  const home = user.role === 'ADMIN' ? '/admin' : user.role === 'MERCHANT' ? '/studio' : '/my';
+  // 현물 기부 회원(라이브 바자회)은 기부자 콘솔로. 바자회가 꺼져 있으면 메인으로(바자회 문구 없이).
+  const home =
+    user.role === 'ADMIN' ? '/admin'
+    : user.role === 'MERCHANT' ? '/studio'
+    : user.role === 'GIVER' ? ((await isLiveBazaarEnabled()) ? '/giver' : '/')
+    : '/my';
   const redirect = nextPath ?? home;
   if (isForm) return NextResponse.redirect(new URL(redirect, req.url), 303);
   return NextResponse.json({ ok: true, redirect });

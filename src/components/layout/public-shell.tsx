@@ -8,6 +8,7 @@ import { isLegacyDonationContent } from '@/lib/public-content';
 import { getMainVisuals } from '@/server/services/visual-settings';
 import { currentServiceMode, testModeNotice } from '@/server/services/service-mode';
 import { readBusinessInfo } from '@/lib/business-info';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 
 /**
  * 공개 영역 레이아웃 (서버 래퍼).
@@ -36,13 +37,16 @@ export async function PublicShell({
         )
       : null;
 
+  const bazaarEnabled = await isLiveBazaarEnabled();
+  // 현물 기부 회원: 바자회가 켜져 있으면 기부자 콘솔, 꺼져 있으면 갈 곳이 없으므로 메인(문구에 바자회를 쓰지 않는다).
+  const giverHref = bazaarEnabled ? '/giver' : '/';
   const viewer: ShellViewer | null = user
     ? {
         id: user.id,
         name: user.name,
         email: user.email,
-        myHref: user.role === 'ADMIN' ? '/admin' : user.role === 'MERCHANT' ? '/studio' : '/my',
-        roleLabel: user.role === 'ADMIN' ? '관리자' : user.role === 'MERCHANT' ? '사회복지기관' : '후원자',
+        myHref: user.role === 'ADMIN' ? '/admin' : user.role === 'MERCHANT' ? '/studio' : user.role === 'GIVER' ? giverHref : '/my',
+        roleLabel: user.role === 'ADMIN' ? '관리자' : user.role === 'MERCHANT' ? '사회복지기관' : user.role === 'GIVER' ? (bazaarEnabled ? '현물 기부 회원' : '회원') : '후원자',
         avatarUrl: merchantAvatar?.avatarUrl ?? null,
         avatarSeed: merchantAvatar?.code ?? user.id,
         avatarIndex: user.avatarIndex,
@@ -75,6 +79,7 @@ export async function PublicShell({
         marginUrl={mainVisual.activeUrl}
         testNotice={testNotice}
         business={business}
+        bazaarEnabled={bazaarEnabled}
       >
         {children}
       </PublicShellClient>

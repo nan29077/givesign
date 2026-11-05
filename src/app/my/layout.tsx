@@ -8,6 +8,7 @@ import { getSessionUser } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { GeneratedAvatar } from '@/components/profile/generated-avatar';
 import { featureVolunteerEnabled } from '@/lib/env';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,9 @@ export default async function MyLayout({ children }: { children: React.ReactNode
     const next = current && current.startsWith('/my') ? current : '/my';
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
+
+  // 현물 기부 회원은 후원자 마이페이지가 아니라 기부자 콘솔을 쓴다.
+  if (user.role === 'GIVER') redirect((await isLiveBazaarEnabled()) ? '/giver' : '/');
 
   const payer = await prisma.payerProfile.findUnique({
     where: { userId: user.id },

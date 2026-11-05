@@ -16,7 +16,7 @@ import { ProfileAvatar } from '@/components/profile/generated-avatar';
 
 export const dynamic = 'force-dynamic';
 
-const roleLabel: Record<UserRole, string> = { PAYER: '후원자', MERCHANT: '사회복지기관', ADMIN: '관리자' };
+const roleLabel: Record<UserRole, string> = { PAYER: '후원자', MERCHANT: '사회복지기관', ADMIN: '관리자', GIVER: '현물 기부 회원' };
 const statusLabel: Record<UserStatus, { text: string; tone: 'success' | 'warning' | 'neutral' }> = {
   ACTIVE: { text: '활성', tone: 'success' },
   SUSPENDED: { text: '정지', tone: 'warning' },

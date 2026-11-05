@@ -659,6 +659,53 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
         .join(','),
     );
   }
+  // 현물 기부금영수증(라이브 바자회). 바자회 스위치를 꺼도 계속 포함한다(법정 서류, 2026-11-05 결정).
+  // 기업 기부자는 사업자등록번호를, 개인은 발급 당시 주민번호 암호문을 쓴다.
+  const inKind = await prisma.inKindReceipt.findMany({
+    where: { merchantId, taxYear, status: 'ISSUED' },
+    orderBy: { seq: 'asc' },
+  });
+  for (const r of inKind) {
+    const donor = (r.donorSnapshot ?? {}) as { name?: string; address?: string | null; businessNo?: string | null; hometaxOptIn?: boolean };
+    let idNo: string;
+    if (r.donorType === 'CORPORATE') {
+      if (!donor.businessNo) {
+        skipped.push(r.receiptNo);
+        continue;
+      }
+      idNo = donor.businessNo;
+    } else {
+      if (donor.hometaxOptIn === false || !r.residentNoEnc) {
+        skipped.push(r.receiptNo);
+        continue;
+      }
+      idNo = decrypt(r.residentNoEnc);
+    }
+    rows += 1;
+    total += r.totalAmount;
+    const items = (r.items as unknown as Array<{ name?: string }> | null) ?? [];
+    const content = `현물(${items[0]?.name ?? '물품'}${items.length > 1 ? ` 외 ${items.length - 1}건` : ''})`;
+    lines.push(
+      [
+        rows,
+        r.receiptNo,
+        donor.name ?? '',
+        idNo,
+        donor.address ?? '',
+        r.donationCode,
+        DONATION_CODES[r.donationCode] ?? '',
+        kstYmd(r.donatedAt),
+        kstYmd(r.donatedAt),
+        r.totalAmount.toString(),
+        items.length,
+        content,
+        kstYmd(r.issuedAt),
+      ]
+        .map(csvCell)
+        .join(','),
+    );
+  }
+
   const content = lines.join('\r\n') + '\r\n';
   const checksum = createHash('sha256').update(content, 'utf8').digest('hex');
   const fileName = `hometax_donation_${merchant.code}_${taxYear}_${new Date().toISOString().slice(0, 10)}.csv`;

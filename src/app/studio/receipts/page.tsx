@@ -38,6 +38,14 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
     }),
     prisma.receiptExport.findMany({ where: { merchantId, taxYear: year }, orderBy: { createdAt: 'desc' }, take: 5 }),
   ]);
+  // 현물 기부금영수증(라이브 바자회 검수 확정분). 바자회 스위치와 무관하게 보여 준다(법정 서류).
+  const inKind = await prisma.inKindReceipt.findMany({
+    where: { merchantId, taxYear: year },
+    orderBy: { seq: 'desc' },
+    take: 300,
+    include: { donor: { select: { displayName: true, donorType: true } } },
+  });
+  const inKindValid = inKind.filter((r) => r.status === 'ISSUED');
   const readiness = issuerReadiness(merchant);
   const ready = candidates.filter((c) => c.ready);
   const withdrawn = candidates.filter((c) => c.withdrawn);
@@ -197,15 +205,38 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
         )}
       </section>
 
+      {inKind.length ? (
+        <section>
+          <SectionTitle title="현물 기부금영수증" description="물품 기부를 검수 확정하면서 발급된 영수증입니다(발급번호 끝이 H 로 시작). 홈택스 제출 명세에 함께 들어갑니다." />
+          <Card padded={false}>
+            <Table>
+              <thead><tr><Th>발급번호</Th><Th>기부자</Th><Th>구분</Th><Th className="text-right">금액</Th><Th>발급일</Th><Th>상태</Th></tr></thead>
+              <tbody>
+                {inKind.map((r) => (
+                  <tr key={r.id}>
+                    <Td><Link href={`/studio/receipts/in-kind/${r.id}`} className="font-mono text-[12px] font-bold text-brand-700 underline">{r.receiptNo}</Link></Td>
+                    <Td>{r.donor.displayName}</Td>
+                    <Td>{r.donorType === 'CORPORATE' ? '기업' : '개인'}</Td>
+                    <Td className="text-right tabular-nums">{formatWon(r.totalAmount)}</Td>
+                    <Td>{formatKst(r.issuedAt, false)}</Td>
+                    <Td>{r.status === 'ISSUED' ? <Badge tone="success">발급</Badge> : <Badge tone="danger">무효</Badge>}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+        </section>
+      ) : null}
+
       <section>
         <SectionTitle title="국세청(홈택스) 제출 명세" description="발급 영수증을 연말정산 간소화 제출용 CSV 로 내려받습니다. 전송은 기관이 홈택스에서 직접 하며, 제출 전 홈택스 변환·검증 프로그램으로 확인하세요." />
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-[13px] text-ink-600">
               <p>파일에는 <strong>주민등록번호 원문</strong>이 포함됩니다. 내려받을 때마다 비밀번호를 다시 확인하고 사유를 남기며(하루 5번까지), 생성 이력과 감사로그가 남습니다. 간소화 제출에 동의하지 않은 후원자는 제외됩니다.</p>
-              <p className="mt-1 text-ink-400">포함 대상: {year}년 귀속 · 발급 상태 영수증 {formatNumber(issuedValid.length)}장</p>
+              <p className="mt-1 text-ink-400">포함 대상: {year}년 귀속 · 발급 상태 영수증 {formatNumber(issuedValid.length)}장{inKindValid.length ? ` · 현물 ${formatNumber(inKindValid.length)}장` : ''}</p>
             </div>
-            {issuedValid.length > 0 ? <HometaxExportForm year={year} /> : null}
+            {issuedValid.length + inKindValid.length > 0 ? <HometaxExportForm year={year} /> : null}
           </div>
           {exports.length ? (
             <div className="mt-4 border-t border-ink-100 pt-3">

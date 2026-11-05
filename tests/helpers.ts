@@ -8,6 +8,7 @@ import { clearMockAlimtalkOutbox } from '@/server/adapters/alimtalk';
 import { clearMockMailOutbox } from '@/server/adapters/mail';
 import { clearMtTemplateOverrideCache } from '@/server/services/mt-templates';
 import { clearMemoryKv } from '@/server/redis';
+import { invalidateBazaarCache } from '@/server/services/bazaar-settings';
 
 /** 테스트마다 DB 를 비운다. 순서는 FK 역순. */
 export async function resetDb() {
@@ -29,6 +30,8 @@ export async function resetDb() {
     'volunteer_posting', 'volunteer_shift',
     // 2026-11-06 7단계 (FK 없음)
     'donor_email_token',
+    // 라이브 바자회: 기관·회원 FK 가 없는 표(CASCADE 로 지워지지 않는다)
+    'bazaar_ledger', 'bazaar_reconcile', 'bazaar_sale_line', 'bazaar_sale_batch', 'bazaar_live', 'bazaar_seller',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서
@@ -52,6 +55,8 @@ export async function resetDb() {
   clearMtTemplateOverrideCache();
   // 속도 제한 카운터(MO 결제 요청 제한 등)도 프로세스 전역이라 테스트 간에 살아남는다.
   clearMemoryKv();
+  // 바자회 스위치 캐시(system_setting 을 비웠다)
+  invalidateBazaarCache();
 }
 
 export interface Fixture {

@@ -7,6 +7,9 @@ import { BannerStrip } from '@/components/public/banner-strip';
 import { HomeAutomation } from '@/components/public/home-automation';
 import { EDocumentIntro } from '@/components/public/e-document-intro';
 import { Card, LinkButton, Notice } from '@/components/ui';
+import { BazaarHomeSection } from '@/components/bazaar/home-section';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
+import { publicBazaarInfo } from '@/server/services/bazaar-views';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
@@ -23,6 +26,8 @@ const DONOR_STEPS = [
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ withdrawn?: string }> }) {
   const sp = await searchParams;
+  // 라이브 바자회 스위치가 꺼져 있으면 섹션 자체를 만들지 않는다(조회도 하지 않는다).
+  const bazaar = (await isLiveBazaarEnabled()) ? await publicBazaarInfo().catch(() => null) : null;
   return (
     <PublicShell>
       {sp.withdrawn && <Notice tone="brand">회원 탈퇴가 완료되었습니다.</Notice>}
@@ -56,6 +61,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ w
           <a href="/videos/givesign-automation-v2.mp4">후원과 전자문서 자동화 소개 보기</a>
         </video>
       </section>
+
+      {bazaar ? <BazaarHomeSection lives={bazaar.lives} merchants={bazaar.merchants} paidTotal={bazaar.paidTotal} /> : null}
 
       <BannerStrip position="HOME_MIDDLE" className="mt-14" />
 

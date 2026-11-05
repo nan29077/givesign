@@ -7,6 +7,7 @@ import { getStudioPendingCounts } from '@/server/services/studio-pending';
 import { featureContentEnabled, featureGoodsEnabled, featureVolunteerEnabled } from '@/lib/env';
 import { prisma } from '@/server/db';
 import { inboxActionCount } from '@/server/services/inbox';
+import { studioBazaarPending } from '@/server/services/bazaar-views';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,8 @@ export const metadata: Metadata = {
  * 처리 대기 건수는 매 요청마다 세어 뱃지로 붙인다.
  */
 function buildGroups(pending: {
+  /** 라이브 바자회 처리 대기(매칭 제안·가액 협의·검수 확정·편성 승인). null 이면 바자회 메뉴를 그리지 않는다. */
+  bazaar: number | null;
   orders: number;
   points: number;
   reports: number;
@@ -93,6 +96,15 @@ function buildGroups(pending: {
         { href: '/studio/document-billing', label: '전자문서 이용요금', icon: 'settlement' },
       ],
     },
+    // 라이브 바자회(스위치가 켜졌을 때만)
+    ...(pending.bazaar !== null
+      ? [
+          {
+            title: '라이브 바자회',
+            items: [{ href: '/studio/bazaar', label: '라이브 바자회', icon: 'products' as const, badge: pending.bazaar }],
+          },
+        ]
+      : []),
     {
       title: '정산·영수증',
       items: [
@@ -161,16 +173,18 @@ export default async function StudioLayout({ children }: { children: React.React
   // 밀린 일을 메뉴에서 바로 보이게 한다.
   // 대시보드도 같은 집계를 쓰므로 요청 단위 캐시로 묶어 한 번만 실행한다.
   const pending = await getStudioPendingCounts(user.merchantId);
-  const [volunteers, contentReview, inbox] = await Promise.all([
+  const [volunteers, contentReview, inbox, bazaar] = await Promise.all([
     prisma.volunteerApplication.count({ where: { merchantId: user.merchantId, status: 'RECEIVED' } }),
     prisma.contentItem.count({ where: { merchantId: user.merchantId, status: 'REVIEW' } }),
     inboxActionCount(user.merchantId),
+    studioBazaarPending(user.merchantId),
   ]);
 
   return (
     <ConsoleShell
       title="사회복지기관 관리자"
       groups={buildGroups({
+        bazaar,
         orders: pending.orders,
         points: pending.points,
         reports: pending.reports,

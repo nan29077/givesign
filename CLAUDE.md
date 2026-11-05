@@ -249,3 +249,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 저니·소비자는 `issuePurposeDocument` 만 부른다(계약은 `purpose-documents.ts`, 구현은 `issued-documents.ts`). 서명 불필요 용도는 `issued_document` + 열람 토큰(해시만, 30일) → `/l/[토큰]`(noindex·인쇄, 만료 후 `/my/documents`), 안내는 `tplDocumentIssued`. 서명 필요 용도(`SUPPORT_AGREEMENT·VOLUNTEER_APPLICATION·RECURRING_CHANGE`)는 `createEnvelope`(서명자 1명=후원자, actor `system`, 이용요금 차감 그대로, 봉투 id 는 dedupeKey 에서 결정)로 보내고 잔액이 없으면 `blocked: 'EDOC_BALANCE'`. 탈퇴 후원자는 `WITHDRAWN`. 같은 `dedupeKey` 는 한 번(`already: true`, link null).
 - 약정서·신청서(`agreements.ts`)는 기관 용도 서식 본문을 머지한 결과를 스냅샷 `form` 에 고정한다(기존 스냅샷 필드·해시·판 규칙 그대로). `ESIGN_PROVIDER=internal` 이면 전자문서 센터 봉투로 서명을 받고(`agreement_document.esign_request_id = edoc_envelope.id`, 발송 키 `agreement:{약정서 id}`), 봉투가 끝나면 `syncIssuedFromEnvelope` → `completeESign` 으로 반영한다(edoc 완료 지점에서 직접 + `document.signed` 소비자 `purpose-document-sign` 로 재확인). internal 은 mock 이 아니라 운영 부팅 점검을 통과한다.
 - 콘솔: `/studio/documents?tab=purposes`(용도별 현황), `/studio/documents/issued`(발급 목록·재발송·보관). 후원자: `/my/documents`. 기부금영수증은 이 기능으로 만들지 않는다(연말 감사장은 별도 용도, "영수증이 아님" 을 적는다).
+
+## 라이브 바자회 (2026-11-05)
+
+상세: `docs/2026-11-05_라이브바자회_개발완료보고서.md`. 기획: 프로젝트 문서 `기브싸인_라이브바자회_개발계획_v4_최종안_2026-11-05.md`.
+
+- **흐름:** 기업·개인 현물 기부 → 기관 매칭(기관 수락) → 가액 협의·확정 → 기부자 약정 → 입고·검수(관리자) → 기관 검수 확정 = 현물 기부금영수증 발급 + 판매 상품 생성 → 셀러브릭스 바자회 센터 창고 등록·방송(기브싸인 소속 셀러) → 판매 결과 입력·승인 → 월 1회 기관 정산·지급.
+- **판매 구조:** 기관 → 회사 위탁판매. 셀러브릭스 코드는 바꾸지 않는다(1단계). 판매 결과는 관리자 수기·CSV 입력이고, 2단계에서 같은 표(`bazaar_sale_batch/line`)에 API 공급원(`source=API`)을 붙인다.
+- **스위치:** `system_setting 'live_bazaar.enabled'`(기본 꺼짐), 최고관리자 `/admin/site-settings`. 판단은 `isLiveBazaarEnabled()` 하나(1초 캐시). 꺼지면 메인 섹션·공개 `/bazaar`·`/giver`·`/studio/bazaar`·`/admin/bazaar`·메뉴·푸터·사이트맵·가입 안내·서버 액션·파일/CSV API 가 모두 사라진다(404, 404 화면에 바자회 문구 없음). **예외(대표 결정):** ① 정산 지급 `/admin/in-kind-settlements` 는 꺼져도 열린다(문구 "현물 판매 정산") ② 발급된 현물 기부금영수증은 기관 `/studio/receipts` 와 홈택스 명세에 계속 포함된다. 새 화면을 만들 때 반드시 `bazaarPageGuard()`/`assertBazaarEnabled()` 를 건다.
+- **계정:** 현물 기부 회원은 `UserRole.GIVER` + `in_kind_donor`(donorType CORPORATE/INDIVIDUAL). 기관 후원 회원(`DonorMember`)·통합 후원자와 섞지 않는다. 셀러는 기브싸인 로그인이 없다(`bazaar_seller` 명단).
+- **상태 전이**는 `bazaar.ts transition()` 만 쓴다(조건부 갱신 + `in_kind_status_log` append-only). 상태값은 `src/lib/bazaar.ts` 문자열 상수.
+- **현물 영수증** `in_kind_receipt`: 번호 `{기관코드}-{연도}-H{6자리}`, 기관 검수 확정 때만 발급, 금액 = 확정 단가 × 합격 수량. 개인은 주민번호 3분리(발급·명세에서만 복호화), 기업은 사업자번호. 정정은 무효(VOID) 후 재발급, 번호 재사용 없음.
+- **원장** `bazaar_ledger` append-only(트리거), 멱등키 `sale:/refund:/fee:/return:/inbound-return:/payout:`. 수수료는 설정값(기본 30%, 부가세 포함/별도는 설정)이고 공급가액·부가세를 나눠 기록한다. 이번 달 정산이 확정·지급됐으면 새 원장은 다음 달로 넘어간다. 판매 결과 승인은 입력자 ≠ 승인자(최고관리자는 사유를 적으면 단독 승인).
+- **추적 코드** `GSB-000001`: 셀러브릭스 상품명 앞에 붙인다. 추적 코드 없는 판매(셀러브릭스 임시상품)는 판매 결과 입력에서 거절된다.
+- 접수 금지 품목·유통기한 30일 미만은 `blockedKeyword()`·`validateDonationInput()` 에서 막는다.
+- 테스트: `tests/live-bazaar.test.ts`, 화면 흐름 `node e2e/live-bazaar-e2e.mjs`(서버 + 시드 DB 필요).

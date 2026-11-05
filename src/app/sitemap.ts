@@ -3,6 +3,7 @@ import { prisma } from '@/server/db';
 import { logger } from '@/lib/logger';
 import { buildSitemap } from '@/lib/seo';
 import { configuredSiteUrl, fallbackSiteUrl } from '@/lib/site-url';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 
 // 빌드 시점에 DB 를 읽지 않도록 요청마다 만든다.
 export const dynamic = 'force-dynamic';
@@ -30,5 +31,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // DB 장애가 sitemap 요청 실패로 번지지 않게 정적 경로만 돌려준다.
     logger.warn('사이트맵 후원페이지 목록 조회 실패', { error: err instanceof Error ? err.message : String(err) });
   }
-  return buildSitemap(site, orgs);
+  const entries = buildSitemap(site, orgs);
+  // 라이브 바자회 소개 페이지는 스위치가 켜져 있을 때만 싣는다.
+  if (await isLiveBazaarEnabled()) {
+    entries.push({ url: new URL('/bazaar', site).toString(), changeFrequency: 'weekly', priority: 0.6 });
+  }
+  return entries;
 }

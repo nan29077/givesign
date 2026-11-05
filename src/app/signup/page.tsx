@@ -5,13 +5,17 @@ import { PageHeader } from '@/components/public/page-header';
 import { SignupForm } from '@/components/public/signup-form';
 import { Card, CardTitle, Notice, LinkButton } from '@/components/ui';
 import { SocialAuthButtons } from '@/components/public/social-auth';
+import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: '후원자 회원가입',
   description: '후원 내역과 결제 수단, 이용 한도를 웹에서 관리하려면 후원자 계정을 만들어 주세요.',
 };
 
-export default function SignupPage() {
+export default async function SignupPage() {
+  const bazaarOn = await isLiveBazaarEnabled();
   return (
     <PublicShell aside={<SignupAside />}>
       <PageHeader
@@ -27,6 +31,12 @@ export default function SignupPage() {
         </Notice>
       </div>
 
+      {bazaarOn ? (
+        <p className="mb-3 text-[13px] text-ink-500">
+          물품을 기부하려는 기업·개인이라면{' '}
+          <Link href="/bazaar/join" className="font-bold text-brand-700 underline underline-offset-2">현물 기부 회원가입</Link>을 이용해 주세요.
+        </p>
+      ) : null}
       <Card>
         <SignupForm />
 

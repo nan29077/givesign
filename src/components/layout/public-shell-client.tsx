@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   Bell, Building2, CircleHelp, CircleUserRound, CreditCard, House, LayoutDashboard,
   LifeBuoy, LogIn, LogOut, Map, Menu, X,
+  Gift,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { PublicMarginMascots } from '@/components/brand/mascot-decorations';
@@ -40,7 +41,7 @@ export interface ShellViewer {
 }
 
 /** 마이페이지 탭 활성 판정에 쓰는 콘솔 경로들 */
-const MY_PREFIXES = ['/my', '/studio', '/admin'];
+const MY_PREFIXES = ['/my', '/studio', '/admin', '/giver'];
 
 interface NavItem {
   href: string;
@@ -62,6 +63,9 @@ function buildNav(myHref: string): NavItem[] {
   ];
 }
 
+/** 라이브 바자회(스위치가 켜졌을 때만 서랍 메뉴에 붙는다) */
+const BAZAAR_EXTRA: NavItem[] = [{ href: '/bazaar', label: '라이브 바자회', icon: Gift }];
+
 const DRAWER_EXTRA: NavItem[] = [
   { href: '/business', label: '기관 도입', icon: Building2 },
   { href: '/electronic-documents', label: '기관 전자문서', icon: Building2 },
@@ -82,6 +86,7 @@ export function PublicShellClient({
   marginUrl,
   testNotice = null,
   business,
+  bazaarEnabled = false,
 }: {
   children: React.ReactNode;
   aside?: React.ReactNode;
@@ -90,6 +95,8 @@ export function PublicShellClient({
   /** 결제·문자가 실제로 처리되지 않는 환경일 때만 서버가 넘기는 고지 문구 */
   testNotice?: string | null;
   business: BusinessInfo;
+  /** 라이브 바자회 스위치. 꺼져 있으면 메뉴·푸터에 바자회 링크를 그리지 않는다. */
+  bazaarEnabled?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
@@ -158,7 +165,7 @@ export function PublicShellClient({
 
         {open ? (
           <div id="public-mobile-menu" ref={drawerRef} className="border-t border-ink-100 bg-white px-4 py-3 lg:hidden">
-            {[...nav, ...DRAWER_EXTRA].map((m) => {
+            {[...nav, ...(bazaarEnabled ? BAZAAR_EXTRA : []), ...DRAWER_EXTRA].map((m) => {
               const DrawerIcon = m.icon;
               const drawerContent = (
                 <>
@@ -214,7 +221,7 @@ export function PublicShellClient({
         {aside ? <div className="mt-8 border-t border-ink-100 pt-6">{aside}</div> : null}
       </main>
 
-      <Footer testNotice={testNotice} business={business} />
+      <Footer testNotice={testNotice} business={business} bazaarEnabled={bazaarEnabled} />
         </div>
 
         {/* PC 우측 메뉴: 화면 세로 중앙에 붙는다 */}
@@ -344,7 +351,7 @@ export function PublicShellClient({
   );
 }
 
-function Footer({ testNotice, business }: { testNotice: string | null; business: BusinessInfo }) {
+function Footer({ testNotice, business, bazaarEnabled }: { testNotice: string | null; business: BusinessInfo; bazaarEnabled: boolean }) {
   return (
     <footer className="public-footer mt-10 border-t">
       <div className="mx-auto w-full max-w-6xl px-4 py-8 text-[12px] leading-relaxed text-ink-400">
@@ -353,6 +360,7 @@ function Footer({ testNotice, business }: { testNotice: string | null; business:
           <Link href="/privacy">개인정보처리방침</Link>
           <Link href="/terms/e-finance">전자금융거래약관</Link>
           <Link href="/support">고객센터</Link>
+          {bazaarEnabled ? <Link href="/bazaar">라이브 바자회</Link> : null}
         </div>
         <p>기브싸인 GIVESIGN | 쉽고 빠른 문자후원</p>
         <p className="mt-1">사회복지기관 전용 MO 번호와 후원페이지로 이웃에게 따뜻한 마음을 전하는 문자후원 플랫폼입니다.</p>
