@@ -8,8 +8,10 @@ import {
   createRecurringDonation,
   runRecurringDonations,
   updateRecurringDonation,
+  setRecurringStatus,
   RECURRING_MAX_ATTEMPTS,
 } from '@/server/services/recurring';
+import { reconcileUnknownPayment } from '@/server/services/payment-reconcile';
 import { revokePaymentMethod } from '@/server/services/payer-registration';
 
 /**
@@ -220,5 +222,39 @@ describe('정기후원 — 실패 처리 (M-1, M-2, 낮음)', () => {
     const { payer, recurring } = await makeRecurring(10000n);
     await revokePaymentMethod(payer.id);
     expect((await prisma.recurringDonation.findUniqueOrThrow({ where: { id: recurring.id } })).status).toBe('SUSPENDED');
+  });
+});
+
+describe('정기후원 — 2026-11-05 점검 A', () => {
+  it('정지 뒤 재개하면 같은 달에 쌓인 지난 실패를 다시 세지 않고 출금을 시도한다', async () => {
+    const { payer, recurring } = await makeRecurring(10999n);
+    for (let i = 0; i < RECURRING_MAX_ATTEMPTS; i += 1) {
+      await dueToday(recurring.id);
+      await runRecurringDonations();
+    }
+    expect((await prisma.recurringDonation.findUniqueOrThrow({ where: { id: recurring.id } })).status).toBe('SUSPENDED');
+    const chargesBefore = await prisma.charge.count({ where: { recurringId: recurring.id } });
+
+    // 잔액을 채우고 재개 → 같은 달 주기로 출금일을 맞춘다.
+    await setRecurringStatus(payer.id, recurring.id, 'RESUME');
+    await prisma.recurringDonation.update({ where: { id: recurring.id }, data: { amount: 10000n } });
+    await dueToday(recurring.id);
+    const r = await runRecurringDonations();
+    expect(r.succeeded).toBe(1);
+    expect(await prisma.charge.count({ where: { recurringId: recurring.id } })).toBe(chargesBefore + 1);
+    expect((await prisma.recurringDonation.findUniqueOrThrow({ where: { id: recurring.id } })).status).toBe('ACTIVE');
+  });
+
+  it('결과 미확인 정기후원 결제를 관리자가 취소로 확정해도 일반 실패 문자를 보내지 않는다', async () => {
+    const { recurring } = await makeRecurring(10666n);
+    await dueToday(recurring.id);
+    await runRecurringDonations();
+    const charge = await prisma.charge.findFirstOrThrow({ where: { recurringId: recurring.id } });
+    const txn = await prisma.paymentTransaction.findFirstOrThrow({ where: { chargeId: charge.id } });
+    expect(txn.status).toBe('UNKNOWN');
+    clearMockOutbox();
+    const res = await reconcileUnknownPayment(txn.id, 'CANCEL', '결제사 원장에 없음');
+    expect(res.ok).toBe(true);
+    expect(readMockOutbox(10).some((m) => m.template === 'CHARGE_FAILED')).toBe(false);
   });
 });

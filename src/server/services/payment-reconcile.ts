@@ -76,6 +76,7 @@ export async function reconcileUnknownPayment(
       payerId: true,
       productId: true,
       quantity: true,
+      channel: true,
       merchant: { select: { displayName: true, thanksMtMessage: true } },
     },
   });
@@ -106,6 +107,7 @@ type ChargeRow = {
   payerId: string | null;
   productId: string | null;
   quantity: number;
+  channel: string;
   merchant: { displayName: string; thanksMtMessage: string | null };
 };
 
@@ -278,12 +280,16 @@ async function confirmCanceled(txn: TxnRow, charge: ChargeRow, memo: string): Pr
   // 출금이 없었으므로 결제 판정 때 잡아 둔 한도 예약을 되돌린다.
   if (charge.payerId) {
     await rollbackCounters(charge.payerId, charge.merchantId, charge.amount, txn.requestedAt);
-    await sendMtForPayer(
-      charge.payerId,
-      tpl.tplChargeFailed(charge.merchant.displayName, '결제가 완료되지 않아 취소되었습니다.'),
-      charge.id,
-      charge.merchantId,
-    );
+    // 정기후원 결제는 다음 배치의 약정 서비스(resolveCharge → FAILED)가 전용 실패 문자를 보낸다.
+    // 여기서 일반 실패 문자를 함께 보내면 한 번의 실패에 문자가 두 통 나간다(executePayment 와 같은 기준).
+    if (charge.channel !== 'RECURRING') {
+      await sendMtForPayer(
+        charge.payerId,
+        tpl.tplChargeFailed(charge.merchant.displayName, '결제가 완료되지 않아 취소되었습니다.'),
+        charge.id,
+        charge.merchantId,
+      );
+    }
   }
 
   logger.warn('결과 미확인 결제를 취소로 확정', {
