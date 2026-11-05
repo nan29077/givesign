@@ -307,6 +307,43 @@ export const env = {
     contentProvider: str('CONTENT_PROVIDER', 'mock') as ProviderMode,
   },
 
+  /**
+   * 외부 연동 실공급자 키 (2026-11-06 7단계). 키가 비어 있으면 그 공급자는 호출하지 않고
+   * `info().missingCredentials` 로 알린다(성공을 꾸미지 않는다).
+   */
+  integrations: {
+    social: {
+      /** 구글 OAuth 클라이언트 (유튜브 업로드·조회) */
+      googleClientId: str('GOOGLE_CLIENT_ID'),
+      googleClientSecret: str('GOOGLE_CLIENT_SECRET'),
+      /** 메타 앱 (인스타그램 그래프 API·페이스북 페이지) */
+      metaAppId: str('META_APP_ID'),
+      metaAppSecret: str('META_APP_SECRET'),
+      /** 그래프 API 버전. 2026-11 기준 최신 안정 버전 v26.0 (2026-07-29 출시) */
+      metaGraphVersion: str('META_GRAPH_VERSION', 'v26.0'),
+      /** 틱톡 Content Posting API */
+      tiktokClientKey: str('TIKTOK_CLIENT_KEY'),
+      tiktokClientSecret: str('TIKTOK_CLIENT_SECRET'),
+      /** OAuth state 서명 비밀. 비어 있으면 어떤 플랫폼도 연결을 시작하지 않는다. */
+      stateSecret: str('SOCIAL_OAUTH_STATE_SECRET'),
+    },
+    alimtalk: {
+      /** 솔라피 키. 비우면 문자(coolsms=솔라피) 키 MT_API_KEY/MT_API_SECRET 를 그대로 쓴다(같은 계정). */
+      apiKey: str('ALIMTALK_API_KEY', str('MT_API_KEY')),
+      apiSecret: str('ALIMTALK_API_SECRET', str('MT_API_SECRET')),
+    },
+    mail: {
+      /** mock | ses */
+      provider: str('MAIL_PROVIDER', 'mock') as ProviderMode,
+      from: str('MAIL_FROM'),
+      sesRegion: str('SES_REGION', str('AWS_REGION', 'ap-northeast-2')),
+      /** 비우면 AWS 표준 자격 증명 환경변수(AWS_ACCESS_KEY_ID 등)를 쓴다. 역할(IMDS) 자격 증명은 읽지 않는다. */
+      sesAccessKeyId: str('SES_ACCESS_KEY_ID', str('AWS_ACCESS_KEY_ID')),
+      sesSecretAccessKey: str('SES_SECRET_ACCESS_KEY', str('AWS_SECRET_ACCESS_KEY')),
+      sesSessionToken: str('SES_SESSION_TOKEN', str('AWS_SESSION_TOKEN')),
+    },
+  },
+
   safety: {
     /** 금융사 서면승인 등록 전에는 DIRECT_TRIGGER 를 열지 않는다. */
     allowDirectTrigger: bool('ALLOW_DIRECT_TRIGGER', false),
@@ -416,6 +453,7 @@ export function assertProductionSafety(): string[] {
   if (env.automation.esignEnabled && env.automation.esignProvider === 'mock') {
     problems.push('ESIGN_ENABLED=true 인데 ESIGN_PROVIDER 가 mock 입니다.');
   }
+  problems.push(...integrationBootProblems());
   // 결제사(헥토)를 붙였는데 PIN 인증만 mock 으로 남아 있으면, 실제 출금이 가능한 빌키를 든 채
   // 인증 단계만 모의 화면으로 통과시키게 된다. 조합 자체를 막는다.
   if (env.payment.provider === 'hecto' && isMockPinLink()) {
@@ -471,6 +509,44 @@ export function assertProductionSafety(): string[] {
 }
 
 /**
+ * 7단계 외부 연동 실공급자 부팅 점검(운영). 켠 실공급자의 필수 키가 비어 있으면 문제로 올린다.
+ * 함수로 따로 둔 이유: 테스트가 env 를 바꿔 가며 직접 확인한다(assertProductionSafety 는 운영에서만 돈다).
+ */
+export function integrationBootProblems(): string[] {
+  const problems: string[] = [];
+  const s = env.integrations.social;
+  if (env.automation.socialProvider !== 'mock') {
+    if (!s.stateSecret) problems.push('SOCIAL_PROVIDER 가 실연동인데 SOCIAL_OAUTH_STATE_SECRET 이 비어 있습니다. (SNS 계정 연결을 시작할 수 없습니다)');
+    const pairs: Array<[string, string, string, string]> = [
+      ['GOOGLE_CLIENT_ID', s.googleClientId, 'GOOGLE_CLIENT_SECRET', s.googleClientSecret],
+      ['META_APP_ID', s.metaAppId, 'META_APP_SECRET', s.metaAppSecret],
+      ['TIKTOK_CLIENT_KEY', s.tiktokClientKey, 'TIKTOK_CLIENT_SECRET', s.tiktokClientSecret],
+    ];
+    for (const [ka, va, kb, vb] of pairs) {
+      if (Boolean(va) !== Boolean(vb)) problems.push(`${va ? kb : ka} 가 비어 있습니다. (${ka}·${kb} 는 함께 넣어야 합니다)`);
+    }
+    if (env.automation.socialPublishEnabled && !pairs.some(([, va, , vb]) => va && vb)) {
+      problems.push('SOCIAL_PUBLISH_ENABLED=true · SOCIAL_PROVIDER 실연동인데 어떤 플랫폼 키도 없습니다. (GOOGLE_* / META_* / TIKTOK_*)');
+    }
+  }
+  if (env.automation.alimtalkEnabled && env.automation.alimtalkProvider === 'coolsms') {
+    if (!env.integrations.alimtalk.apiKey) problems.push('ALIMTALK_PROVIDER=coolsms 인데 ALIMTALK_API_KEY(또는 MT_API_KEY) 가 비어 있습니다.');
+    if (!env.integrations.alimtalk.apiSecret) problems.push('ALIMTALK_PROVIDER=coolsms 인데 ALIMTALK_API_SECRET(또는 MT_API_SECRET) 가 비어 있습니다.');
+  }
+  if (env.automation.alimtalkEnabled && env.automation.alimtalkProvider === 'emma') {
+    problems.push('ALIMTALK_PROVIDER=emma 는 아직 구현되지 않았습니다(EMMA 알림톡 테이블 규격 미수령). coolsms 를 쓰거나 알림톡을 끄십시오.');
+  }
+  const m = env.integrations.mail;
+  if (m.provider === 'ses') {
+    if (!m.from) problems.push('MAIL_PROVIDER=ses 인데 MAIL_FROM 이 비어 있습니다.');
+    if (!m.sesAccessKeyId || !m.sesSecretAccessKey) problems.push('MAIL_PROVIDER=ses 인데 SES 자격 증명(SES_ACCESS_KEY_ID/SES_SECRET_ACCESS_KEY 또는 AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)이 없습니다.');
+  } else if (m.provider !== 'mock') {
+    problems.push(`MAIL_PROVIDER=${m.provider} 는 지원하지 않습니다. (mock | ses)`);
+  }
+  return problems;
+}
+
+/**
  * 기동을 막지는 않지만 운영자가 확인해야 하는 설정.
  *
  * "없으면 서비스가 위험한 값"은 assertProductionSafety() 에서 기동을 중단시키고,
@@ -519,6 +595,9 @@ export function bootWarnings(): string[] {
     }
     if (env.payment.pinCallbackIps.length === 0) {
       warnings.push('PIN_CALLBACK_IPS 가 비어 있습니다. PIN 완료 콜백의 발신 IP 검사가 생략됩니다.');
+    }
+    if (env.integrations.mail.provider === 'mock') {
+      warnings.push(`MAIL_PROVIDER=mock 입니다 (APP_ENV=${env.appEnv}). 비밀번호 재설정·이메일 인증 메일이 발송되지 않습니다.`);
     }
   }
   return warnings;
