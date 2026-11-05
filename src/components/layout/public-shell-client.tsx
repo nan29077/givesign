@@ -13,6 +13,8 @@ import { NotificationBell } from '@/components/notifications/notification-bell';
 import { ProfileAvatar } from '@/components/profile/generated-avatar';
 import { ChargeLookupSheet } from '@/components/public/charge-lookup-sheet';
 import { cx } from '@/components/ui';
+import { BusinessFooterLines } from '@/components/layout/business-footer';
+import type { BusinessInfo } from '@/lib/business-info';
 
 /**
  * 공개 영역 레이아웃 (클라이언트).
@@ -78,14 +80,45 @@ export function PublicShellClient({
   aside,
   viewer,
   marginUrl,
+  testNotice = null,
+  business,
 }: {
   children: React.ReactNode;
   aside?: React.ReactNode;
   viewer: ShellViewer | null;
   marginUrl: string;
+  /** 결제·문자가 실제로 처리되지 않는 환경일 때만 서버가 넘기는 고지 문구 */
+  testNotice?: string | null;
+  business: BusinessInfo;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
+  const menuButtonRef = React.useRef<HTMLButtonElement>(null);
+  const drawerRef = React.useRef<HTMLDivElement>(null);
+
+  // 모바일 메뉴: 열리면 첫 항목으로 포커스, Escape·바깥 클릭으로 닫고 메뉴 버튼으로 포커스를 돌려준다.
+  React.useEffect(() => {
+    if (!open) return;
+    drawerRef.current?.querySelector<HTMLElement>('a, button')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (drawerRef.current?.contains(t) || menuButtonRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [open]);
   const [lookupOpen, setLookupOpen] = React.useState(false);
   const myHref = viewer?.myHref ?? '/my';
   const nav = buildNav(myHref);
@@ -110,9 +143,11 @@ export function PublicShellClient({
           <div className="flex items-center gap-2">
             {viewer ? <NotificationBell /> : null}
             <button
+              ref={menuButtonRef}
               type="button"
-              aria-label="메뉴"
+              aria-label={open ? '메뉴 닫기' : '메뉴 열기'}
               aria-expanded={open}
+              aria-controls="public-mobile-menu"
               onClick={() => setOpen((v) => !v)}
               className="grid h-10 w-10 place-items-center rounded-full border border-ink-200 bg-white text-ink-700 shadow-sm lg:hidden"
             >
@@ -122,7 +157,7 @@ export function PublicShellClient({
         </div>
 
         {open ? (
-          <div className="border-t border-ink-100 bg-white px-4 py-3 lg:hidden">
+          <div id="public-mobile-menu" ref={drawerRef} className="border-t border-ink-100 bg-white px-4 py-3 lg:hidden">
             {[...nav, ...DRAWER_EXTRA].map((m) => {
               const DrawerIcon = m.icon;
               const drawerContent = (
@@ -179,12 +214,12 @@ export function PublicShellClient({
         {aside ? <div className="mt-8 border-t border-ink-100 pt-6">{aside}</div> : null}
       </main>
 
-      <Footer />
+      <Footer testNotice={testNotice} business={business} />
         </div>
 
         {/* PC 우측 메뉴: 화면 세로 중앙에 붙는다 */}
         <aside
-          className="sticky top-1/2 hidden max-h-[calc(100dvh-2rem)] w-[96px] shrink-0 -translate-y-1/2 self-start overflow-y-auto pl-2 lg:block"
+          className="sticky top-1/2 hidden max-h-[calc(100dvh-2rem)] w-[108px] shrink-0 -translate-y-1/2 self-start overflow-y-auto pl-2 lg:block"
           aria-label="PC 메뉴"
         >
           <nav className="public-side-nav flex w-full flex-col items-center gap-0.5 rounded-[24px] border px-2 py-3 backdrop-blur-xl">
@@ -192,7 +227,7 @@ export function PublicShellClient({
               const Icon = item.icon;
               const active = isActive(pathname, item.href, item.my);
               const cls = cx(
-                'group flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[9.5px] font-bold transition-all',
+                'group flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[11px] font-bold transition-all',
                 active ? 'bg-brand-50 text-brand-700 shadow-[inset_0_0_0_1px_rgba(237,166,0,0.14)]' : 'text-ink-400 hover:bg-ink-50 hover:text-ink-900',
               );
               const inner = (
@@ -233,15 +268,15 @@ export function PublicShellClient({
                     imageUrl={viewer.avatarUrl}
                     className="h-9 w-9"
                   />
-                  <span className="w-full truncate text-center text-[9px] font-bold text-ink-700">
+                  <span className="w-full truncate text-center text-[11px] font-bold text-ink-700">
                     {viewer.name ?? viewer.email ?? '사용자'}
                   </span>
-                  <span className="text-[8px] font-semibold text-ink-300">{viewer.roleLabel}</span>
+                  <span className="text-[11px] font-semibold text-ink-400">{viewer.roleLabel}</span>
                 </Link>
                 <form action="/api/auth/logout" method="post" className="w-full">
                   <button
                     type="submit"
-                    className="flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[9.5px] font-bold text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-900"
+                    className="flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[11px] font-bold text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-900"
                   >
                     <LogOut size={17} strokeWidth={1.65} />
                     <span>로그아웃</span>
@@ -252,7 +287,7 @@ export function PublicShellClient({
               <Link
                 href="/login"
                 className={cx(
-                  'mt-1.5 flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[9.5px] font-bold transition-all',
+                  'mt-1.5 flex w-full flex-col items-center gap-0.5 rounded-[14px] py-2 text-[11px] font-bold transition-all',
                   isActive(pathname, '/login')
                     ? 'bg-brand-50 text-brand-700'
                     : 'text-ink-400 hover:bg-ink-50 hover:text-ink-900',
@@ -263,7 +298,7 @@ export function PublicShellClient({
               </Link>
             )}
 
-            <p className="mt-2 text-[8px] font-extrabold tracking-[0.12em] text-ink-300">GiveSign</p>
+            <p className="mt-2 text-[11px] font-extrabold tracking-[0.08em] text-ink-300">GIVESIGN</p>
           </nav>
         </aside>
       </div>
@@ -309,7 +344,7 @@ export function PublicShellClient({
   );
 }
 
-function Footer() {
+function Footer({ testNotice, business }: { testNotice: string | null; business: BusinessInfo }) {
   return (
     <footer className="public-footer mt-10 border-t">
       <div className="mx-auto w-full max-w-6xl px-4 py-8 text-[12px] leading-relaxed text-ink-400">
@@ -319,9 +354,10 @@ function Footer() {
           <Link href="/terms/e-finance">전자금융거래약관</Link>
           <Link href="/support">고객센터</Link>
         </div>
-        <p>GiveSign(기브싸인) | 쉽고 빠른 문자후원</p>
+        <p>기브싸인 GIVESIGN | 쉽고 빠른 문자후원</p>
         <p className="mt-1">사회복지기관 전용 MO 번호와 후원페이지로 이웃에게 따뜻한 마음을 전하는 문자후원 플랫폼입니다.</p>
-        <p className="mt-1">현재 준비 단계로 실제 결제와 문자 발송은 비활성화되어 있습니다.</p>
+        <BusinessFooterLines info={business} className="mt-3" />
+        {testNotice ? <p className="mt-2 font-semibold text-warning-500">{testNotice}</p> : null}
       </div>
     </footer>
   );

@@ -182,9 +182,9 @@ export default async function RegistrationCompletePage({
         <Card>
           <div className="flex items-center gap-2 text-success-500">
             <CircleCheck size={20} strokeWidth={1.7} />
-            <p className="text-[17px] font-extrabold text-ink-900">
+            <h1 className="text-[17px] font-extrabold text-ink-900">
               {resultMethod === 'CARD' ? '카드 등록이 완료되었습니다' : '계좌 등록이 완료되었습니다'}
-            </p>
+            </h1>
           </div>
           <div className="mt-3">
             <DataRow
@@ -276,7 +276,7 @@ function FailCard({ token, title, message }: { token: string; title: string; mes
       <Card>
         <div className="flex items-center gap-2 text-danger-500">
           <CircleX size={20} strokeWidth={1.7} />
-          <p className="text-[16px] font-extrabold text-ink-900">{title}</p>
+          <h1 className="text-[16px] font-extrabold text-ink-900">{title}</h1>
         </div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{message}</p>
         <div className="mt-3">

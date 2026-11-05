@@ -9,6 +9,7 @@ import { applyVolunteerAction } from '@/app/actions/volunteer';
 import { currentTermsDoc } from '@/server/services/terms';
 import { VOLUNTEER_DAYS, VOLUNTEER_INTERESTS, VOLUNTEER_SLOTS } from '@/server/services/volunteers';
 import { dayLabel, slotLabel } from '@/server/services/agreements';
+import { PickOrgNotice } from '@/components/my/pick-org-notice';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,9 +18,11 @@ export default async function VolunteerApplyPage({ searchParams }: { searchParam
   if (!featureVolunteerEnabled()) notFound();
   const sp = await searchParams;
   const code = normalizeMerchantCode(sp.merchant ?? '');
+  // 기관 지정 없이 열면 404 대신 기관을 고르는 길을 안내한다(점검 F 화면 순회).
+  if (!code) return <PickOrgNotice kind="volunteer" />;
   const { payerId } = await requirePayerContext(`/my/volunteer/apply?merchant=${encodeURIComponent(sp.merchant ?? '')}`);
-  const merchant = code ? await prisma.merchantProfile.findFirst({ where: { code, status: 'APPROVED' }, select: { id: true, code: true, displayName: true } }) : null;
-  if (!merchant) notFound();
+  const merchant = await prisma.merchantProfile.findFirst({ where: { code, status: 'APPROVED' }, select: { id: true, code: true, displayName: true } });
+  if (!merchant) return <PickOrgNotice kind="volunteer" unknownCode />;
   if (!payerId) {
     return (
       <>

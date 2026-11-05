@@ -7,6 +7,7 @@ import { Card, CardTitle, LinkButton } from '@/components/ui';
 import { getSessionUser } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { GeneratedAvatar } from '@/components/profile/generated-avatar';
+import { featureVolunteerEnabled } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ export default async function MyLayout({ children }: { children: React.ReactNode
         </div>
       </header>
 
-      <MyNav />
+      <MyNav volunteerEnabled={featureVolunteerEnabled()} />
       {children}
     </PublicShell>
   );
@@ -57,7 +58,7 @@ function MyAside() {
       <Card>
         <CardTitle>도움이 필요하신가요</CardTitle>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          환불, 결제 오류, 계좌 등록 문제는 거래번호와 함께 문의해 주세요.
+          환불, 출금 오류, 계좌 등록 문제는 거래번호와 함께 문의해 주세요.
         </p>
         <div className="mt-3 space-y-2">
           <LinkButton href="/support" variant="secondary" size="md" className="w-full">

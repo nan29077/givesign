@@ -61,7 +61,9 @@ const nextConfig: NextConfig = {
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
       { key: 'X-Frame-Options', value: 'DENY' },
-      { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+      // object-src·base-uri 는 Next 인라인 스크립트와 무관해 안전하게 좁힐 수 있다(플러그인 삽입·<base> 주입 차단).
+      // script-src 는 Next 인라인 스크립트에 nonce 가 필요해 여기서 넣지 않는다(점검 F).
+      { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'" },
       // 이 서비스는 위치·카메라·마이크를 쓰지 않는다. 확장 프로그램이 끼어드는 것도 막는다.
       { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
     ];

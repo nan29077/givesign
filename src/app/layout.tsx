@@ -1,42 +1,25 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
 import './globals.css';
+import { isLocal } from '@/lib/env';
+import { SITE_NAME, configuredSiteUrl, fallbackSiteUrl, needsRequestHost, siteUrlFromHost } from '@/lib/site-url';
 
 const shareTitle = '기브싸인 | 작은 나눔이, 자라나는 희망으로';
 const shareDescription = '후원과 사람을 잇고, 기관의 일을 가볍게. 문자후원·모금 캠페인·기관 전자문서를 기브싸인에서 함께 운영하세요.';
 
-function isLocalUrl(value: string | undefined) {
-  if (!value) return true;
-  try {
-    const host = new URL(value).hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
-  } catch {
-    return true;
-  }
-}
-
 /**
- * Cloudflare 임시 터널처럼 요청마다 공개 호스트가 달라지는 미리보기에서는
- * 전달된 호스트로 절대 OG 주소를 만든다. 실제 운영에서는 NEXT_PUBLIC_SITE_URL을
- * 우선하여 임의 Host 헤더가 공유 주소에 반영되지 않도록 한다.
+ * Cloudflare 임시 터널처럼 요청마다 공개 호스트가 달라지는 로컬 미리보기에서만
+ * 전달된 호스트로 절대 OG 주소를 만든다. 운영(APP_ENV != local)에서는 headers() 를 부르지 않고
+ * NEXT_PUBLIC_SITE_URL(없으면 APP_BASE_URL)만 쓴다 — 임의 Host 헤더가 공유 주소에 반영되지 않는다.
  */
 export async function generateMetadata(): Promise<Metadata> {
-  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_BASE_URL;
-  let siteUrl = configuredUrl || 'http://localhost:3060';
+  const configuredUrl = configuredSiteUrl();
+  let siteUrl = fallbackSiteUrl(configuredUrl);
 
-  if (isLocalUrl(configuredUrl)) {
+  if (needsRequestHost(configuredUrl, isLocal)) {
     const h = await headers();
-    const forwardedHost = h.get('x-forwarded-host')?.split(',')[0]?.trim();
-    const host = forwardedHost || h.get('host');
-    if (host) {
-      const forwardedProto = h.get('x-forwarded-proto')?.split(',')[0]?.trim();
-      const protocol = forwardedProto === 'https' || forwardedProto === 'http'
-        ? forwardedProto
-        : host.includes('localhost') || host.startsWith('127.')
-          ? 'http'
-          : 'https';
-      siteUrl = `${protocol}://${host}`;
-    }
+    const fromHost = siteUrlFromHost(h.get('x-forwarded-host') || h.get('host'), h.get('x-forwarded-proto'));
+    if (fromHost) siteUrl = fromHost;
   }
 
   const metadataBase = new URL(siteUrl);
@@ -59,7 +42,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description: shareDescription,
       type: 'website',
       url: metadataBase,
-      siteName: 'GiveSign(기브싸인)',
+      siteName: SITE_NAME,
       locale: 'ko_KR',
       images: [{ url: shareImage, width: 1200, height: 630, alt: '기브싸인 - 작은 나눔이 자라나는 희망으로' }],
     },
@@ -78,6 +61,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   themeColor: '#203c32',
+  // 다크 모드 디자인이 없다. 브라우저 강제 다크 변환으로 대비가 깨지지 않도록 밝은 테마임을 명시한다.
+  colorScheme: 'light',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

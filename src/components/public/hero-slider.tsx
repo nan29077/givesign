@@ -34,6 +34,11 @@ export function HeroSlider() {
       className="hero-slider group relative isolate overflow-hidden rounded-[30px] bg-ink-900 shadow-[0_28px_80px_rgba(32,60,50,0.28)]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
+      // 키보드로 슬라이드 안 링크에 포커스가 있는 동안에는 자동 전환을 멈춘다(링크가 바뀌지 않도록).
+      onFocus={() => setPaused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPaused(false);
+      }}
       aria-label="기브싸인 주요 서비스"
     >
       {/* 이미지 영역.

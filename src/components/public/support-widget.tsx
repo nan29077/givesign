@@ -338,7 +338,7 @@ export function SupportWidget({
                     rows={2}
                     maxLength={1000}
                     required
-                    placeholder="결제·후원 이용 문의 또는 GiveSign 도입 상담 내용을 입력해 주세요"
+                    placeholder="결제·후원 이용 문의 또는 기브싸인 도입 상담 내용을 입력해 주세요"
                     className="min-h-[44px] flex-1 resize-none rounded-xl border border-ink-200 px-3 py-2.5 text-[13px] leading-relaxed outline-none focus:border-brand-400"
                   />
                   <div className="flex flex-col gap-1.5">

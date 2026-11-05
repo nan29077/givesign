@@ -39,6 +39,7 @@ export function WebChargePinPanel({
   paymentMock = false,
   campaigns = [],
   defaultCampaignId = '',
+  smsAvailable = true,
 }: {
   merchantId: string;
   merchantName: string;
@@ -51,6 +52,8 @@ export function WebChargePinPanel({
   /** 모금 중 캠페인. 비어 있으면 선택 UI 를 숨긴다. */
   campaigns?: { id: string; title: string }[];
   defaultCampaignId?: string;
+  /** 기관에 후원 문자 번호가 배정되어 있는지. 하단 안내 문구에만 쓴다. */
+  smsAvailable?: boolean;
 }) {
   const min = BigInt(minAmount);
   const max = BigInt(maxAmount);
@@ -129,7 +132,8 @@ export function WebChargePinPanel({
     () => (view.expiresAt ? new Date(view.expiresAt).getTime() : 0),
     [view.expiresAt],
   );
-  const [remainMs, setRemainMs] = React.useState(0);
+  // null = 아직 첫 계산 전. 0 으로 시작하면 첫 tick 전 한 프레임 동안 "유효시간 종료" 가 깜빡인다.
+  const [remainMs, setRemainMs] = React.useState<number | null>(null);
   const waiting = phase === 'waiting';
 
   React.useEffect(() => {
@@ -156,9 +160,9 @@ export function WebChargePinPanel({
     };
   }, [waiting]);
 
-  const expired = waiting && expiresAtMs > 0 && remainMs <= 0;
-  const mm = String(Math.floor(remainMs / 60000)).padStart(2, '0');
-  const ss = String(Math.floor((remainMs % 60000) / 1000)).padStart(2, '0');
+  const expired = waiting && expiresAtMs > 0 && remainMs !== null && remainMs <= 0;
+  const mm = remainMs === null ? '--' : String(Math.floor(remainMs / 60000)).padStart(2, '0');
+  const ss = remainMs === null ? '--' : String(Math.floor((remainMs % 60000) / 1000)).padStart(2, '0');
 
   function restart() {
     setMessage('');
@@ -191,31 +195,34 @@ export function WebChargePinPanel({
         <div>
           <button type="button" onClick={() => setStarted(true)} className={ctaClass}>
             <MessageSquare size={18} strokeWidth={1.7} />
-            문자후원하기
+            웹으로 후원하기
           </button>
           <p className="mt-2.5 text-center text-[11.5px] leading-relaxed text-ink-400">
-            금액과 메모를 고르면 결제 PIN 입력 링크를 문자로 보내드립니다. PIN 을 입력하면 결제가 완료되고,
-            사회복지기관에 후원이 반영됩니다.
+            금액과 메모를 고르면 결제 PIN 입력 링크를 문자로 보내드립니다. PIN 을 입력하면 출금이 완료되고,
+            기관에 후원이 반영됩니다.
           </p>
         </div>
       ) : (
         <>
           {/* 단계 표시 */}
-          <div className="mb-4 flex items-center gap-1.5">
+          <div className="mb-4 flex min-w-0 items-center gap-1.5" aria-label="후원 진행 단계">
             {(['금액·메시지', '번호 입력', 'PIN 입력', '결제 완료'] as const).map((label, i) => {
               const idx =
                 phase === 'compose' ? 0 : phase === 'done' ? 3 : phase === 'waiting' ? 2 : 1;
               const on = i <= idx;
+              const current = i === idx;
               return (
                 <React.Fragment key={label}>
                   {i > 0 ? <span className={cx('h-px flex-1', on ? 'bg-brand-400' : 'bg-ink-100')} /> : null}
                   <span
+                    aria-current={current ? 'step' : undefined}
                     className={cx(
-                      'rounded-full px-2 py-1 text-[11px] font-bold',
+                      'shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-bold',
                       on ? 'bg-brand-100 text-brand-800' : 'bg-ink-50 text-ink-300',
                     )}
                   >
-                    {i + 1}. {label}
+                    {i + 1}
+                    <span className={cx(current ? 'inline' : 'sr-only sm:not-sr-only sm:inline')}>. {label}</span>
                   </span>
                 </React.Fragment>
               );
@@ -261,18 +268,18 @@ export function WebChargePinPanel({
                   </button> : null}
                 </div>
                 {amountMode === 'custom' ? (
-                  <div className="mt-2.5 flex items-center gap-2">
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
                     <input
                       inputMode="numeric"
                       value={customAmount}
                       onChange={(e) => setCustomAmount(e.target.value.replace(/[^\d]/g, ''))}
                       placeholder={`${minAmount} ~ ${maxAmount}`}
                       aria-label="직접 입력 결제 금액"
-                      className={cx(inputClass, 'w-44 text-right font-bold tabular-nums')}
+                      className={cx(inputClass, 'w-40 min-w-0 flex-1 text-right font-bold tabular-nums sm:w-44 sm:flex-none')}
                     />
                     <span className="text-[14px] font-bold text-ink-700">원</span>
                     {!amountValid && customAmount ? (
-                      <span className="text-[12px] font-semibold text-danger-500">
+                      <span className="basis-full text-[12px] font-semibold text-danger-500">
                         {formatWon(min)} ~ {formatWon(max)} 사이로 입력해 주세요.
                       </span>
                     ) : null}
@@ -303,7 +310,7 @@ export function WebChargePinPanel({
                   onChange={(e) => setMessage(e.target.value)}
                   rows={3}
                   maxLength={200}
-                  placeholder={`${merchantName} 님에게 남길 메모 (200자 이내). 후원 내역에 함께 저장됩니다.`}
+                  placeholder={`${merchantName}에 남길 메모 (200자 이내). 후원 내역에 함께 저장됩니다.`}
                   className="mt-2 w-full resize-none rounded-xl border border-ink-200 px-3.5 py-3 text-[14px] leading-relaxed outline-none transition-colors focus:border-brand-400"
                 />
                 <label className="mt-2 flex cursor-pointer items-center gap-2 text-[13px] text-ink-700">
@@ -345,7 +352,7 @@ export function WebChargePinPanel({
 
                 <div className="rounded-xl bg-ink-50 px-4 py-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-ink-500">결제 금액</span>
+                    <span className="text-[13px] font-semibold text-ink-500">후원 금액</span>
                     <span className="text-[20px] font-extrabold tracking-tight text-brand-700">
                       {amountValid && effectiveAmount !== null ? formatWon(effectiveAmount) : '-'}
                     </span>
@@ -477,7 +484,7 @@ export function WebChargePinPanel({
               <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-100 text-brand-700">
                 <Check size={26} strokeWidth={1.7} />
               </span>
-              <p className="text-[16px] font-extrabold text-ink-900">결제가 완료되었습니다</p>
+              <p className="text-[16px] font-extrabold text-ink-900">후원이 완료되었습니다</p>
               <p className="text-[13px] leading-relaxed text-ink-500">
                 {view.message}
                 {view.transactionNo ? (
@@ -497,7 +504,7 @@ export function WebChargePinPanel({
           {/* 4-1. 실패·만료 */}
           {phase === 'failed' ? (
             <div className="space-y-3">
-              <Notice tone="warning" title="결제가 완료되지 않았습니다">
+              <Notice tone="warning" title="후원이 완료되지 않았습니다">
                 {view.message}
               </Notice>
               <button type="button" onClick={restart} className={ctaClass}>
@@ -508,10 +515,13 @@ export function WebChargePinPanel({
         </>
       )}
 
-      <p className="mt-4 flex items-center justify-center gap-1.5 border-t border-ink-100 pt-3 text-[11.5px] text-ink-400">
-        <Smartphone size={13} strokeWidth={1.8} />
-        휴대전화에서는 문자후원하기 버튼 한 번으로 더 간단하게 결제할 수 있습니다.
-      </p>
+      {/* PC 전용 안내. 휴대폰에서는 같은 화면 위쪽에 문자후원 영역이 이미 있다. */}
+      {smsAvailable ? (
+        <p className="mt-4 hidden items-center justify-center gap-1.5 border-t border-ink-100 pt-3 text-center text-[11.5px] text-ink-400 sm:flex">
+          <Smartphone size={13} strokeWidth={1.8} className="shrink-0" />
+          휴대전화에서는 후원 문자 번호로 문자 한 통을 보내 더 간단하게 후원할 수 있습니다.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -1,18 +1,16 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { formatMoNumber } from '@/lib/mo-number';
 import Link from 'next/link';
 import {
   MessageSquare, CreditCard, ShieldCheck, CircleAlert,
-  Gauge, Flag, Phone, BellRing, Smartphone,
+  Gauge, Flag, Phone, BellRing, Smartphone, MonitorSmartphone,
 } from 'lucide-react';
-import { MerchantCodeForm } from '@/components/merchant-code-form';
 import { CopyButton } from '@/components/public/copy-button';
 import { WebChargePanel } from '@/components/public/web-charge-panel';
 import { WebChargePinPanel } from '@/components/public/web-charge-pin-panel';
-import { openCampaigns } from '@/server/services/fundraising';
-import { defaultBannerFor } from '@/lib/banners';
-import { maskDisplayName } from '@/components/public/mask';
-import { Logo } from '@/components/brand/logo';
+import { openCampaigns, recentDonors } from '@/server/services/fundraising';
+import { resolveChargeBanner } from '@/lib/banners';
 import { ProfileAvatar } from '@/components/profile/generated-avatar';
 import { LinkButton } from '@/components/ui';
 import { normalizeMerchantCode } from '@/lib/id';
@@ -28,22 +26,17 @@ import { resolveWebChargeChannel } from '@/server/services/web-charge';
 export const dynamic = 'force-dynamic';
 
 /**
- * 사회복지기관 전용 후원 페이지.
+ * 기관 문자후원 페이지 (`/c/[code]`, 후원페이지 `/donate/[code]` 의 호환 경로).
  *
- * 메인 서비스(PublicShell)의 하단 탭·우측 메뉴를 쓰지 않는 완전히 독립된 페이지다.
- * 사회복지기관 안내 페이지에 붙는 "사회복지기관 자신의 링크"로 보여야 하므로
- *  - 상단은 사회복지기관 아이덴티티(아바타·이름·서비스)가 차지하고
+ * 메인 서비스(PublicShell)의 하단 탭·우측 메뉴를 쓰지 않는 독립 페이지다.
+ *  - 상단은 기관 아이덴티티(아바타·이름·서비스)가 차지하고
  *  - 기브싸인 브랜드는 하단 풋터에 서비스 표기로만 남긴다.
- *  - 모바일에서는 하단 고정 CTA(문자 보내기)가 탭바를 대신한다.
+ *  - 모바일: 문자후원(번호·문자 보내기)이 먼저, 그 아래 웹 후원(PIN) 패널(`#web`).
+ *    후원페이지의 "웹 후원" 버튼은 `#web` 으로 바로 닿는다(점검 F H-1).
+ *  - PC: 웹 후원 패널이 먼저, 그 아래 문자 번호 안내.
  */
 
 type Params = { params: Promise<{ code: string }>; searchParams?: Promise<{ campaign?: string }> };
-
-/**
- * MO 결제번호 표시용 서식. DB 에는 하이픈 없이 저장하므로 화면에서만 끊어 보여 준다.
- * sms: 링크와 복사 값은 원본(숫자만)을 그대로 쓴다.
- */
-
 
 /**
  * 로그인한 방문자의 후원자 프로필. 없으면 null.
@@ -69,18 +62,18 @@ async function findMerchant(rawCode: string) {
     where: {
       code,
       status: 'APPROVED',
-      // 계정 자체가 정지·탈퇴된 사회복지기관의 후원 페이지는 닫아야 한다.
-      // merchantProfile.status 만 보면 User 를 SUSPENDED 로 제재해도 샵이 계속 열려
-      // 결제를 받고 정지 계정에 돈이 계속 쌓인다.
-      user: { status: 'ACTIVE' },
+      // 계정 자체가 정지·탈퇴된 기관의 후원 페이지는 닫아야 한다.
+      // merchantProfile.status 만 보면 User 를 SUSPENDED 로 제재해도 페이지가 계속 열려
+      // 정지 계정에 후원이 계속 쌓인다. 탈퇴(deletedAt)도 /donate 와 같은 기준으로 막는다.
+      user: { status: 'ACTIVE', deletedAt: null },
     },
-    // PostgreSQL 은 행 순서를 보장하지 않아, 번호가 2개 이상 배정된 사회복지기관은
+    // PostgreSQL 은 행 순서를 보장하지 않아, 번호가 2개 이상 배정된 기관은
     // 새로고침마다 다른 번호가 표시될 수 있다. 다른 화면과 동일하게 assignedAt 내림차순으로 고정한다.
     include: {
       user: { select: { avatarIndex: true } },
       moRoutes: { where: { status: 'ASSIGNED' }, orderBy: { assignedAt: 'desc' } },
       chargeProducts: {
-        // PC 결제 패널은 금액 칩만 그리고 createWebCharge 도 amount 만 받는다.
+        // 웹 후원 패널은 금액 칩만 그리고 createWebCharge 도 amount 만 받는다.
         // 실물 상품을 여기 노출하면 배송지·배송비 없이 결제되어 보낼 주소가 없는 주문이 생긴다.
         // 실물 주문은 문자로 받은 /r/[token] 흐름(배송지 입력 포함)에서만 받는다.
         where: { active: true, archivedAt: null, kind: 'DIGITAL' },
@@ -99,7 +92,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   }
   return {
     title: `${merchant.displayName} 문자후원`,
-    description: `${merchant.displayName} 님에게 문자 한 통으로 후원하세요. 후원 금액은 문자를 보낸 뒤 고릅니다.`,
+    description: `${merchant.displayName}에 문자 한 통으로 후원하세요. 후원 금액은 문자를 보낸 뒤 고릅니다.`,
     robots: { index: false, follow: false },
   };
 }
@@ -109,22 +102,17 @@ export default async function MerchantChargePage({ params, searchParams }: Param
   const sp = (await searchParams) ?? {};
   const merchant = await findMerchant(code);
 
-  if (!merchant) return <NotFoundView />;
+  // 미존재·미승인·정지·탈퇴 기관은 404 상태로 돌려준다(같은 폴더 not-found.tsx 가 안내 화면을 그린다).
+  if (!merchant) notFound();
 
-  const [policy, charges] = await Promise.all([
+  const [policy, donors] = await Promise.all([
     resolvePolicy(merchant.id),
-    prisma.charge.findMany({
-      where: {
-        merchantId: merchant.id,
-        status: { in: ['BROADCASTED', 'SETTLEMENT_PENDING', 'PARTIAL_DELIVERY_FAILED', 'SETTLED'] },
-      },
-      orderBy: { paidAt: 'desc' },
-      take: 10,
-      select: { id: true, displayName: true, amount: true, message: true, paidAt: true, anonymous: true },
-    }),
+    // 공개 최근 후원: 결제 성공(PAID_STATUSES)·실후원(isTest=false)·결제 시각 있는 건만.
+    // 후원페이지(/donate)와 같은 함수를 써서 두 화면 기준이 갈라지지 않게 한다(점검 F H-3).
+    recentDonors(merchant.id, 10),
   ]);
 
-  // 허용 범위 = 플랫폼 정책 ∩ 사회복지기관 설정 (결제 시 checkLimits 가 같은 교집합으로 판정한다).
+  // 허용 범위 = 플랫폼 정책 ∩ 기관 설정 (결제 시 checkLimits 가 같은 교집합으로 판정한다).
   // 정책 범위만 보여 주면 본인인증까지 마친 뒤 금액 범위 오류로 거절된다.
   const effMin = merchant.minAmount > policy.minAmount ? merchant.minAmount : policy.minAmount;
   const effMax = merchant.maxAmount < policy.maxAmount ? merchant.maxAmount : policy.maxAmount;
@@ -139,9 +127,9 @@ export default async function MerchantChargePage({ params, searchParams }: Param
   const campaigns = openList.map((c) => ({ id: c.id, title: c.title }));
   const defaultCampaignId = campaigns.some((c) => c.id === sp.campaign) ? sp.campaign! : '';
   const defaultCampaign = openList.find((c) => c.id === defaultCampaignId) ?? null;
-  // 후원자가 고를 수 있는 후원 항목. 문자·PC 모두 같은 목록을 쓴다.
+  // 후원자가 고를 수 있는 후원 항목. 문자·웹 모두 같은 목록을 쓴다.
   const products = merchant.chargeProducts.map((p) => ({ id: p.id, name: p.name, amount: p.amount.toString() }));
-  const bannerUrl = merchant.bannerUrl ?? defaultBannerFor(merchant.id);
+  const bannerUrl = resolveChargeBanner(merchant.id, merchant.bannerUrl);
 
   // 결제 연동이 mock 이면 결제 화면에 반드시 표시한다 (가짜 성공 처리 금지 원칙)
   let paymentMock = true;
@@ -160,14 +148,13 @@ export default async function MerchantChargePage({ params, searchParams }: Param
 
   return (
     <div className="min-h-dvh bg-[#f7f5ef]">
-      {/* ── 사회복지기관 히어로 ─────────────────────────────────────────── */}
+      {/* ── 기관 히어로 ─────────────────────────────────────────── */}
       <header className="relative isolate overflow-hidden bg-ink-900 pb-24 pt-10">
-        {/* 사회복지기관 배너 (미설정 시 기본 배너 5종 중 사회복지기관별 고정 적용) */}
+        {/* 기관 배너 (미설정 시 기본 배너 5종 중 기관별 고정 적용, 프리셋 WebP) */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={bannerUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-70" />
+        <img src={bannerUrl} alt="" decoding="async" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-70" />
         <div aria-hidden className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(23,22,26,0.4)_0%,rgba(23,22,26,0.66)_70%,rgba(23,22,26,0.9)_100%)]" />
         <div className="relative mx-auto w-full max-w-[560px] px-5 text-center">
-          {/* 아바타 */}
           <div className="mx-auto w-fit">
             <ProfileAvatar
               seed={merchant.code}
@@ -195,20 +182,93 @@ export default async function MerchantChargePage({ params, searchParams }: Param
 
       {/* ── 본문 ─────────────────────────────────────────────────────── */}
       <main className="relative z-10 mx-auto w-full max-w-[560px] px-4 pb-32 sm:pb-16">
-        {/* 결제 카드 (히어로에 겹침) */}
+        {/* 후원 카드 (히어로에 겹침) */}
         <section className="-mt-16">
           {/*
-            PC 웹 결제(내통장결제)은 MO 수신번호가 전혀 필요 없다.
-            예전에는 번호 미배정 시 카드 전체를 안내문으로 갈아끼워 웹 결제까지 막았는데,
-            그러면 번호를 기다리는 신규 사회복지기관은 PC 결제도 하나도 받지 못했다.
-            그래서 PC 패널은 번호 배정 여부와 무관하게 항상 노출하고,
-            번호가 필요한 모바일 문자후원 영역만 조건부로 바꾼다.
+            웹 후원(PIN)은 MO 수신번호가 필요 없어 번호 배정 여부와 무관하게 항상 노출한다.
+            예전에는 웹 패널이 sm 이상에서만 보여 휴대폰에서는 웹 후원이 불가능했다(점검 F H-1).
+            순서: 모바일 = 문자후원 → 웹 후원, PC = 웹 후원 → 문자 번호 안내.
           */}
-          <div className="rounded-[26px] border border-brand-200/60 bg-white p-6 shadow-[0_24px_60px_rgba(23,22,26,0.14)]">
-            {/* PC: 메모 + 금액 선택 웹 결제 (내통장결제 즉시 결제) */}
-            <div className="hidden sm:block">
-              <p className="mb-4 text-center text-[16px] font-black tracking-[-0.02em] text-ink-900">
-                {merchant.displayName} 님에게 후원하기
+          <div className="flex flex-col rounded-[26px] border border-brand-200/60 bg-white p-5 shadow-[0_24px_60px_rgba(23,22,26,0.14)] sm:p-6">
+            {/* 모바일: 문자후원 (문자 1통 = 금액 선택 링크) */}
+            {route ? (
+              <div className="order-1 sm:hidden">
+                <p className="flex items-center justify-center gap-1.5 text-[12px] font-bold text-brand-700">
+                  <Phone size={14} strokeWidth={1.8} />
+                  {merchant.displayName} 후원 문자 번호
+                </p>
+                <p className="mt-2 text-center font-mono text-[32px] font-extrabold leading-none tracking-tight text-ink-900">
+                  {moNumberLabel}
+                </p>
+                <div className="mt-3 flex justify-center">
+                  <CopyButton value={route.phoneNumber} label="번호 복사" />
+                </div>
+
+                <div className="mt-5 rounded-xl bg-ink-50 px-4 py-3">
+                  <p className="text-[13px] font-semibold text-ink-500">후원 금액</p>
+                  {products.length === 0 ? (
+                    <p className="mt-1 text-[13px] font-bold text-ink-900">
+                      {merchant.allowCustomAmount ? '문자를 보낸 뒤 링크에서 직접 입력합니다.' : '준비 중입니다.'}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {products.map((p) => (
+                          <span
+                            key={p.id}
+                            className="rounded-full bg-white px-2.5 py-1 text-[12px] font-bold text-ink-800 shadow-sm"
+                          >
+                            {p.name}
+                          </span>
+                        ))}
+                        {merchant.allowCustomAmount ? (
+                          <span className="rounded-full bg-white px-2.5 py-1 text-[12px] font-bold text-ink-500 shadow-sm">
+                            직접 입력
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-400">
+                        문자를 보내면 받은 링크에서 위 금액 중 하나를 고릅니다.
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <a
+                  href={smsHref ?? undefined}
+                  className="mt-4 inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-brand-400 text-[16px] font-extrabold text-ink-900 shadow-[0_8px_20px_rgba(237,166,0,0.28)] transition-colors hover:bg-brand-500 active:bg-brand-600"
+                >
+                  <MessageSquare size={18} strokeWidth={1.7} />
+                  문자후원하기
+                </a>
+                <p className="mt-2.5 text-center text-[11.5px] leading-relaxed text-ink-400">
+                  문자 앱이 열리며 후원 문자 번호가 자동 입력됩니다. 문자를 보내면 후원 금액을 고르는 링크가 오고,{' '}
+                  금액을 고른 뒤 PIN 을 입력하면 등록된 계좌에서 출금됩니다.
+                </p>
+              </div>
+            ) : (
+              /* 번호 미배정: 문자후원 영역만 안내로 대체한다. 아래 웹 후원은 그대로 동작한다. */
+              <div className="order-1 text-center sm:hidden">
+                <span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-warning-50 text-warning-500">
+                  <CircleAlert size={22} strokeWidth={1.7} />
+                </span>
+                <p className="mt-3 text-[15px] font-extrabold text-ink-900">후원 문자 번호가 아직 배정되지 않았습니다</p>
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
+                  아직 문자 수신 번호가 배정되지 않아 문자후원을 접수할 수 없습니다. 번호가 배정되면 이 페이지에
+                  표시됩니다. 아래에서 웹으로 후원하실 수 있습니다.
+                </p>
+              </div>
+            )}
+
+            {/* 웹 후원 (PIN 인증). 후원페이지의 "웹 후원" 버튼이 #web 으로 바로 닿는다. */}
+            <div
+              id="web"
+              className="order-2 mt-6 scroll-mt-4 border-t border-ink-100 pt-6 sm:order-1 sm:mt-0 sm:border-t-0 sm:pt-0"
+            >
+              <p className="mb-4 flex items-center justify-center gap-1.5 text-center text-[16px] font-black tracking-[-0.02em] text-ink-900">
+                <MonitorSmartphone size={18} strokeWidth={1.7} className="text-brand-700 sm:hidden" />
+                <span className="sm:hidden">웹으로 후원하기</span>
+                <span className="hidden sm:inline">{merchant.displayName} 후원하기</span>
               </p>
               {/* 기본은 PIN 인증 흐름이다. 구 즉시결제 화면은 되돌림 플래그를 켰을 때만 쓴다. */}
               {resolveWebChargeChannel() === 'PIN' ? (
@@ -222,6 +282,7 @@ export default async function MerchantChargePage({ params, searchParams }: Param
                   paymentMock={paymentMock}
                   campaigns={campaigns}
                   defaultCampaignId={defaultCampaignId}
+                  smsAvailable={Boolean(route)}
                 />
               ) : (
                 <WebChargePanel
@@ -236,14 +297,14 @@ export default async function MerchantChargePage({ params, searchParams }: Param
               )}
             </div>
 
-            {/* PC: 문자 결제번호 안내. 데스크톱에서는 문자를 보낼 수 없으므로 번호만 안내한다. */}
+            {/* PC: 문자 번호 안내. 데스크톱에서는 문자를 보낼 수 없으므로 번호만 안내한다. */}
             {route ? (
-              <div className="mt-5 hidden rounded-2xl border border-brand-200/70 bg-brand-50/60 px-4 py-3.5 sm:block">
+              <div className="order-3 mt-5 hidden rounded-2xl border border-brand-200/70 bg-brand-50/60 px-4 py-3.5 sm:block">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="flex items-center gap-1.5 text-[12px] font-bold text-brand-700">
                       <Phone size={14} strokeWidth={1.8} />
-                      문자 결제번호
+                      후원 문자 번호
                     </p>
                     <p className="mt-1 font-mono text-[22px] font-extrabold leading-none tracking-tight text-ink-900">
                       {moNumberLabel}
@@ -252,81 +313,10 @@ export default async function MerchantChargePage({ params, searchParams }: Param
                   <CopyButton value={route.phoneNumber} label="번호 복사" />
                 </div>
                 <p className="mt-2.5 text-[11.5px] leading-relaxed text-ink-500">
-                  휴대폰에서 이 번호로 문자를 보내도 {merchant.displayName} 님에게 결제됩니다.
+                  휴대폰에서 이 번호로 문자를 보내 후원할 수도 있습니다.
                 </p>
               </div>
             ) : null}
-
-            {route ? (
-              /* 모바일: 문자후원 (문자 1통 = 사회복지기관 설정 금액) */
-              <div className="sm:hidden">
-              <p className="flex items-center justify-center gap-1.5 text-[12px] font-bold text-brand-700">
-                <Phone size={14} strokeWidth={1.8} />
-                {merchant.displayName} 전용 결제 수신번호
-              </p>
-              <p className="mt-2 text-center font-mono text-[34px] font-extrabold leading-none tracking-tight text-ink-900">
-                {moNumberLabel}
-              </p>
-              <div className="mt-3 flex justify-center">
-                <CopyButton value={route.phoneNumber} label="번호 복사" />
-              </div>
-
-
-              <div className="mt-5 rounded-xl bg-ink-50 px-4 py-3">
-                <p className="text-[13px] font-semibold text-ink-500">후원 금액</p>
-                {products.length === 0 ? (
-                  <p className="mt-1 text-[13px] font-bold text-ink-900">
-                    {merchant.allowCustomAmount ? '문자를 보낸 뒤 링크에서 직접 입력합니다.' : '준비 중입니다.'}
-                  </p>
-                ) : (
-                  <>
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {products.map((p) => (
-                        <span
-                          key={p.id}
-                          className="rounded-full bg-white px-2.5 py-1 text-[12px] font-bold text-ink-800 shadow-sm"
-                        >
-                          {p.name}
-                        </span>
-                      ))}
-                      {merchant.allowCustomAmount ? (
-                        <span className="rounded-full bg-white px-2.5 py-1 text-[12px] font-bold text-ink-500 shadow-sm">
-                          직접 입력
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-2 text-[11.5px] leading-relaxed text-ink-400">
-                      문자를 보내면 받은 링크에서 위 금액 중 하나를 고릅니다.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              <a
-                href={smsHref ?? undefined}
-                className="mt-4 inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-brand-400 text-[16px] font-extrabold text-ink-900 shadow-[0_8px_20px_rgba(237,166,0,0.28)] transition-colors hover:bg-brand-500 active:bg-brand-600"
-              >
-                <MessageSquare size={18} strokeWidth={1.7} />
-                문자후원하기
-              </a>
-              <p className="mt-2.5 text-center text-[11.5px] leading-relaxed text-ink-400">
-                문자 앱이 열리며 결제 수신번호가 자동 입력됩니다. 문자를 보내면 후원 금액을 고르는 링크가 오고,{' '}
-                금액을 고른 뒤 PIN 을 입력하면 등록된 내통장결제 계좌에서 결제됩니다.
-              </p>
-              </div>
-            ) : (
-              /* 번호 미배정: 문자후원 영역만 안내로 대체한다. 위 PC 웹 결제는 그대로 동작한다. */
-              <div className="sm:hidden text-center">
-                <span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-warning-50 text-warning-500">
-                  <CircleAlert size={22} strokeWidth={1.7} />
-                </span>
-                <p className="mt-3 text-[15px] font-extrabold text-ink-900">결제 수신번호가 아직 배정되지 않았습니다</p>
-                <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
-                  아직 문자 수신 번호가 배정되지 않아 문자후원을 접수할 수 없습니다. 번호가 배정되면 이 페이지에
-                  표시됩니다. PC 에서는 지금도 결제하실 수 있습니다.
-                </p>
-              </div>
-            )}
           </div>
         </section>
 
@@ -346,8 +336,8 @@ export default async function MerchantChargePage({ params, searchParams }: Param
               </p>
               <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-700">
                 {viewerPayer.displayName
-                  ? '결제하면 이 이름으로 후원 내역과 사회복지기관 화면에 표시됩니다.'
-                  : `닉네임을 정하지 않아 번호 끝 4자리(${displayPayerName(defaultPayerName(viewerPayer.phoneMasked))})로 표시됩니다. 닉네임을 정하면 사회복지기관이 누가 보냈는지 알아볼 수 있습니다.`}
+                  ? '후원하면 이 이름으로 후원 내역과 기관 화면에 표시됩니다.'
+                  : `닉네임을 정하지 않아 번호 끝 4자리(${displayPayerName(defaultPayerName(viewerPayer.phoneMasked))})로 표시됩니다. 닉네임을 정하면 기관이 누가 보냈는지 알아볼 수 있습니다.`}
               </p>
               <Link
                 href="/my/account#nickname"
@@ -360,28 +350,63 @@ export default async function MerchantChargePage({ params, searchParams }: Param
         ) : null}
 
         {/* 첫 문자 안내 (모바일 문자후원) */}
-        <section className="mt-6 sm:hidden">
-          <div className="rounded-2xl border border-warning-500/30 bg-warning-50 px-4 py-3.5">
-            <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-900">
-              <CircleAlert size={15} strokeWidth={1.8} className="shrink-0 text-warning-500" />
-              처음 보내는 문자는 결제되지 않습니다
-            </p>
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-700">
-              최초 문자는 계좌 등록 안내만 발송됩니다. 안내 문자의 링크에서 계좌 등록과 이용 동의를 마친 뒤 다시
-              문자를 보내주세요.
-            </p>
-          </div>
-        </section>
+        {route ? (
+          <section className="mt-6 sm:hidden">
+            <div className="rounded-2xl border border-warning-500/30 bg-warning-50 px-4 py-3.5">
+              <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-900">
+                <CircleAlert size={15} strokeWidth={1.8} className="shrink-0 text-warning-500" />
+                처음 보내는 문자는 후원되지 않습니다
+              </p>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-700">
+                최초 문자는 계좌 등록 안내만 발송됩니다. 안내 문자의 링크에서 계좌 등록과 이용 동의를 마친 뒤 다시
+                문자를 보내주세요.
+              </p>
+            </div>
+          </section>
+        ) : null}
 
-        {/* 결제 방법 — PC(웹 결제) */}
-        <section className="mt-8 hidden sm:block">
-          <h2 className="px-1 text-[15px] font-black tracking-[-0.02em] text-ink-900">결제 방법</h2>
+        {/* 후원 방법 — 문자후원 (모바일, 번호가 있을 때) */}
+        {route ? (
+          <section className="mt-8 sm:hidden">
+            <h2 className="px-1 text-[15px] font-black tracking-[-0.02em] text-ink-900">문자 후원 방법</h2>
+            <div className="mt-2.5 space-y-2.5">
+              <Step
+                no="1"
+                icon={<CreditCard size={17} strokeWidth={1.7} />}
+                title="계좌를 1회 등록합니다"
+                body="첫 문자를 보내면 오는 안내 링크에서 본인 명의 계좌를 등록합니다. 계좌번호 원문은 저장하지 않고 은행명과 끝 4자리만 보관합니다."
+              />
+              <Step
+                no="2"
+                icon={<MessageSquare size={17} strokeWidth={1.7} />}
+                title="후원 문자를 보냅니다"
+                body="위 번호로 문자를 보내면 후원 금액을 고를 수 있는 링크가 도착합니다."
+              />
+              <Step
+                no="3"
+                icon={<ShieldCheck size={17} strokeWidth={1.7} />}
+                title="PIN 을 입력하면 출금됩니다"
+                body="문자로 받은 링크에서 결제 PIN 을 입력하면 등록한 계좌에서 후원 금액이 출금됩니다. PIN 을 입력하지 않으면 출금되지 않습니다."
+              />
+              <Step
+                no="4"
+                icon={<BellRing size={17} strokeWidth={1.7} />}
+                title="후원이 반영됩니다"
+                body="출금이 완료되면 기관에 후원이 반영되고, 완료 문자를 받습니다. 출금되지 않은 요청은 반영되지 않습니다."
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {/* 후원 방법 — 웹 후원 (모바일·PC 공통) */}
+        <section className="mt-8">
+          <h2 className="px-1 text-[15px] font-black tracking-[-0.02em] text-ink-900">웹 후원 방법</h2>
           <div className="mt-2.5 space-y-2.5">
             <Step
               no="1"
               icon={<MessageSquare size={17} strokeWidth={1.7} />}
               title="후원 금액을 고릅니다"
-              body="문자후원하기를 누르면 후원 금액(직접 입력 포함)과 후원 내역에 남길 메모를 고를 수 있습니다."
+              body="웹 후원 패널에서 후원 금액(직접 입력 포함)과 후원 내역에 남길 메모를 고를 수 있습니다."
             />
             <Step
               no="2"
@@ -392,82 +417,55 @@ export default async function MerchantChargePage({ params, searchParams }: Param
             <Step
               no="3"
               icon={<CreditCard size={17} strokeWidth={1.7} />}
-              title="PIN 을 입력하면 결제됩니다"
+              title="PIN 을 입력하면 출금됩니다"
               body="문자로 받은 링크에서 결제 PIN 을 입력하면 등록된 계좌에서 선택한 금액이 출금됩니다. 유효시간 안에 입력하지 않으면 자동 취소됩니다."
             />
             <Step
               no="4"
               icon={<ShieldCheck size={17} strokeWidth={1.7} />}
               title="후원이 반영됩니다"
-              body="결제가 완료되면 사회복지기관에 후원이 반영되고, 완료 문자를 받습니다. 결제되지 않은 요청은 반영되지 않습니다."
+              body="출금이 완료되면 기관에 후원이 반영되고, 완료 문자를 받습니다. 출금되지 않은 요청은 반영되지 않습니다."
             />
           </div>
         </section>
 
-        {/* 결제 방법 — 모바일(문자후원) */}
-        <section className="mt-8 sm:hidden">
-          <h2 className="px-1 text-[15px] font-black tracking-[-0.02em] text-ink-900">결제 방법</h2>
-          <div className="mt-2.5 space-y-2.5">
-            <Step
-              no="1"
-              icon={<CreditCard size={17} strokeWidth={1.7} />}
-              title="계좌를 1회 등록합니다"
-              body="첫 문자를 보내면 오는 안내 링크에서 본인 명의 계좌를 등록합니다. 계좌번호 원문은 저장하지 않고 은행명과 끝 4자리만 보관합니다."
-            />
-            <Step
-              no="2"
-              icon={<MessageSquare size={17} strokeWidth={1.7} />}
-              title="후원 문자를 보냅니다"
-              body="위 번호로 문자를 보내면 후원 금액을 고를 수 있는 링크가 도착합니다."
-            />
-            <Step
-              no="3"
-              icon={<ShieldCheck size={17} strokeWidth={1.7} />}
-              title="PIN 을 입력하면 결제됩니다"
-              body="문자로 받은 링크에서 결제 PIN 을 입력하면 등록한 계좌에서 결제 금액이 출금됩니다. PIN 을 입력하지 않으면 결제되지 않습니다."
-            />
-            <Step
-              no="4"
-              icon={<BellRing size={17} strokeWidth={1.7} />}
-              title="후원이 반영됩니다"
-              body="결제가 완료되면 사회복지기관에 후원이 반영되고, 완료 문자를 받습니다. 결제되지 않은 요청은 반영되지 않습니다."
-            />
-          </div>
-        </section>
-
-        {/* 최근 결제 */}
+        {/* 최근 후원 */}
         <section className="mt-8">
           <div className="flex items-end justify-between px-1">
-            <h2 className="text-[15px] font-black tracking-[-0.02em] text-ink-900">최근 결제</h2>
-            <span className="text-[11.5px] text-ink-400">결제 완료 건만 · 이름 일부 공개</span>
+            <h2 className="text-[15px] font-black tracking-[-0.02em] text-ink-900">최근 후원</h2>
+            <span className="text-[11.5px] text-ink-400">완료된 후원만 · 이름 일부 공개</span>
           </div>
-          {charges.length === 0 ? (
+          {donors.length === 0 ? (
             <div className="mt-2.5 rounded-2xl border border-dashed border-ink-200 bg-white/60 px-5 py-8 text-center">
-              <p className="text-[13.5px] font-bold text-ink-700">아직 표시할 결제가 없습니다</p>
-              <p className="mt-1 text-[12.5px] text-ink-400">첫 후원 문자를 보내보세요.</p>
+              <p className="text-[13.5px] font-bold text-ink-700">아직 후원이 없습니다</p>
+              <p className="mt-1 text-[12.5px] text-ink-400">첫 후원을 남겨 보세요.</p>
             </div>
           ) : (
             <div className="mt-2.5 space-y-2">
-              {charges.map((d) => (
-                <div key={d.id} className="rounded-2xl border border-ink-100 bg-white p-4">
+              {donors.map((d, i) => (
+                <div key={`${d.paidAt.getTime()}-${i}`} className="rounded-2xl border border-ink-100 bg-white p-4">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-100 text-[11px] font-black text-brand-800">
-                        {(d.anonymous ? '익' : (d.displayName || '이')).slice(0, 1)}
+                        {(d.name || '후').slice(0, 1)}
                       </span>
-                      <span className="truncate text-[13px] font-bold text-ink-900">
-                        {d.anonymous ? '익명' : maskDisplayName(d.displayName)}
-                      </span>
+                      <span className="truncate text-[13px] font-bold text-ink-900">{d.name}</span>
+                      {d.recurring ? (
+                        <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700">정기</span>
+                      ) : null}
                     </span>
                     <span className="shrink-0 text-[14px] font-extrabold tracking-tight text-brand-700">
                       {formatWon(d.amount)}
                     </span>
                   </div>
-                  {/* 익명 후원은 이름뿐 아니라 메시지도 숨긴다. 메시지 속 실명·호실 등으로 후원자가 특정될 수 있다. */}
-                  {d.message && !d.anonymous ? (
+                  {/* 익명 후원은 recentDonors 가 메시지를 비워 둔다(메시지 속 실명·호실로 특정될 수 있다). */}
+                  {d.message ? (
                     <p className="mt-1.5 break-words text-[13px] leading-relaxed text-ink-700">{d.message}</p>
                   ) : null}
-                  <p className="mt-1.5 text-[11.5px] text-ink-300">{formatKst(d.paidAt, false)}</p>
+                  <p className="mt-1.5 text-[11.5px] text-ink-300">
+                    {formatKst(d.paidAt, false)}
+                    {d.campaignTitle ? ` · ${d.campaignTitle}` : ''}
+                  </p>
                 </div>
               ))}
             </div>
@@ -482,8 +480,8 @@ export default async function MerchantChargePage({ params, searchParams }: Param
               이용 한도 안내
             </p>
             <ul className="mt-2 space-y-1.5 text-[12.5px] leading-relaxed text-ink-500">
-              <li>1일 {formatWon(policy.payerDailyLimit)} · 1개월 {formatWon(policy.payerMonthlyLimit)}까지 결제할 수 있습니다.</li>
-              <li>이 사회복지기관에는 1일 {formatWon(policy.perMerchantDailyLimit)}까지 결제할 수 있습니다.</li>
+              <li>1일 {formatWon(policy.payerDailyLimit)} · 1개월 {formatWon(policy.payerMonthlyLimit)}까지 후원할 수 있습니다.</li>
+              <li>이 기관에는 1일 {formatWon(policy.perMerchantDailyLimit)}까지 후원할 수 있습니다.</li>
               <li>{formatNumber(policy.velocityWindowSec)}초 내 {formatNumber(policy.velocityMaxCount)}건을 넘으면 잠시 대기해야 합니다.</li>
               <li>만 19세 미만은 이용할 수 없습니다.</li>
             </ul>
@@ -497,9 +495,9 @@ export default async function MerchantChargePage({ params, searchParams }: Param
               <Flag size={17} strokeWidth={1.7} />
             </span>
             <div>
-              <p className="text-[13.5px] font-bold text-ink-900">문제가 있나요</p>
+              <p className="text-[13.5px] font-bold text-ink-900">문제가 있나요?</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
-                부적절한 결제 유도, 결제 오류, 원치 않는 결제 노출은 고객센터로 신고해 주세요. 거래번호를 함께
+                부적절한 후원 유도, 출금 오류, 원치 않는 후원 내역 노출은 고객센터로 신고해 주세요. 거래번호를 함께
                 알려주시면 빠르게 확인할 수 있습니다.
               </p>
               <LinkButton href="/support" variant="secondary" size="sm" className="mt-2.5">
@@ -512,9 +510,9 @@ export default async function MerchantChargePage({ params, searchParams }: Param
         {/* 서비스 풋터 */}
         <footer className="mt-10 border-t border-ink-100 pt-6 text-center">
           <p className="text-[11.5px] leading-relaxed text-ink-400">
-            이 페이지는 <span className="font-bold text-ink-500">기브싸인 문자후원</span>로 운영됩니다.
+            이 페이지는 <span className="font-bold text-ink-500">기브싸인 문자후원</span>으로 운영됩니다.
             <br />
-            사회복지기관과 제휴한 문자 결제 서비스입니다.
+            사회복지기관과 제휴한 문자후원 서비스입니다.
           </p>
           <div className="mt-3 flex items-center justify-center gap-4 text-[12px] font-semibold text-ink-400">
             <Link href="/how-it-works" className="transition-colors hover:text-ink-900">이용방법</Link>
@@ -529,13 +527,14 @@ export default async function MerchantChargePage({ params, searchParams }: Param
       {/* ── 모바일 하단 고정 CTA (문자후원하기) ─────────────────────── */}
       {smsHref && route ? (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-100 bg-white/95 px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-3 backdrop-blur-xl sm:hidden">
-          <div className="mx-auto flex max-w-[560px] items-center gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-ink-400">후원 금액</p>
-              <p className="text-[16px] font-extrabold tracking-tight text-ink-900">
-                {products.length > 0 ? `${products.length}종` : '직접 입력'}
-              </p>
-            </div>
+          <div className="mx-auto flex max-w-[560px] items-center gap-2">
+            <a
+              href="#web"
+              className="inline-flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-2xl border border-ink-200 bg-white px-4 text-[14px] font-bold text-ink-700"
+            >
+              <MonitorSmartphone size={16} strokeWidth={1.7} />
+              웹 후원
+            </a>
             <a
               href={smsHref}
               className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-brand-400 text-[15px] font-extrabold text-ink-900 shadow-[0_8px_20px_rgba(237,166,0,0.28)] transition-colors hover:bg-brand-500 active:bg-brand-600"
@@ -546,7 +545,6 @@ export default async function MerchantChargePage({ params, searchParams }: Param
           </div>
         </div>
       ) : null}
-
     </div>
   );
 }
@@ -563,43 +561,6 @@ function Step({ no, icon, title, body }: { no: string; icon: React.ReactNode; ti
       <div>
         <p className="text-[13.5px] font-bold text-ink-900">{title}</p>
         <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-500">{body}</p>
-      </div>
-    </div>
-  );
-}
-
-function NotFoundView() {
-  return (
-    <div className="grid min-h-dvh place-items-center bg-[#f7f5ef] px-4 py-10">
-      <div className="w-full max-w-[440px]">
-        <div className="rounded-[26px] border border-ink-100 bg-white p-6 shadow-[0_24px_60px_rgba(23,22,26,0.1)]">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-warning-50 text-warning-500">
-            <CircleAlert size={20} strokeWidth={1.7} />
-          </span>
-          <h1 className="mt-3 text-[19px] font-extrabold leading-snug tracking-tight text-ink-900">
-            사회복지기관을 찾을 수 없습니다.
-          </h1>
-          <p className="mt-2 text-[13.5px] leading-relaxed text-ink-500">
-            사회복지기관 화면에 안내된 코드를 다시 확인해 주세요. 승인 전이거나 이용이 정지된
-            사회복지기관의 코드도 조회되지 않습니다.
-          </p>
-          <div className="mt-4">
-            <MerchantCodeForm autoFocus />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <LinkButton href="/" variant="secondary" size="md" className="w-full">
-              홈으로
-            </LinkButton>
-            <LinkButton href="/support" variant="secondary" size="md" className="w-full">
-              고객센터
-            </LinkButton>
-          </div>
-        </div>
-        <div className="mt-5 flex justify-center opacity-70">
-          <Link href="/" aria-label="기브싸인 홈으로">
-            <Logo compact />
-          </Link>
-        </div>
       </div>
     </div>
   );

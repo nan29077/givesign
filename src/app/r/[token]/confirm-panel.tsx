@@ -38,7 +38,9 @@ export function ConfirmPanel({
   payerSnsPlatform?: string;
 }) {
   const expiresAt = React.useMemo(() => new Date(expiresAtIso).getTime(), [expiresAtIso]);
-  const [remainMs, setRemainMs] = React.useState(() => Math.max(0, expiresAt - Date.now()));
+  // 서버 렌더와 하이드레이션 시각이 달라 Date.now() 로 초기값을 잡으면 mm:ss 텍스트가 어긋난다(점검 F).
+  // 마운트 전에는 null("--:--")로 두고 effect 에서 첫 tick 을 즉시 계산한다.
+  const [remainMs, setRemainMs] = React.useState<number | null>(null);
   const [pending, startTransition] = React.useTransition();
   const [result, setResult] = React.useState<ConfirmActionResult | null>(null);
   const submitted = React.useRef(false);
@@ -53,13 +55,15 @@ export function ConfirmPanel({
   const [nicknameSaved, setNicknameSaved] = React.useState(false);
 
   React.useEffect(() => {
-    const id = setInterval(() => setRemainMs(Math.max(0, expiresAt - Date.now())), 500);
+    const tick = () => setRemainMs(Math.max(0, expiresAt - Date.now()));
+    tick();
+    const id = setInterval(tick, 500);
     return () => clearInterval(id);
   }, [expiresAt]);
 
-  const expired = remainMs <= 0;
-  const mm = String(Math.floor(remainMs / 60000)).padStart(2, '0');
-  const ss = String(Math.floor((remainMs % 60000) / 1000)).padStart(2, '0');
+  const expired = remainMs !== null && remainMs <= 0;
+  const mm = remainMs === null ? '--' : String(Math.floor(remainMs / 60000)).padStart(2, '0');
+  const ss = remainMs === null ? '--' : String(Math.floor((remainMs % 60000) / 1000)).padStart(2, '0');
 
   const nameCheck = checkPayerName(nickname);
   const nameErrorDisplay = nickname.trim().length > 1 && !nameCheck.ok ? nameCheck.message : null;
@@ -88,7 +92,7 @@ export function ConfirmPanel({
       <Card>
         <div className="flex items-center gap-2 text-success-500">
           <CircleCheck size={20} strokeWidth={1.7} />
-          <p className="text-[16px] font-extrabold text-ink-900">결제가 완료되었습니다</p>
+          <h1 className="text-[16px] font-extrabold text-ink-900">후원이 완료되었습니다</h1>
         </div>
         <div className="mt-3">
           <DataRow label="사회복지기관" value={merchantName} />
@@ -113,7 +117,7 @@ export function ConfirmPanel({
       <Card>
         <div className="flex items-center gap-2 text-danger-500">
           <CircleX size={20} strokeWidth={1.7} />
-          <p className="text-[16px] font-extrabold text-ink-900">결제가 완료되지 않았습니다</p>
+          <h1 className="text-[16px] font-extrabold text-ink-900">후원이 완료되지 않았습니다</h1>
         </div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{result.message}</p>
         <div className="mt-3">
@@ -132,7 +136,7 @@ export function ConfirmPanel({
     <div className="space-y-3">
       <Card>
         <div className="flex items-center justify-between">
-          <p className="text-[13px] font-semibold text-ink-500">결제 확인</p>
+          <h1 className="text-[13px] font-semibold text-ink-500">후원 확인</h1>
           <span className="inline-flex items-center gap-1 rounded-md bg-ink-50 px-2 py-1 text-[12px] font-bold tabular-nums text-ink-700">
             <Clock size={14} strokeWidth={1.7} />
             {expired ? '00:00' : `${mm}:${ss}`}

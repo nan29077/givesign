@@ -59,20 +59,20 @@ function SignupAside() {
         <CardTitle>계정으로 할 수 있는 일</CardTitle>
         <ul className="mt-3 space-y-2 text-[13px] leading-relaxed text-ink-500">
           <li>후원 내역과 거래번호 확인</li>
-          <li>결제 승인·실패·환불 상태 조회</li>
+          <li>후원 완료·실패·환불 상태 조회</li>
           <li>등록 계좌 확인과 자동출금 동의 해지</li>
           <li>일일·월간 한도를 더 낮게 설정</li>
-          <li>사회복지기관별 결제 차단</li>
+          <li>기관별 후원 차단</li>
           <li>약관 동의 이력 확인</li>
         </ul>
       </Card>
       <Card>
-        <CardTitle>사회복지기관이신가요</CardTitle>
+        <CardTitle>사회복지기관이신가요?</CardTitle>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          결제 수신번호를 받으려면 사회복지기관 가입 신청이 필요합니다.
+          후원 문자 번호를 받으려면 기관 도입 신청이 필요합니다.
         </p>
         <LinkButton href="/merchant-apply" variant="secondary" size="md" className="mt-3 w-full">
-          사회복지기관 가입 신청
+          기관 도입 신청
         </LinkButton>
       </Card>
     </div>

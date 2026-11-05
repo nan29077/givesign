@@ -6,6 +6,8 @@ import { PublicShellClient, type ShellViewer } from './public-shell-client';
 import { SupportWidget } from '@/components/public/support-widget';
 import { isLegacyDonationContent } from '@/lib/public-content';
 import { getMainVisuals } from '@/server/services/visual-settings';
+import { currentServiceMode, testModeNotice } from '@/server/services/service-mode';
+import { readBusinessInfo } from '@/lib/business-info';
 
 /**
  * 공개 영역 레이아웃 (서버 래퍼).
@@ -61,9 +63,19 @@ export async function PublicShell({
   const jar = await cookies();
   const hasThread = Boolean(user) || Boolean(jar.get(INQUIRY_GUEST_COOKIE)?.value);
 
+  // 결제·문자가 실제로 처리되지 않는 환경에서만 푸터에 사실대로 알린다(점검 F H-2).
+  const testNotice = testModeNotice(currentServiceMode());
+  const business = readBusinessInfo();
+
   return (
     <>
-      <PublicShellClient aside={aside} viewer={viewer} marginUrl={mainVisual.activeUrl}>
+      <PublicShellClient
+        aside={aside}
+        viewer={viewer}
+        marginUrl={mainVisual.activeUrl}
+        testNotice={testNotice}
+        business={business}
+      >
         {children}
       </PublicShellClient>
       <SupportWidget faqs={faqs} loggedIn={Boolean(user)} hasThread={hasThread} />

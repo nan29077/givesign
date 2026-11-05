@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components/my/payer';
 import { prisma } from '@/server/db';
 import { Card, Checkbox, EmptyState, Field, Input, LinkButton, Notice, Select, Textarea } from '@/components/ui';
@@ -11,6 +10,7 @@ import { firstChargeDate, recurringAmountRange, recurringIsMock } from '@/server
 import { normalizeMerchantCode } from '@/lib/id';
 import { kstDateKey } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
+import { PickOrgNotice } from '@/components/my/pick-org-notice';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,9 +23,11 @@ const PRESETS = [10000, 20000, 30000, 50000, 100000];
 export default async function NewRecurringPage({ searchParams }: { searchParams: Promise<{ merchant?: string; campaign?: string }> }) {
   const sp = await searchParams;
   const code = normalizeMerchantCode(sp.merchant ?? '');
+  // 기관 지정 없이 열면 404 대신 기관을 고르는 길을 안내한다(점검 F 화면 순회).
+  if (!code) return <PickOrgNotice kind="recurring" />;
   const { payerId } = await requirePayerContext(`/my/recurring/new?merchant=${encodeURIComponent(sp.merchant ?? '')}`);
-  const merchant = code ? await prisma.merchantProfile.findFirst({ where: { code, status: 'APPROVED' }, select: { id: true, code: true, displayName: true } }) : null;
-  if (!merchant) notFound();
+  const merchant = await prisma.merchantProfile.findFirst({ where: { code, status: 'APPROVED' }, select: { id: true, code: true, displayName: true } });
+  if (!merchant) return <PickOrgNotice kind="recurring" unknownCode />;
 
   if (!payerId) {
     return (
