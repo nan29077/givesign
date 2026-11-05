@@ -49,6 +49,19 @@ async function submit(page, buttonName, expect, { exact = false } = {}) {
 }
 const noBazaarWord = async (page) => !(await bodyText(page)).includes('바자회');
 
+// 로컬 시드(시드 15)는 데모용으로 스위치를 켜고 데모 기관을 참여 승인해 둔다.
+// 이 시나리오는 "꺼짐·미참여"에서 시작해 켜기·참여 신청까지 클릭으로 확인하므로, 시작 전에 그 상태로 되돌린다.
+{
+  const { default: pg } = await import('pg');
+  await import('dotenv/config');
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  await db.query(`DELETE FROM system_setting WHERE key = 'live_bazaar.enabled'`);
+  await db.query(`DELETE FROM merchant_bazaar WHERE merchant_id = (SELECT id FROM merchant_profile WHERE code = 'GIV-8K2M')`);
+  await db.end();
+  await new Promise((r) => setTimeout(r, 1500)); // 스위치 캐시(1초)가 지나게 기다린다
+}
+
 const browser = await launch();
 const admin = await (await browser.newContext()).newPage();
 const merchant = await (await browser.newContext()).newPage();
@@ -279,7 +292,8 @@ try {
   await R.step('관리자: 끄기(확인 문구 없으면 거절)', async () => {
     await go(admin, '/admin/site-settings');
     await shot(admin, '12_사이트설정_켜짐');
-    await submit(admin, '라이브 바자회 끄기', '끄기');
+    // 화면에 원래 있는 '끄기' 글자가 아니라 서버의 거절 안내를 기다린다(먼저 넘어가면 늦게 온 응답이 입력칸을 비운다).
+    await submit(admin, '라이브 바자회 끄기', '끄려면 확인란에');
     await admin.fill('input[name=confirmText]', '끄기');
     await submit(admin, '라이브 바자회 끄기', '라이브 바자회를 껐습니다');
   });
