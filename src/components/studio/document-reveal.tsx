@@ -31,7 +31,6 @@ export function DocumentReveal({
 }) {
   const [full, setFull] = React.useState<{
     payerName: string | null;
-    payerPhone: string | null;
     values: Record<string, string>;
   } | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -49,7 +48,6 @@ export function DocumentReveal({
       }
       setFull({
         payerName: res.payerName,
-        payerPhone: res.payerPhone,
         values: Object.fromEntries(res.values.map((v) => [v.id, v.value])),
       });
     } catch {
@@ -70,7 +68,7 @@ export function DocumentReveal({
     if (!full) return;
     const lines = [
       `제출자\t${full.payerName ?? ''}`,
-      `연락처\t${full.payerPhone ?? ''}`,
+      `연락처\t${payerPhoneMasked ?? ''}`,
       ...fields.map((f) => `${f.label}\t${shown(f)}`),
     ];
     try {
@@ -111,7 +109,8 @@ export function DocumentReveal({
         <Row label="제출자" value={full ? (full.payerName ?? '-') : (payerNameMasked ?? '-')} />
         <Row
           label="연락처"
-          value={full ? (full.payerPhone ?? '-') : (payerPhoneMasked ?? '-')}
+          // 연락처는 열어도 마스킹 값만 보인다(기관 콘솔에는 전화번호 원문을 보여 주지 않는다).
+          value={payerPhoneMasked ?? '-'}
           mono
         />
         {fields.map((f) => (
@@ -120,7 +119,7 @@ export function DocumentReveal({
       </div>
 
       {!full ? (
-        <p className="mt-1.5 text-[11px] text-ink-300">가려진 값입니다. 열람 기록이 남습니다.</p>
+        <p className="mt-1.5 text-[11px] text-ink-300">가려진 값입니다. 열람 기록이 남습니다. 연락처는 열어도 가린 번호로만 보입니다.</p>
       ) : null}
       {error ? <p className="mt-1.5 text-[11.5px] text-danger-500">{error}</p> : null}
     </div>

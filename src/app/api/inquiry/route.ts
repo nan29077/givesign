@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { prisma } from '@/server/db';
 import { getSessionUser } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
-import { claimGuestInquiry } from '@/server/services/inquiry';
+import { claimGuestInquiry, findGuestInquiry } from '@/server/services/inquiry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   const inquiry = user
     ? await prisma.supportInquiry.findFirst({ where: { userId: user.id }, orderBy: { createdAt: 'desc' } })
     : guestToken
-      ? await prisma.supportInquiry.findUnique({ where: { guestToken } })
+      ? await findGuestInquiry(guestToken)
       : null;
 
   if (!inquiry) {

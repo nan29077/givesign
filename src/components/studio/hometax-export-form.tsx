@@ -13,13 +13,23 @@ export function HometaxExportForm({ year }: { year: number }) {
   const [state, action, pending] = React.useActionState<HometaxExportGateState, FormData>(prepareHometaxExportAction, { ok: false });
   const formRef = React.useRef<HTMLFormElement>(null);
 
+  const downloadRef = React.useRef<HTMLFormElement>(null);
+  const yearInputRef = React.useRef<HTMLInputElement>(null);
+  const tokenInputRef = React.useRef<HTMLInputElement>(null);
+  const submittedRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
-    if (state.ok && state.url) {
-      window.location.assign(state.url);
+    if (state.ok && state.token && submittedRef.current !== state.token) {
+      submittedRef.current = state.token;
+      // 토큰은 주소에 싣지 않고 POST 본문으로 보낸다(접근 로그·브라우저 기록에 남지 않게).
+      if (yearInputRef.current) yearInputRef.current.value = String(state.year ?? year);
+      if (tokenInputRef.current) tokenInputRef.current.value = state.token;
+      downloadRef.current?.submit();
+      if (tokenInputRef.current) tokenInputRef.current.value = '';
       // 비밀번호 입력값을 화면에 남기지 않는다.
       formRef.current?.reset();
     }
-  }, [state]);
+  }, [state, year]);
 
   if (!open) {
     return (
@@ -34,6 +44,11 @@ export function HometaxExportForm({ year }: { year: number }) {
   }
 
   return (
+    <>
+    <form ref={downloadRef} method="post" action="/api/studio/receipts/export" className="hidden" aria-hidden="true">
+      <input ref={yearInputRef} type="hidden" name="year" defaultValue={year} />
+      <input ref={tokenInputRef} type="hidden" name="t" defaultValue="" />
+    </form>
     <form ref={formRef} action={action} className="w-full max-w-md space-y-2.5 rounded-xl border border-ink-100 p-3.5">
       <input type="hidden" name="year" value={year} />
       <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink-800">
@@ -78,5 +93,6 @@ export function HometaxExportForm({ year }: { year: number }) {
       </div>
       <p className="text-[11.5px] text-ink-400">확인 링크는 5분 동안 한 번만 쓸 수 있고, 하루 5번까지 만들 수 있습니다.</p>
     </form>
+    </>
   );
 }

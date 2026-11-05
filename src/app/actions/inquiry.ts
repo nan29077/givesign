@@ -6,7 +6,7 @@ import { kv } from '@/server/redis';
 import { getSessionUser } from '@/server/auth';
 import { newId } from '@/lib/id';
 import { encrypt, maskPhone } from '@/lib/crypto';
-import { claimGuestInquiry } from '@/server/services/inquiry';
+import { claimGuestInquiry, findGuestInquiry, newGuestInquiryToken } from '@/server/services/inquiry';
 import { notifySuperAdmins } from '@/server/services/notifications';
 import { clientIpFrom } from '@/server/rate-limit';
 
@@ -86,18 +86,20 @@ export async function sendInquiryMessage(
     let inquiry = user
       ? await prisma.supportInquiry.findFirst({ where: { userId: user.id }, orderBy: { createdAt: 'desc' } })
       : guestToken
-        ? await prisma.supportInquiry.findUnique({ where: { guestToken } })
+        ? await findGuestInquiry(guestToken)
         : null;
 
     let issuedGuestToken: string | null = null;
 
     if (!inquiry) {
-      const token = user ? null : newId();
+      // 게스트 토큰: 쿠키에는 원문, DB 에는 해시만 저장한다.
+      const guest = user ? null : newGuestInquiryToken();
+      const token = guest?.token ?? null;
       inquiry = await prisma.supportInquiry.create({
         data: {
           id: newId(),
           userId: user?.id ?? null,
-          guestToken: token,
+          guestToken: guest?.stored ?? null,
           guestName: user ? null : guestName || null,
           contactEnc: contact ? encrypt(contact) : null,
           contactMasked: contact ? maskContact(contact) : null,

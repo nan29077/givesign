@@ -9,7 +9,9 @@ export const dynamic = 'force-dynamic';
 /**
  * 홈택스 기부금영수증 발급명세 CSV 다운로드 (기관 담당자).
  *
- *   GET /api/studio/receipts/export?year=2026&t={1회용 토큰}
+ *   POST /api/studio/receipts/export   (form: year=2026, t={1회용 토큰})
+ *
+ * 토큰을 쿼리스트링(GET)으로 받지 않는다. 주소에 실리면 웹서버·프록시 접근 로그와 브라우저 기록에 남는다(점검 B).
  *
  * 토큰은 기관 콘솔에서 비밀번호 재확인과 사유 입력을 거쳐야 나온다(5분, 1회용, 하루 횟수 제한).
  *
@@ -17,7 +19,14 @@ export const dynamic = 'force-dynamic';
  * 생성 이력(receipt_export)과 감사로그(RECEIPT_HOMETAX_EXPORT)를 남긴다.
  * 동일 출처 검사가 없으면 로그인한 담당자가 악성 페이지를 여는 것만으로 명세가 생성된다.
  */
-export async function GET(req: Request) {
+export async function GET() {
+  return new Response('POST 로만 내려받을 수 있습니다. 기관 콘솔의 기부금영수증 화면에서 다시 시도해 주세요.', {
+    status: 405,
+    headers: { Allow: 'POST' },
+  });
+}
+
+export async function POST(req: Request) {
   if (!isSameOrigin(req)) return new Response('허용되지 않은 요청입니다.', { status: 403 });
 
   let merchantId: string;
@@ -30,8 +39,12 @@ export async function GET(req: Request) {
     return new Response('로그인이 필요합니다.', { status: 401 });
   }
 
-  const url = new URL(req.url);
-  const year = Number(url.searchParams.get('year'));
+  const form = await req.formData().catch(() => null);
+  const field = (k: string) => {
+    const v = form?.get(k);
+    return typeof v === 'string' ? v : '';
+  };
+  const year = Number(field('year'));
   const nowYear = new Date().getFullYear();
   if (!Number.isInteger(year) || year < 2020 || year > nowYear) {
     return new Response('귀속 연도가 올바르지 않습니다.', { status: 400 });
@@ -39,7 +52,7 @@ export async function GET(req: Request) {
 
   let reason: string;
   try {
-    ({ reason } = await consumeHometaxExportToken(url.searchParams.get('t') ?? '', { userId, merchantId, taxYear: year }));
+    ({ reason } = await consumeHometaxExportToken(field('t'), { userId, merchantId, taxYear: year }));
   } catch (e) {
     if (e instanceof ExportGateError) return new Response(e.message, { status: 403 });
     throw e;

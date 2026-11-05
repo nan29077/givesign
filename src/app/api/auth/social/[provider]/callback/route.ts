@@ -42,7 +42,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
     const state = url.searchParams.get('state') ?? '';
     const code = url.searchParams.get('code') ?? '';
     const saved = jar.get(`givesign_social_state_${provider}`)?.value ?? '';
-    if (!code || !state || !saved || !safeEqual(state, saved)) return fail('error=social_error&detail=' + encodeURIComponent('로그인 요청이 만료되었습니다. 다시 시도해 주세요.'));
+    if (!code || !state || !saved || !safeEqual(state, saved)) return fail('error=social_expired');
     try {
       const adapter = getSocialAdapter(provider);
       const profile = await adapter.getProfile(await adapter.exchangeCode(code, state));
@@ -53,8 +53,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ provider: strin
       return res;
     } catch (e) {
       logger.warn('후원 회원 소셜 로그인 실패', { provider, merchantId: org.id, message: (e as Error).message });
-      const detail = e instanceof DonorMemberError ? e.message : '간편 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.';
-      return fail('error=social_error&detail=' + encodeURIComponent(detail));
+      // 문구 원문을 주소에 싣지 않고 고정 코드만 넘긴다. 화면은 코드→문구 표로만 보여 준다.
+      const errCode = e instanceof DonorMemberError && e.code ? e.code : 'social_error';
+      return fail(`error=${errCode}`);
     }
   }
 

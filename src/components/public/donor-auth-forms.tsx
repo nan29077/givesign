@@ -60,7 +60,7 @@ export function DonorSignupForm({ code, next, color, orgName }: { code: string; 
     <form action={action} className="space-y-4">
       <input type="hidden" name="code" value={code} />
       <input type="hidden" name="next" value={next} />
-      <Field label="이메일" required hint={`${orgName} 후원 회원 전용 계정입니다. 다른 기관과 따로 관리됩니다.`}>
+      <Field label="이메일" required hint={`${orgName} 후원 회원 전용 계정입니다. 다른 기관과 따로 관리됩니다. 본인 이메일로만 가입해 주세요(이메일 인증 메일은 아직 보내지 않습니다).`}>
         <Input name="email" type="email" autoComplete="email" required maxLength={120} defaultValue={state.values?.email ?? ''} />
       </Field>
       <Field label="이름" required>

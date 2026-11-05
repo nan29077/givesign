@@ -56,6 +56,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ name: st
   };
 
   if (isDoc) {
+    // 문서(서식 원본·결과 PDF)는 중간 캐시·검색엔진에 남기지 않는다(점검 B).
+    // 세션을 요구하지 않는 이유: 서명 화면(/sign/[토큰])의 비회원 서명자와 공개 후원 화면이 같은 주소로
+    // 내려받고, 발송된 서명 요청 스냅샷(pdfUrl)이 이 주소를 그대로 가리킨다. 파일명은 128비트 난수다.
+    headers['Cache-Control'] = 'private, no-store';
+    headers['X-Robots-Tag'] = 'noindex, nofollow';
+    headers['Referrer-Policy'] = 'no-referrer';
     // 내려받을 때 보여 줄 이름. 쿼리로 받되 경로·따옴표가 섞이지 않게 정리한다.
     const asked = new URL(req.url).searchParams.get('name') ?? '';
     const safe = asked.replace(/[^\p{L}\p{N}._ -]/gu, '').slice(0, 80);

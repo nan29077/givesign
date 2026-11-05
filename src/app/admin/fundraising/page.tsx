@@ -11,7 +11,7 @@ import { Badge, Card, EmptyState, Notice, StatTile, Table, Td, Th } from '@/comp
 import { ProgressBar } from '@/components/public/progress-bar';
 import { campaignProgress, campaignStatusLabel } from '@/lib/fundraising';
 import { PAID_STATUSES } from '@/components/studio/shared';
-import { formatKst } from '@/lib/datetime';
+import { formatKst, kstDateKey } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 
 export const dynamic = 'force-dynamic';
@@ -222,7 +222,7 @@ async function OrgsTab({ orgs }: { orgs: Array<Awaited<ReturnType<typeof prisma.
                     <ActionButton action={revokeDesignatedDoneeAction} values={{ merchantId: o.id }} label="확인 취소" confirm="공익법인 지정 확인을 취소할까요? 이 기관은 영수증을 새로 발급할 수 없게 됩니다." />
                   </div>
                 ) : o.designatedDonee ? (
-                  <ActionButton action={verifyDesignatedDoneeAction} values={{ merchantId: o.id }} label="지정 확인" confirm={`지정서(고유번호 ${o.businessNo ?? '-'}, 만료 ${o.designatedDoneeUntil ? o.designatedDoneeUntil.toISOString().slice(0, 10) : '없음'})를 확인하셨나요?`} />
+                  <ActionButton action={verifyDesignatedDoneeAction} values={{ merchantId: o.id }} label="지정 확인" confirm={`지정서(고유번호 ${o.businessNo ?? '-'}, 만료 ${o.designatedDoneeUntil ? kstDateKey(o.designatedDoneeUntil) : '없음'})를 확인하셨나요?`} />
                 ) : (
                   <span className="text-[12px] text-ink-400">기관 미등록</span>
                 )}

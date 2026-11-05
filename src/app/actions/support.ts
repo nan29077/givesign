@@ -7,7 +7,7 @@ import { kv } from '@/server/redis';
 import { newId } from '@/lib/id';
 import { getSessionUser } from '@/server/auth';
 import { SUPPORT_CATEGORY_VALUES } from '@/components/public/support-options';
-import { INQUIRY_GUEST_COOKIE, claimGuestInquiry } from '@/server/services/inquiry';
+import { INQUIRY_GUEST_COOKIE, claimGuestInquiry, findGuestInquiry, newGuestInquiryToken } from '@/server/services/inquiry';
 import { notifySuperAdmins } from '@/server/services/notifications';
 import { cookies } from 'next/headers';
 import { clientIpFrom } from '@/server/rate-limit';
@@ -148,7 +148,7 @@ export async function submitSupportRequest(
     let inquiry = user
       ? await prisma.supportInquiry.findFirst({ where: { userId: user.id }, orderBy: { createdAt: 'desc' } })
       : cookieToken
-        ? await prisma.supportInquiry.findUnique({ where: { guestToken: cookieToken } })
+        ? await findGuestInquiry(cookieToken)
         : null;
 
     let issuedGuestToken: string | null = null;
@@ -167,12 +167,14 @@ export async function submitSupportRequest(
         },
       });
     } else {
-      const token = user ? null : newId();
+      // 게스트 토큰: 쿠키에는 원문, DB 에는 해시만 저장한다.
+      const guest = user ? null : newGuestInquiryToken();
+      const token = guest?.token ?? null;
       inquiry = await prisma.supportInquiry.create({
         data: {
           id: newId(),
           userId: user?.id ?? null,
-          guestToken: token,
+          guestToken: guest?.stored ?? null,
           category,
           source: 'FORM',
           status: 'OPEN',
