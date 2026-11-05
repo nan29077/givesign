@@ -174,6 +174,8 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                     <span className="flex items-center gap-3">
                       {p.url ? <a href={p.url} target="_blank" rel="noreferrer" className="font-bold text-brand-700">게시물</a> : null}
                       {!p.mock && p.metricsAt ? <span className="tabular-nums text-ink-500">조회 {p.views} · 좋아요 {p.likes}</span> : null}
+                      {/* 링크 클릭은 기브싸인 짧은 링크(/go)로 직접 센 값이다(봇·같은 IP 10분 중복 제외). */}
+                      <span className="tabular-nums text-ink-500">링크 클릭 {p.clicks}</span>
                       {p.status === 'SCHEDULED' ? (
                         <ActionForm action={cancelPublishAction} submitLabel="취소" variant="ghost" size="sm">
                           <input type="hidden" name="id" value={item.id} />
