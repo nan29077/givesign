@@ -44,12 +44,12 @@
 ## 자원봉사 모집 공고·회차 (2026-11-06)
 
 - 공고 `volunteer_posting`(DRAFT·OPEN·CLOSED·ARCHIVED, 모집 기간 KST 양끝 포함) + 회차 `volunteer_shift`(KST 날짜 + "HH:MM", `starts_at/ends_at` UTC 함께 저장, 하루를 넘기지 않음). 공개 후원페이지에는 OPEN 이면서 모집 기간 안인 공고만 보인다. 지우지 않고 보관한다.
-- 회차 정원은 `applied_count < capacity` 조건부 증가(행 단위 원자 갱신)로만 지킨다. 철회·반려 때 같은 트랜잭션에서 되돌린다. 정원은 신청 수보다 작게 줄일 수 없고, 진행 중 신청이 있는 회차는 보관하지 않는다.
+- 회차 정원은 `applied_count < capacity` 조건부 증가(행 단위 원자 갱신)로만 지킨다. 철회·반려 때 같은 트랜잭션에서 되돌린다. 정원은 신청 수보다 작게 줄일 수 없고, 진행 중 신청이 있는 회차는 보관하지 않는다(보관은 회차 행 잠금 트랜잭션).
 - 진행 중 신청 유니크: 일반 신청(회차 없음)은 기관당 1건(`volunteer_application_live_uniq`), 회차 신청은 (기관, 후원자, 회차) 1건(`volunteer_application_shift_live_uniq`).
 - 마감·기간 밖 공고, 시작한 회차, 보관 회차에는 신청을 거절한다. 회차가 있는 공고는 회차를 골라야 한다.
-- 승인 시 배정 안내를 비우면 "M/D(요일) HH:MM~HH:MM · 장소" 로 채운다(`shiftScheduleLabel`). 출석 → 회차 길이만큼 활동 기록 + `COMPLETED`(조건부 전환으로 1회), 불참 → `NO_SHOW`. 회차 날짜 전에는 처리하지 않는다.
+- 승인 시 배정 안내를 비우면 "M/D(요일) HH:MM~HH:MM · 장소" 로 채운다(`shiftScheduleLabel`). 출석 → 회차 길이만큼 활동 기록 + `COMPLETED`(조건부 전환으로 1회), 불참 → `NO_SHOW`. 회차 시작 시각 전에는 처리하지 않는다.
 - D-1 안내 대상은 `volunteerShiftsStartingOn(dateKey)`(발송하지 않음, 저니가 보낸다).
-- 콘텐츠 짧은 링크 `/go/[publishId]` 는 `content_publish.clicks` 를 센다(봇 UA 제외, 같은 IP·게시 10분 1회 — IP 는 HMAC 키로만). 이동 주소는 게시 행에서 서버가 만든다(쿼리로 받지 않음).
+- 콘텐츠 짧은 링크 `/go/[publishId]` 는 `content_publish.clicks` 를 센다(봇 UA 제외, 같은 IP·게시 10분 1회 — IP 는 HMAC 키로만, IP 를 모르면 UA HMAC). 이동 주소는 게시 행에서 서버가 만든다(쿼리로 받지 않음).
 - 후원자 병합(`/admin/payers/[id]`, 감사로그 `PAYER_MERGE`/`PAYER_UNMERGE`, 근거 필수)은 `payer_profile.merged_into_id` 표시만 한다. 결제·약정·봉사·영수증 행은 옮기지 않고 통합 구성원·후원자 누적에서만 합산한다. 1단계만, 순환 금지(두 행 FOR UPDATE). 영수증은 각자 명의. 기관 콘솔은 "병합됨" 표시만.
 
 ## 약관
@@ -150,6 +150,15 @@ docs/              분석·설계 보고서, 운영 문서
 - **사업자 표시 정보**는 `BUSINESS_*` 환경변수로 받고, 값이 없으면 그 줄을 숨긴다(지어내지 않는다).
 - **비밀번호 재설정 메일·후원회원 이메일 인증은 메일 공급자가 실연동(`MAIL_PROVIDER=ses` + 키, `mailIsLive()`)일 때만 메일로 보낸다**(2026-11-06 7단계). 아니면 예전처럼 보내지 않고 "메일로 보냈다"고 꾸미지 않는다. 실연동이면 재설정 링크를 로그·콘솔·화면에 남기지 않는다.
 - **7단계 외부 연동**(`docs/2026-11-06_외부연동_설정가이드.md`): SNS 계정 연결은 OAuth(`/api/studio/social/<platform>/connect·callback`, state HMAC 서명·10분·세션 기관 일치, 구글 PKCE), 토큰은 `social_channel.*_enc` 암호화만. 유튜브는 항상 비공개 업로드 후 담당자가 공개 전환, 틱톡은 SELF_ONLY. 네이버 블로그·카카오 채널은 공개 게시 API 가 없어 내려받아 직접 게시. 알림톡 실공급자는 솔라피(`coolsms`, 공급자 대체 문자 끔 → 실패 시 우리 문자 대체).
+- **2026-11-06 정밀 점검 조치(콘텐츠·SNS·알림톡·봉사)** (`docs/2026-11-06_후원자동화_라이브바자회_정밀점검보고서.md` A-5·A-M8~A-M13):
+  - 알림톡 접수(솔라피 2000)는 성공이 아니다. `mt_outbound_message.status=ACCEPTED`(`delivery_status` 에 `ACCEPTED`·`UNKNOWN`)로 두고 `/api/cron/alimtalk-reports`(5분)가 결과를 조회한다. 수신 완료 → `SENT`, **명시적 실패 코드만** 같은 본문 문자 1회 대체(`ACCEPTED→PENDING` 조건부 선점, `channel=SMS, fallback=true`), 2시간 무응답은 `UNKNOWN`(자동 재발송 금지). 대체용 본문은 `body_enc` 암호문으로만, 결과가 나면 지운다. mock 은 즉시 최종. `charge.mt_status` 는 `ACCEPTED` 일 때만 결과로 맞춘다.
+  - SNS 게시 실패 처리(`fail`)는 `PUBLISHING` 일 때만 조건부로 바꾼다. 공급자 성공 뒤 기록 실패·30분 고착은 **자동 재게시하지 않고** `content_publish.status=UNKNOWN` — 기관이 "다시 게시"/"게시됨으로 표시"(`resolveUnknownPublish`)로 푼다. 예약(`schedulePublish`)은 `UNKNOWN` 을 덮지 않는다. 남은 예약이 없고 하나도 안 올라갔으면 콘텐츠는 `APPROVED` 로 돌아간다.
+  - 캡션 길이는 `captionLinkReserve()`(실제 링크 최대 길이)로 맞춘다. SNS 어댑터에서 캡션 `slice` 금지 — 넘치면 `assertCaptionFits` → `CAPTION_TOO_LONG`. 유튜브 설명은 UTF-8 바이트 기준.
+  - SNS 채널 만료는 인증 실패(`invalid_grant`·401·공급자 토큰 폐기)일 때만(`isAuthFailure`). 일시 오류는 `SocialTokenRefreshTransientError` — 연결 유지·이번 시도만 재시도. 게시 중 `AUTH_EXPIRED` 는 `markChannelExpired` + 재시도 없음.
+  - 실연동에서는 mock 연결 채널을 게시·예약 대상에서 뺀다(`publishableChannelWhere`). 영상 없는 숏폼은 예약을 거절한다.
+  - LLM 전송 전 가리기·개인정보 검사의 주민번호 패턴은 뒷자리 `[1-8]`(외국인등록번호 포함). 실명 패턴(`REAL_NAME_RE`/`realNameHit`)은 `llm-script.ts` 한 곳이고 콘텐츠 대본·AI 초안이 함께 쓴다. AI 초안 속도 제한은 저장소 장애 때 닫힌다(`failClosed`).
+  - `/go` 클릭: 다음앱 인앱 브라우저(DaumApps)는 사람, 수집기는 `Daumoa` 만 제외. IP 를 모르면 UA HMAC 으로 나눠 중복을 센다.
+  - 봉사 출석·불참은 회차 날짜뿐 아니라 시작 시각이 지나야 받는다. 회차 보관은 회차 행 `FOR UPDATE` 트랜잭션 안에서 진행 중 신청을 센다(신청의 자리 잡기와 직렬화).
 - 공개 화면의 로컬 이미지(`/assets/**`, `/banners/**`)는 Next 이미지 최적화를 쓴다(배포 환경에 `sharp` 필요). 업로드·외부 주소만 원본(`image-src.ts`).
 
 ## 실행 방법
