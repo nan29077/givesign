@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { writeAudit } from '@/server/auth';
 import type { AdminActionState } from '@/components/admin/state';
 import { setAlimtalkChannelStatus } from '@/server/services/alimtalk';
+import { retryFailedEvent } from '@/server/services/events';
 import { optText, requiredId, run } from './shared';
 
 /**
@@ -21,5 +22,17 @@ export async function setAlimtalkStatusAction(_prev: AdminActionState, f: FormDa
     await writeAudit({ adminUserId: admin.id, action: 'ALIMTALK_CHANNEL_STATUS', targetType: 'MerchantProfile', targetId: merchantId, after: { status, note } });
     revalidatePath('/admin/automation');
     return status === 'ACTIVE' ? '알림톡 채널을 사용 중으로 바꿨습니다.' : status === 'SUSPENDED' ? '알림톡 발송을 중지했습니다. 안내는 문자로 나갑니다.' : '승인 대기로 되돌렸습니다.';
+  });
+}
+
+/** 재시도를 다 쓴 도메인 이벤트를 다시 대기로 돌린다(이미 끝난 소비자는 다시 돌지 않는다). */
+export async function retryEventAction(_prev: AdminActionState, f: FormData): Promise<AdminActionState> {
+  return run(async (admin) => {
+    const id = requiredId(f, 'id', '이벤트');
+    const r = await retryFailedEvent(id);
+    if (r.count === 0) throw new Error('재시도 소진 상태의 이벤트가 아닙니다.');
+    await writeAudit({ adminUserId: admin.id, action: 'DOMAIN_EVENT_RETRY', targetType: 'domain_event', targetId: id });
+    revalidatePath('/admin/automation');
+    return '다음 배치에서 다시 처리합니다.';
   });
 }

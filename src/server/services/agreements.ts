@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { formatNumber } from '@/lib/money';
 import { kstMonthKey } from '@/lib/datetime';
 import { prisma } from '@/server/db';
+import { emitDomainEventSafe } from './events';
 import { getESignAdapter } from '@/server/adapters/esign';
 import type { AgreementKind } from '@/generated/prisma/enums';
 import { currentTermsDoc } from './terms';
@@ -269,6 +270,16 @@ export async function completeESign(requestId: string, outcome: 'SIGNED' | 'DECL
     where: { id: doc.id, esignStatus: 'REQUESTED' },
     data: { esignStatus: outcome, signedAt: outcome === 'SIGNED' ? new Date() : null },
   });
+  if (updated.count > 0 && outcome === 'SIGNED') {
+    await emitDomainEventSafe({
+      merchantId: doc.merchantId,
+      type: 'agreement.signed',
+      subjectType: 'agreement_document',
+      subjectId: doc.id,
+      payerId: doc.payerId,
+      payload: { kind: doc.kind, title: doc.title },
+    });
+  }
   return { ok: true as const, already: updated.count === 0, status: outcome };
 }
 

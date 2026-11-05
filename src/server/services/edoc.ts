@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '@/server/db';
+import { emitDomainEvent } from './events';
 import { kv, consumeAttempt } from '@/server/redis';
 import { newId } from '@/lib/id';
 import { env, isLocal } from '@/lib/env';
@@ -774,6 +775,14 @@ export async function signAsSigner(input: {
       });
       if (done.count !== 1) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
       await appendEvent(tx, s.envelopeId, { type: 'COMPLETED', actor: 'system', detail: { documentHash } });
+      const meta = await tx.eDocEnvelope.findUniqueOrThrow({ where: { id: s.envelopeId }, select: { merchantId: true, title: true, templateId: true } });
+      await emitDomainEvent(
+        {
+          merchantId: meta.merchantId, type: 'document.signed', subjectType: 'edoc_envelope', subjectId: s.envelopeId,
+          payload: { title: meta.title, templateId: meta.templateId, documentHash },
+        },
+        tx,
+      );
       return { completed: true as const, next: null, ready: [] as string[] };
     }
     await tx.eDocEnvelope.updateMany({ where: { id: s.envelopeId, status: 'SENT' }, data: { status: 'IN_PROGRESS' } });

@@ -64,6 +64,16 @@ export const MT_TEMPLATE = {
   MONTHLY_NOTICE: 'MONTHLY_NOTICE',
   /** 전자 약정서 발급 안내 (열람 링크) */
   AGREEMENT_ISSUED: 'AGREEMENT_ISSUED',
+  /** 용도별 자동 발송 문서(감사장·확인서 등) 열람 안내 */
+  DOCUMENT_ISSUED: 'DOCUMENT_ISSUED',
+  /** 기부금영수증 정보(성명·주민번호) 등록 안내 */
+  RECEIPT_INFO_REQUEST: 'RECEIPT_INFO_REQUEST',
+  /** 정기후원 정지 후 재개 방법 안내 */
+  RECURRING_RESUME_GUIDE: 'RECURRING_RESUME_GUIDE',
+  /** 자원봉사 활동 전날 안내 */
+  VOLUNTEER_REMINDER: 'VOLUNTEER_REMINDER',
+  /** 자원봉사 활동 감사 */
+  VOLUNTEER_THANKS: 'VOLUNTEER_THANKS',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -821,6 +831,41 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     defaultBody: '{사회복지기관} 「{문서}」 서명이 모두 끝났습니다. 완료본은 받으신 서명 링크에서 확인할 수 있습니다.',
     variables: [V.merchant, V.document],
   },
+  [MT_TEMPLATE.DOCUMENT_ISSUED]: {
+    label: '감사장·확인서 발급',
+    description: '후원 감사장·연말 감사장·봉사활동 확인서 등 기관 서식으로 만든 문서의 열람 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관}에서 {문서}을(를) 보내 드립니다. 열람: [보안링크]',
+    variables: [V.merchant, V.document],
+  },
+  [MT_TEMPLATE.RECEIPT_INFO_REQUEST]: {
+    label: '기부금영수증 정보 등록 안내',
+    description: '영수증 정보를 등록하지 않은 후원자에게 연말정산용 정보 등록 방법을 한 번 안내합니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 후원 기부금영수증을 받으시려면 성명·주민등록번호 등록이 필요합니다. 등록: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.RECURRING_RESUME_GUIDE]: {
+    label: '정기후원 재개 안내',
+    description: '출금 실패로 정지된 정기후원의 재개 방법을 안내합니다(정지 며칠 뒤 한 번).',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원이 출금 실패로 정지되어 있습니다. 결제수단 확인 후 재개할 수 있습니다: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.VOLUNTEER_REMINDER]: {
+    label: '자원봉사 활동 전날 안내',
+    description: '승인된 봉사 활동 하루 전에 일정·장소를 다시 알려 드립니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 내일 자원봉사 일정 안내: {안내}',
+    variables: [V.merchant, V.fulfillNote],
+  },
+  [MT_TEMPLATE.VOLUNTEER_THANKS]: {
+    label: '자원봉사 활동 감사',
+    description: '활동이 기록되면 감사 인사와 누적 활동 시간을 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 오늘 함께해 주셔서 감사합니다. 누적 봉사 {안내}',
+    variables: [V.merchant, V.fulfillNote],
+  },
 };
 
 /** 관리 화면 카드 순서. */
@@ -930,4 +975,41 @@ export async function applyMtTemplateOverride(out: TemplateOutput): Promise<Temp
   const verifyCode = out.vars['인증번호'];
   const masked = verifyCode ? maskVerifyCode(maskLink(text), verifyCode) : maskLink(text);
   return { ...out, text, masked };
+}
+
+
+// ---------------------------------------------------------------------------
+// 자동 안내(저니·용도별 문서) — 2026-11-06. 모두 정보성(광고성 권유 문구 없음).
+// ---------------------------------------------------------------------------
+
+export function tplDocumentIssued(input: { merchantName: string; title: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName}에서 ${input.title}을(를) 보내 드립니다. 열람:`, input.link);
+  return { code: MT_TEMPLATE.DOCUMENT_ISSUED, text, masked: maskLink(text) };
+}
+
+export function tplReceiptInfoRequest(input: { merchantName: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 후원 기부금영수증을 받으시려면 성명·주민등록번호 등록이 필요합니다. 등록:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECEIPT_INFO_REQUEST, text, masked: maskLink(text) };
+}
+
+export function tplRecurringResumeGuide(input: { merchantName: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 정기후원이 출금 실패로 정지되어 있습니다. 결제수단 확인 후 재개할 수 있습니다:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECURRING_RESUME_GUIDE, text, masked: maskLink(text) };
+}
+
+export function tplVolunteerReminder(input: { merchantName: string; schedule: string }): TemplateOutput {
+  const text = `[기브싸인] ${input.merchantName} 내일 자원봉사 일정 안내: ${input.schedule.slice(0, 80)}`;
+  return { code: MT_TEMPLATE.VOLUNTEER_REMINDER, text, masked: text };
+}
+
+export function tplVolunteerThanks(input: { merchantName: string; totalHours: number }): TemplateOutput {
+  const hours = Math.round(input.totalHours * 10) / 10;
+  const text = `[기브싸인] ${input.merchantName} 오늘 함께해 주셔서 감사합니다. 누적 봉사 ${hours}시간입니다.`;
+  return { code: MT_TEMPLATE.VOLUNTEER_THANKS, text, masked: text };
 }

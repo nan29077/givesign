@@ -9,6 +9,7 @@ import { payerDisplayName } from '@/lib/payer-name';
 import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, sendMtForPayer, setStatus } from './charge-flow';
 import { issueRecurringAgreement } from './agreements';
+import { emitDomainEvent, emitDomainEventSafe } from './events';
 import { filterContent } from './content-filter';
 import { resolvePolicy } from './limits';
 import { campaignOpen } from '@/lib/fundraising';
@@ -225,7 +226,7 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
           userAgent: input.userAgent ?? null,
         },
       });
-      return tx.recurringDonation.create({
+      const created = await tx.recurringDonation.create({
         data: {
           id: newId(),
           merchantId: merchant.id,
@@ -243,6 +244,18 @@ export async function createRecurringDonation(input: CreateRecurringInput): Prom
           contentItemId,
         },
       });
+      await emitDomainEvent(
+        {
+          merchantId: merchant.id,
+          type: 'recurring.pledged',
+          subjectType: 'recurring',
+          subjectId: created.id,
+          payerId: payer.id,
+          payload: { amount: created.amount, dayOfMonth: created.dayOfMonth, campaignId: created.campaignId, source: created.source },
+        },
+        tx,
+      );
+      return created;
     });
   } catch (e) {
     if (isUniqueViolation(e)) return { ok: false, message: DUP_MESSAGE };
@@ -308,6 +321,15 @@ export async function updateRecurringDonation(
     await issueRecurringAgreement(updated.id, meta ?? {}).catch((e) =>
       logger.error('정기후원 약정서(변경) 생성 실패', { recurringId: updated.id, message: (e as Error).message }),
     );
+    await emitDomainEventSafe({
+      merchantId: updated.merchantId,
+      type: 'recurring.changed',
+      subjectType: 'recurring',
+      subjectId: updated.id,
+      payerId: updated.payerId,
+      dedupeKey: `recurring.changed:${updated.id}:${updated.updatedAt.getTime()}`,
+      payload: { amount: updated.amount, dayOfMonth: updated.dayOfMonth, campaignId: updated.campaignId },
+    });
   }
   return updated;
 }
@@ -332,26 +354,47 @@ export async function setRecurringStatus(
     if (!token) throw new Error('등록된 결제수단이 없어 재개할 수 없습니다.');
     // 재개 시점에 이달 출금일이 지났거나 이미 출금한 주기면 그다음 달부터.
     const next = await nextScheduleFor(row.id, row.dayOfMonth, now);
-    return prisma.recurringDonation.update({
+    const resumed = await prisma.recurringDonation.update({
       where: { id },
       data: {
         status: 'ACTIVE', pausedAt: null, suspendedAt: null, failCount: 0, lastFailure: null,
         nextChargeOn: dateCol(next), cycleMonth: next.slice(0, 7),
       },
     });
+    await emitDomainEventSafe({
+      merchantId: row.merchantId, type: 'recurring.resumed', subjectType: 'recurring', subjectId: id, payerId,
+      dedupeKey: `recurring.resumed:${id}:${now.getTime()}`, payload: { from: row.status },
+    });
+    return resumed;
   }
-  return prisma.recurringDonation.update({
+  const canceled = await prisma.recurringDonation.update({
     where: { id },
     data: { status: 'CANCELED', canceledAt: now, cancelReason: (reason ?? '').trim().slice(0, 200) || null },
   });
+  await emitDomainEventSafe({
+    merchantId: row.merchantId, type: 'recurring.canceled', subjectType: 'recurring', subjectId: id, payerId,
+    payload: { successCount: row.successCount },
+  });
+  return canceled;
 }
 
 /** 결제수단이 해지되면 그 후원자의 정기후원을 모두 정지시킨다(결제수단 해지 경로에서 호출). */
 export async function suspendRecurringForPayer(payerId: string, reason: string) {
-  const r = await prisma.recurringDonation.updateMany({
+  const targets = await prisma.recurringDonation.findMany({
     where: { payerId, status: { in: ['ACTIVE', 'PAUSED'] } },
-    data: { status: 'SUSPENDED', suspendedAt: new Date(), lastFailure: reason },
+    select: { id: true, merchantId: true },
   });
+  const now = new Date();
+  const r = await prisma.recurringDonation.updateMany({
+    where: { id: { in: targets.map((t) => t.id) }, status: { in: ['ACTIVE', 'PAUSED'] } },
+    data: { status: 'SUSPENDED', suspendedAt: now, lastFailure: reason },
+  });
+  for (const t of targets) {
+    await emitDomainEventSafe({
+      merchantId: t.merchantId, type: 'recurring.suspended', subjectType: 'recurring', subjectId: t.id, payerId,
+      dedupeKey: `recurring.suspended:${t.id}:${now.getTime()}`, payload: { reason: 'PAYMENT_METHOD_REVOKED' },
+    });
+  }
   return r.count;
 }
 
@@ -480,9 +523,12 @@ function cycleDate(cycleMonth: string, day: number): string {
 }
 
 /** 성공 처리: 주기를 한 달 넘기고 누적을 올린다. 같은 주기를 두 번 넘기지 않도록 현재 주기일 때만 갱신한다. */
+/** 누적 성공 횟수 이정표. 저니가 누적 감사장을 보낼 때 쓴다. */
+export const RECURRING_MILESTONES = [1, 6, 12, 24, 36, 60, 120];
+
 async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amount: bigint) {
   const nextCycle = nextCycleOf(cycleMonth);
-  await prisma.recurringDonation.updateMany({
+  const updated = await prisma.recurringDonation.updateMany({
     where: { id: r.id, cycleMonth },
     data: {
       lastChargedAt: new Date(),
@@ -494,6 +540,15 @@ async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amou
       nextChargeOn: dateCol(cycleDate(nextCycle, r.dayOfMonth)),
     },
   });
+  if (updated.count === 0) return;
+  const after = await prisma.recurringDonation.findUnique({ where: { id: r.id }, select: { successCount: true, totalAmount: true } });
+  if (after && RECURRING_MILESTONES.includes(after.successCount)) {
+    await emitDomainEventSafe({
+      merchantId: r.merchantId, type: 'recurring.milestone', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
+      dedupeKey: `recurring.milestone:${r.id}:${after.successCount}`,
+      payload: { count: after.successCount, totalAmount: after.totalAmount, amount },
+    });
+  }
 }
 
 async function postponeOneDay(r: RecurringDonation, today: string, note: string) {
@@ -581,8 +636,13 @@ async function runOne(
   const failedRuns = await prisma.recurringRun.count({ where: { recurringId: r.id, monthKey: cycle, status: 'FAILED' } });
   const failures = Math.min(failedRuns, r.failCount);
   if (failures >= RECURRING_MAX_ATTEMPTS) {
-    await prisma.recurringDonation.update({ where: { id: r.id }, data: { status: 'SUSPENDED', suspendedAt: new Date(), failCount: failures } });
+    const suspendedAt = new Date();
+    await prisma.recurringDonation.update({ where: { id: r.id }, data: { status: 'SUSPENDED', suspendedAt, failCount: failures } });
     await sendMtForPayer(r.payerId, tpl.tplRecurringSuspended({ merchantName: r.merchant.displayName, amount: r.amount }), null, r.merchantId).catch(() => undefined);
+    await emitDomainEventSafe({
+      merchantId: r.merchantId, type: 'recurring.suspended', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
+      dedupeKey: `recurring.suspended:${r.id}:${cycle}`, payload: { reason: 'PAYMENT_FAILED', failures },
+    });
     return { status: 'FAILED', reason: '실패 한도 초과', suspended: true };
   }
 

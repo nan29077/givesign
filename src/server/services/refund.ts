@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { emitDomainEvent } from './events';
 import { logger } from '@/lib/logger';
 import { voidReceiptForRefundedCharge } from './receipts';
 import { revertRecurringTotals } from './recurring';
@@ -150,6 +151,13 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
     await tx.chargeStatusLog.create({
       data: { id: newId(), chargeId: refund.chargeId, toStatus: 'REFUNDED', actor: adminUserId ?? 'admin', reason: refund.reason },
     });
+    await emitDomainEvent(
+      {
+        merchantId: refund.charge.merchantId, type: 'charge.refunded', subjectType: 'charge', subjectId: refund.chargeId,
+        payerId: refund.charge.payerId ?? null, payload: { amount: refund.charge.amount, refundId },
+      },
+      tx,
+    );
 
     // 실물 주문을 환불하면 잡아둔 재고를 돌려놓는다.
     // 다만 이미 발송했다면 물건은 나간 상태이므로 되돌리지 않는다(사회복지기관이 회수 후 직접 조정한다).

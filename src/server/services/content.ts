@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { kstMonthKey } from '@/lib/datetime';
 import { attributionQuery } from '@/lib/attribution';
 import { prisma } from '@/server/db';
+import { emitDomainEventSafe } from './events';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import {
   getContentAdapter,
@@ -334,6 +335,12 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
       },
     });
     if (finished.count === 0) logger.warn('콘텐츠 생성 결과를 반영하지 않음 — 이미 다른 실행이 끝냈습니다', { itemId });
+    else if (autoApprove) {
+      await emitDomainEventSafe({
+        merchantId: item.merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: itemId,
+        payload: { kind: item.kind, campaignId: item.campaignId, approvedBy: 'AUTO' },
+      });
+    }
   } catch (e) {
     if (e instanceof StepBusyError) {
       logger.info('콘텐츠 생성 단계가 다른 실행에서 진행 중 — 이 실행은 물러납니다', { itemId, message: e.message });
@@ -431,7 +438,12 @@ export async function approveContent(merchantId: string, id: string, userId: str
   if (!item.regNoIncluded) {
     throw new ContentError('기부금품 모집등록번호가 없어 승인할 수 없습니다. 기관 정보에 모집등록번호를 넣고 콘텐츠를 다시 만들어 주세요.');
   }
-  return prisma.contentItem.update({ where: { id }, data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() } });
+  const approved = await prisma.contentItem.update({ where: { id }, data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() } });
+  await emitDomainEventSafe({
+    merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: id,
+    payload: { kind: approved.kind, campaignId: approved.campaignId, approvedBy: 'USER' },
+  });
+  return approved;
 }
 
 export async function archiveContent(merchantId: string, id: string) {
@@ -554,6 +566,10 @@ async function publishOne(publishId: string, now: Date) {
     });
     const left = await prisma.contentPublish.count({ where: { itemId: p.itemId, status: { in: ['SCHEDULED', 'PUBLISHING'] } } });
     if (left === 0) await prisma.contentItem.update({ where: { id: p.itemId }, data: { status: 'PUBLISHED' } });
+    await emitDomainEventSafe({
+      merchantId: p.item.merchantId, type: 'content.published', subjectType: 'content_publish', subjectId: p.id,
+      payload: { itemId: p.itemId, platform: p.platform, mock: res.data.mock, url: res.data.url ?? null },
+    });
     return 'PUBLISHED' as const;
   } catch (e) {
     return fail((e as Error).message);

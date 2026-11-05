@@ -5,7 +5,9 @@ import { env } from '@/lib/env';
 import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, EmptyState, Notice, StatTile, Table, Td, Th } from '@/components/ui';
 import { ActionButton } from '@/components/admin/action-form';
-import { setAlimtalkStatusAction } from '@/app/actions/admin/automation';
+import { setAlimtalkStatusAction, retryEventAction } from '@/app/actions/admin/automation';
+import { CRON_JOBS } from '@/server/cron-registry';
+import { eventQueueStats } from '@/server/services/events';
 import { alimtalkIsMock } from '@/server/adapters/alimtalk';
 import { snsIsMock, PLATFORM_LABEL } from '@/server/adapters/sns';
 import { getContentAdapter } from '@/server/adapters/content';
@@ -22,8 +24,14 @@ const TABS = [
   { key: 'alimtalk', label: '알림톡 채널' },
   { key: 'content', label: '콘텐츠·게시' },
   { key: 'notices', label: '월간 안내' },
+  { key: 'jobs', label: '배치·이벤트' },
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
+
+/** 마지막 종료가 주기의 3배를 넘었으면 지연. (렌더 밖 함수 — 화면 시각 계산) */
+function isLate(lastFinishedAt: Date | null, intervalSec: number) {
+  return !lastFinishedAt || Date.now() - lastFinishedAt.getTime() > intervalSec * 3000;
+}
 
 /**
  * 자동화 운영 (통합 관리자).
@@ -43,6 +51,14 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
     prisma.volunteerApplication.count({ where: { createdAt: { gte: start } } }),
     prisma.agreementDocument.count({ where: { createdAt: { gte: start } } }),
   ]);
+  const [heartbeats, eventStats, failedEvents] = tab === 'jobs'
+    ? await Promise.all([
+        prisma.cronHeartbeat.findMany(),
+        eventQueueStats(),
+        prisma.domainEvent.findMany({ where: { status: 'FAILED' }, orderBy: { occurredAt: 'desc' }, take: 50, select: { id: true, type: true, merchantId: true, occurredAt: true, attempts: true, lastError: true } }),
+      ])
+    : [[], null, []] as const;
+  const beatByName = new Map(heartbeats.map((h) => [h.name, h]));
   const merchants = new Map((await prisma.merchantProfile.findMany({ where: { id: { in: contentAgg.map((c) => c.merchantId) } }, select: { id: true, displayName: true } })).map((m) => [m.id, m.displayName]));
   const providers = [
     { name: '알림톡', enabled: env.automation.alimtalkEnabled, mock: alimtalkIsMock(), provider: env.automation.alimtalkProvider },
@@ -115,6 +131,57 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
             <tbody>
               {publishFailed.map((p) => <tr key={p.id}><Td>{p.item.merchant.displayName}</Td><Td>{p.item.title}</Td><Td>{PLATFORM_LABEL[p.platform]}</Td><Td className="tabular-nums">{p.attempts}</Td><Td className="text-[12px] text-danger-500">{p.status === 'PUBLISHING' ? '게시 중 멈춤(다음 배치에서 예약으로 되돌림) ' : ''}{p.error}</Td></tr>)}
               {publishFailed.length === 0 ? <tr><Td className="text-ink-400">실패한 게시가 없습니다.</Td><Td /><Td /><Td /><Td /></tr> : null}
+            </tbody>
+          </Table>
+        </div>
+      ) : null}
+
+      {tab === 'jobs' ? (
+        <div className="space-y-4">
+          <Notice tone="neutral">외부 스케줄러(EventBridge 등)에 아래 주기로 등록합니다. 마지막 실행이 주기의 3배를 넘기면 &apos;지연&apos; 으로 표시합니다.</Notice>
+          <Table>
+            <thead><tr><Th>배치</Th><Th>주기</Th><Th>마지막 시작</Th><Th>마지막 종료</Th><Th>결과</Th><Th>소요</Th><Th>실행/실패</Th><Th>하는 일</Th></tr></thead>
+            <tbody>
+              {CRON_JOBS.map((j) => {
+                const h = beatByName.get(j.name);
+                const late = isLate(h?.lastFinishedAt ?? null, j.intervalSec);
+                return (
+                  <tr key={j.name}>
+                    <Td className="font-mono text-[12px] font-semibold">{j.path}</Td>
+                    <Td className="whitespace-nowrap text-[12px]">{j.schedule}</Td>
+                    <Td className="whitespace-nowrap text-[12px]">{h?.lastStartedAt ? formatKst(h.lastStartedAt) : '-'}</Td>
+                    <Td className="whitespace-nowrap text-[12px]">{h?.lastFinishedAt ? formatKst(h.lastFinishedAt) : '-'}</Td>
+                    <Td>{!h ? <Badge tone="neutral">기록 없음</Badge> : late ? <Badge tone="warning">지연</Badge> : h.lastOk ? <Badge tone="success">정상</Badge> : <Badge tone="danger">실패 {h.lastStatus ?? ''}</Badge>}</Td>
+                    <Td className="tabular-nums text-[12px]">{h?.lastDurationMs != null ? `${formatNumber(h.lastDurationMs)}ms` : '-'}</Td>
+                    <Td className="tabular-nums text-[12px]">{h ? `${formatNumber(h.runCount)} / ${formatNumber(h.failCount)}` : '-'}</Td>
+                    <Td className="text-[12px] text-ink-500">{j.description}{h?.lastError && !h.lastOk ? <span className="block text-danger-500">{h.lastError}</span> : null}</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+          {eventStats ? (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatTile label="처리 대기 이벤트" value={`${formatNumber(eventStats.pending)}건`} sub={eventStats.oldestPendingAt ? `가장 오래된 ${formatKst(eventStats.oldestPendingAt)}` : undefined} tone={eventStats.pending > 500 ? 'warning' : 'neutral'} />
+              <StatTile label="재시도 소진" value={`${formatNumber(eventStats.failed)}건`} tone={eventStats.failed ? 'danger' : 'neutral'} />
+              <StatTile label="최근 24시간 이벤트" value={`${formatNumber(eventStats.last24h)}건`} />
+            </div>
+          ) : null}
+          <h2 className="text-[15px] font-black">재시도 소진 이벤트</h2>
+          <Table>
+            <thead><tr><Th>시각</Th><Th>종류</Th><Th>기관</Th><Th>시도</Th><Th>오류</Th><Th></Th></tr></thead>
+            <tbody>
+              {failedEvents.map((e) => (
+                <tr key={e.id}>
+                  <Td className="whitespace-nowrap text-[12px]">{formatKst(e.occurredAt)}</Td>
+                  <Td className="font-mono text-[12px]">{e.type}</Td>
+                  <Td className="font-mono text-[12px]">{e.merchantId}</Td>
+                  <Td className="tabular-nums">{e.attempts}</Td>
+                  <Td className="text-[12px] text-danger-500">{e.lastError}</Td>
+                  <Td><ActionButton action={retryEventAction} values={{ id: e.id }} label="다시 처리" /></Td>
+                </tr>
+              ))}
+              {failedEvents.length === 0 ? <tr><Td className="text-ink-400">재시도 소진 이벤트가 없습니다.</Td></tr> : null}
             </tbody>
           </Table>
         </div>

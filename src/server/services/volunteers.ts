@@ -8,6 +8,7 @@ import { ownedContentItemId } from './attribution';
 import type { VolunteerApplicationStatus } from '@/generated/prisma/enums';
 import { currentTermsDoc } from './terms';
 import { issueVolunteerAgreement, type AgreementMeta } from './agreements';
+import { emitDomainEvent, emitDomainEventSafe } from './events';
 import { sendMtForPayer } from './charge-flow';
 import { filterContent } from './content-filter';
 import * as tpl from './mt-templates';
@@ -143,6 +144,17 @@ export async function applyVolunteer(input: ApplyVolunteerInput) {
           contentItemId,
         },
       });
+      await emitDomainEvent(
+        {
+          merchantId: merchant.id,
+          type: 'volunteer.applied',
+          subjectType: 'volunteer_application',
+          subjectId: app.id,
+          payerId: payer.id,
+          payload: { interests, source: input.source ?? null },
+        },
+        tx,
+      );
       return app.id;
     });
   } catch (e) {
@@ -150,7 +162,8 @@ export async function applyVolunteer(input: ApplyVolunteerInput) {
     throw e;
   }
 
-  await issueVolunteerAgreement(applicationId, input.meta ?? {}).catch((e) =>
+  // 신청서 열람 링크도 안내한다(정기후원 약정서와 같은 기준). 예전에는 notify 를 넘기지 않아 링크가 나가지 않았다.
+  await issueVolunteerAgreement(applicationId, input.meta ?? {}, { notify: true }).catch((e) =>
     logger.error('자원봉사 신청서 생성 실패', { applicationId, message: (e as Error).message }),
   );
   await sendMtForPayer(payer.id, tpl.tplVolunteerReceived({ merchantName: merchant.displayName }), null, merchant.id).catch((e) =>
@@ -200,7 +213,18 @@ export async function decideVolunteer(input: {
       logger.warn('자원봉사 승인 안내 실패', { message: (e as Error).message }),
     );
   }
+  await emitDomainEventSafe({
+    merchantId: app.merchantId,
+    type: input.decision === 'APPROVE' ? 'volunteer.approved' : 'volunteer.rejected',
+    subjectType: 'volunteer_application',
+    subjectId: app.id,
+    payerId: app.payerId,
+    payload: { assignment: input.decision === 'APPROVE' ? assignment : null },
+  });
 }
+
+/** 누적 봉사 시간 이정표(시간). 저니가 봉사 감사장을 보낼 때 쓴다. */
+export const VOLUNTEER_HOUR_MILESTONES = [10, 30, 50, 100, 200, 500];
 
 export async function recordVolunteerActivity(input: {
   merchantId: string;
@@ -224,18 +248,57 @@ export async function recordVolunteerActivity(input: {
   }
   const title = input.title.trim();
   if (!title) throw new VolunteerError('활동 내용을 입력해 주세요.');
-  return prisma.volunteerActivity.create({
-    data: {
-      id: newId(),
-      merchantId: input.merchantId,
-      payerId: input.payerId,
-      activityDate: new Date(`${input.activityDate}T00:00:00Z`),
-      minutes: input.minutes,
-      title: title.slice(0, 100),
-      note: input.note?.trim().slice(0, 300) || null,
-      confirmedBy: input.userId,
-    },
+  const before = await prisma.volunteerActivity.aggregate({
+    where: { merchantId: input.merchantId, payerId: input.payerId },
+    _sum: { minutes: true },
   });
+  const activity = await prisma.$transaction(async (tx) => {
+    const created = await tx.volunteerActivity.create({
+      data: {
+        id: newId(),
+        merchantId: input.merchantId,
+        payerId: input.payerId,
+        activityDate: new Date(`${input.activityDate}T00:00:00Z`),
+        minutes: input.minutes,
+        title: title.slice(0, 100),
+        note: input.note?.trim().slice(0, 300) || null,
+        confirmedBy: input.userId,
+      },
+    });
+    const totalMinutes = (before._sum.minutes ?? 0) + input.minutes;
+    await emitDomainEvent(
+      {
+        merchantId: input.merchantId,
+        type: 'volunteer.activity_recorded',
+        subjectType: 'volunteer_activity',
+        subjectId: created.id,
+        payerId: input.payerId,
+        payload: { applicationId: approved.id, activityDate: input.activityDate, minutes: input.minutes, title: created.title, totalMinutes },
+      },
+      tx,
+    );
+    // 누적 시간이 이정표를 넘는 순간 한 번(이정표마다 dedupe).
+    const prevH = Math.floor((before._sum.minutes ?? 0) / 60);
+    const nowH = Math.floor(totalMinutes / 60);
+    for (const h of VOLUNTEER_HOUR_MILESTONES) {
+      if (prevH < h && nowH >= h) {
+        await emitDomainEvent(
+          {
+            merchantId: input.merchantId,
+            type: 'volunteer.milestone',
+            subjectType: 'volunteer_application',
+            subjectId: approved.id,
+            payerId: input.payerId,
+            dedupeKey: `volunteer.milestone:${input.merchantId}:${input.payerId}:${h}`,
+            payload: { hours: h, totalMinutes },
+          },
+          tx,
+        );
+      }
+    }
+    return created;
+  });
+  return activity;
 }
 
 /** CSV 수식 주입 방지 (= + - @ 탭 줄바꿈으로 시작하는 칸) */

@@ -67,6 +67,7 @@ export async function decideVolunteerAction(_p: StudioActionState, f: FormData) 
   return withMerchant(async (merchantId, userId) => {
     const decision = text(f, 'decision') === 'REJECT' ? 'REJECT' : 'APPROVE';
     await decideVolunteer({ merchantId, applicationId: text(f, 'id'), decision, assignment: text(f, 'assignment'), memo: text(f, 'memo'), userId });
+    await writeAudit({ actorUserId: userId, action: decision === 'APPROVE' ? 'VOLUNTEER_APPROVE' : 'VOLUNTEER_REJECT', targetType: 'volunteer_application', targetId: text(f, 'id'), after: { merchantId } });
     revalidatePath('/studio/volunteers');
     return { ok: true, message: decision === 'APPROVE' ? '승인하고 배정 안내를 보냈습니다.' : '신청을 반려했습니다.' };
   });
@@ -76,7 +77,8 @@ export async function recordActivityAction(_p: StudioActionState, f: FormData) {
   return withMerchant(async (merchantId, userId) => {
     const hours = Number(text(f, 'hours') || '0');
     const minutes = Math.round(hours * 60);
-    await recordVolunteerActivity({ merchantId, payerId: text(f, 'payerId'), activityDate: text(f, 'date'), minutes, title: text(f, 'title'), note: text(f, 'note'), userId });
+    const act = await recordVolunteerActivity({ merchantId, payerId: text(f, 'payerId'), activityDate: text(f, 'date'), minutes, title: text(f, 'title'), note: text(f, 'note'), userId });
+    await writeAudit({ actorUserId: userId, action: 'VOLUNTEER_ACTIVITY_RECORD', targetType: 'volunteer_activity', targetId: act.id, after: { merchantId, minutes, date: text(f, 'date') } });
     revalidatePath('/studio/volunteers');
     return { ok: true, message: '활동을 기록했습니다.' };
   });
@@ -236,20 +238,22 @@ export async function regenerateContentAction(_p: StudioActionState, f: FormData
 }
 
 export async function schedulePublishAction(_p: StudioActionState, f: FormData) {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     const id = text(f, 'id');
     const platforms = list(f, 'platform').filter((p): p is SocialPlatform => PLATFORMS.includes(p as SocialPlatform));
     const at = text(f, 'at') ? new Date(`${text(f, 'at')}:00+09:00`) : new Date();
     if (Number.isNaN(at.getTime())) return { ok: false, message: '게시 시각을 확인해 주세요.' };
     const created = await schedulePublish(merchantId, id, platforms, at);
+    if (created.length) await writeAudit({ actorUserId: userId, action: 'CONTENT_PUBLISH_SCHEDULE', targetType: 'content_item', targetId: id, after: { platforms, at: at.toISOString() } });
     revalidatePath(`/studio/content/${id}`);
     return { ok: true, message: created.length ? `${created.length}개 채널에 게시를 예약했습니다.` : '이미 게시된 채널입니다.' };
   });
 }
 
 export async function cancelPublishAction(_p: StudioActionState, f: FormData) {
-  return withMerchant(async (merchantId) => {
+  return withMerchant(async (merchantId, userId) => {
     await cancelPublish(merchantId, text(f, 'publishId'));
+    await writeAudit({ actorUserId: userId, action: 'CONTENT_PUBLISH_CANCEL', targetType: 'content_publish', targetId: text(f, 'publishId'), after: { itemId: text(f, 'id') } });
     revalidatePath(`/studio/content/${text(f, 'id')}`);
     return { ok: true, message: '예약을 취소했습니다.' };
   });

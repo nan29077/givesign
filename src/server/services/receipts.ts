@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '@/server/db';
+import { emitDomainEvent } from './events';
 import { newId } from '@/lib/id';
 import {
   decrypt,
@@ -399,6 +400,17 @@ export async function issueReceipt(input: IssueReceiptInput) {
     if (bound.count !== charges.length) {
       throw new ReceiptError('발급하는 사이 후원 상태가 바뀌어(환불·다른 발급) 중단했습니다. 다시 시도해 주세요.');
     }
+    await emitDomainEvent(
+      {
+        merchantId: merchant.id,
+        type: 'receipt.issued',
+        subjectType: 'donation_receipt',
+        subjectId: created.id,
+        payerId: payer.id,
+        payload: { taxYear: input.taxYear, totalAmount: total, chargeCount: charges.length, issuedBy: input.issuedBy },
+      },
+      tx,
+    );
     return created;
   });
 

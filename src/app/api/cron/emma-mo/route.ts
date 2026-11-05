@@ -1,8 +1,6 @@
-import { NextResponse } from 'next/server';
-import { env, isLocal } from '@/lib/env';
-import { safeEqual } from '@/lib/crypto';
+import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
-import { kv } from '@/server/redis';
+import { runCronJob, CRON_HTTP_STATUS } from '@/server/cron';
 import { runEmmaMoPolling } from '@/server/services/emma-mo-ingest';
 
 export const runtime = 'nodejs';
@@ -35,73 +33,45 @@ export const dynamic = 'force-dynamic';
  * 잠금이 영원히 남지 않게 하는 상한일 뿐이다.
  */
 const LOCK_TTL_SEC = 50;
-const LOCK_KEY = 'cron:emma-mo:lock';
-
-function authorize(req: Request): { ok: boolean; reason?: string } {
-  const expected = env.cron.secret;
-  if (!expected) {
-    // 비밀 미설정: 로컬에서만 열어 둔다. 운영/스테이징에서는 어떤 호출도 받지 않는다.
-    return isLocal ? { ok: true } : { ok: false, reason: 'CRON_SECRET 미설정' };
-  }
-  const header = req.headers.get('authorization') ?? '';
-  const matched = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (!matched) return { ok: false, reason: 'Authorization: Bearer 헤더 없음' };
-  return safeEqual(expected, matched[1]!.trim()) ? { ok: true } : { ok: false, reason: '비밀 불일치' };
-}
 
 export async function GET(req: Request) {
-  const auth = authorize(req);
-  if (!auth.ok) {
-    logger.warn('EMMA MO 폴링 호출 거절', { reason: auth.reason });
-    return NextResponse.json({ ok: false, message: '인증되지 않은 요청입니다.' }, { status: 401 });
-  }
-
-  if (!env.emma.enabled) {
-    // 꺼져 있는 것은 오류가 아니다. 스케줄러가 계속 호출해도 조용히 넘어간다.
-    return NextResponse.json({
-      ok: true,
-      skipped: true,
-      message: 'EMMA 연동이 꺼져 있습니다. (EMMA_ENABLED=false)',
-    });
-  }
-
-  const locked = await kv.setnx(LOCK_KEY, String(Date.now()), LOCK_TTL_SEC).catch(() => true);
-  if (!locked) {
-    return NextResponse.json({ ok: true, skipped: true, message: '이전 폴링이 아직 진행 중입니다.' });
-  }
-
-  const started = Date.now();
-  try {
-    const result = await runEmmaMoPolling();
-    const latencyMs = Date.now() - started;
-
-    if (result.handed > 0 || result.failed > 0) {
-      logger.info('EMMA MO 폴링', {
-        fetched: result.fetched,
-        handed: result.handed,
-        skipped: result.skipped,
-        failed: result.failed,
-        latencyMs,
-      });
-    }
-
-    return NextResponse.json({
-      ok: result.failed === 0,
-      at: new Date().toISOString(),
-      latencyMs,
-      fetched: result.fetched,
-      handed: result.handed,
-      skipped: result.skipped,
-      failed: result.failed,
-      // 상세는 운영 진단용이다. 전화번호·본문은 담기지 않는다(mo_key 와 결과 코드뿐).
-      details: result.details,
-    });
-  } catch (e) {
-    // 폴링 자체가 실패한 경우(예: EMMA DB 접속 불가). 다음 호출에서 다시 시도한다.
-    const message = (e as Error).message;
-    logger.error('EMMA MO 폴링 실패', { message });
-    return NextResponse.json({ ok: false, message }, { status: 500 });
-  } finally {
-    await kv.del(LOCK_KEY).catch(() => undefined);
-  }
+  // 수신 배치라 잠금 저장소 장애 때도 돈다(failOpenLock — 레지스트리). 중복 결제는
+  // `mo_inbound_message (provider_code, provider_message_id)` UNIQUE 가 막는다.
+  // 끝날 때는 내 잠금일 때만 푼다(예전에는 무조건 지워, 겹친 다음 실행의 잠금까지 지웠다).
+  return runCronJob(
+    req,
+    'emma-mo',
+    LOCK_TTL_SEC,
+    async () => {
+      const started = Date.now();
+      try {
+        const result = await runEmmaMoPolling();
+        const latencyMs = Date.now() - started;
+        if (result.handed > 0 || result.failed > 0) {
+          logger.info('EMMA MO 폴링', { fetched: result.fetched, handed: result.handed, skipped: result.skipped, failed: result.failed, latencyMs });
+        }
+        return {
+          ok: result.failed === 0,
+          at: new Date().toISOString(),
+          latencyMs,
+          fetched: result.fetched,
+          handed: result.handed,
+          skipped: result.skipped,
+          failed: result.failed,
+          // 상세는 운영 진단용이다. 전화번호·본문은 담기지 않는다(mo_key 와 결과 코드뿐).
+          details: result.details,
+        };
+      } catch (e) {
+        // 폴링 자체가 실패한 경우(예: EMMA DB 접속 불가). 다음 호출에서 다시 시도한다.
+        const message = (e as Error).message;
+        logger.error('EMMA MO 폴링 실패', { message });
+        return { ok: false, message, [CRON_HTTP_STATUS]: 500 };
+      }
+    },
+    {
+      failOpenLock: true,
+      // 꺼져 있는 것은 오류가 아니다. 스케줄러가 계속 호출해도 조용히 넘어간다.
+      precheck: () => (env.emma.enabled ? null : { message: 'EMMA 연동이 꺼져 있습니다. (EMMA_ENABLED=false)' }),
+    },
+  );
 }

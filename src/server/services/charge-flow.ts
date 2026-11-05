@@ -14,6 +14,7 @@ import { filterContent, normalizeKeyword, normalizeText, splitKeyword, type Bann
 import { donationMeta, matchCampaignKeyword } from './fundraising';
 import { resolveAlimtalkRoute, sendAlimtalk } from './alimtalk';
 import { emitMerchantEvent } from './webhooks';
+import { emitDomainEvent } from './events';
 import { checkLimits, commitCounters, rollbackCounters, registerFailure, clearFailures, resolvePolicy } from './limits';
 import { withAdvisoryLock } from '@/server/db';
 import { consumeRateLimit } from '@/server/rate-limit';
@@ -1576,6 +1577,29 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
           amount: charge.amount,
           fees,
           occurredAt: approved!.approvedAt,
+        },
+        tx,
+      );
+      // 후속 자동화(기관 알림·명단 연결·목표 달성·저니)의 출발점. 승인 기록과 같은 트랜잭션이라
+      // "결제는 됐는데 후속이 영영 안 도는" 틈이 없다. 소비자 실패는 이 결제 결과를 바꾸지 않는다.
+      await emitDomainEvent(
+        {
+          merchantId: charge.merchantId,
+          type: 'charge.paid',
+          subjectType: 'charge',
+          subjectId: chargeId,
+          payerId: charge.payerId,
+          occurredAt: approved!.approvedAt,
+          payload: {
+            amount: charge.amount,
+            channel: charge.channel,
+            campaignId: charge.campaignId,
+            source: charge.source,
+            contentItemId: charge.contentItemId,
+            isTest: charge.isTest,
+            payerLabel: charge.displayName,
+            recurring: charge.paymentMode === 'RECURRING',
+          },
         },
         tx,
       );

@@ -2393,6 +2393,8 @@ model Campaign {
   sortOrder   Int            @default(0) @map("sort_order")
   /// 종료 후 결과 보고 (사용 내역·성과)
   resultReport String?       @map("result_report")
+  /// 모금액이 목표에 처음 닿은 시각. 이벤트(campaign.goal_reached)는 이 값이 비어 있을 때 한 번만 낸다.
+  goalReachedAt DateTime?    @map("goal_reached_at") @db.Timestamptz(3)
   closedAt    DateTime?      @map("closed_at") @db.Timestamptz(3)
   archivedAt  DateTime?      @map("archived_at") @db.Timestamptz(3)
   createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -3412,4 +3414,106 @@ model ContentPublish {
   @@unique([itemId, platform])
   @@index([status, scheduledAt])
   @@map("content_publish")
+}
+
+
+// ===========================================================================
+// 자동 실행 계층 (2026-11-05 고도화 1단계)
+// ===========================================================================
+
+/// 도메인 이벤트(아웃박스). 결제·약정·봉사·영수증 등 업무 트랜잭션 **안에서** 함께 기록한다.
+/// 소비자(기관 알림·명단 연결·목표 달성·저니)는 /api/cron/events 가 소비자별 1회로 처리한다.
+/// 이벤트 행은 바꾸지 않는 기록이고, 처리 상태만 갱신한다.
+model DomainEvent {
+  id            String    @id
+  merchantId    String    @map("merchant_id")
+  /// charge.paid · recurring.pledged · volunteer.approved … (src/server/services/events.ts DOMAIN_EVENT_TYPES)
+  type          String
+  subjectType   String    @map("subject_type")
+  subjectId     String    @map("subject_id")
+  payerId       String?   @map("payer_id")
+  payload       Json      @default("{}")
+  /// 같은 사건을 두 번 기록하지 않는 키 (예: charge.paid:<chargeId>)
+  dedupeKey     String    @unique @map("dedupe_key")
+  occurredAt    DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  /// PENDING · DONE · FAILED(재시도 소진)
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lockedAt      DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy      String?   @map("locked_by")
+  lastError     String?   @map("last_error")
+  processedAt   DateTime? @map("processed_at") @db.Timestamptz(3)
+
+  deliveries DomainEventDelivery[]
+
+  @@index([status, nextAttemptAt])
+  @@index([merchantId, type, occurredAt])
+  @@index([payerId, occurredAt])
+  @@map("domain_event")
+}
+
+/// 소비자별 처리 기록. (이벤트, 소비자) 1행 — 재시도해도 이미 끝난 소비자는 다시 돌지 않는다.
+model DomainEventDelivery {
+  id        String    @id
+  eventId   String    @map("event_id")
+  consumer  String
+  /// DONE · FAILED · SKIPPED
+  status    String
+  attempts  Int       @default(1)
+  error     String?
+  doneAt    DateTime? @map("done_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  event DomainEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, consumer])
+  @@map("domain_event_delivery")
+}
+
+/// 배치 실행 기록(배치마다 1행). 주기는 src/server/cron-registry.ts 에 선언하고, 관리자 화면이 지연을 판단한다.
+model CronHeartbeat {
+  name           String    @id
+  lastStartedAt  DateTime? @map("last_started_at") @db.Timestamptz(3)
+  lastFinishedAt DateTime? @map("last_finished_at") @db.Timestamptz(3)
+  lastOk         Boolean?  @map("last_ok")
+  lastStatus     Int?      @map("last_status")
+  lastError      String?   @map("last_error")
+  lastDurationMs Int?      @map("last_duration_ms")
+  runCount       Int       @default(0) @map("run_count")
+  failCount      Int       @default(0) @map("fail_count")
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("cron_heartbeat")
+}
+
+/// 승인 요청(통합 승인 대기함의 원천 중 하나). 저니 승인 단계·영수증 일괄 발급·자동 발송 문서 등
+/// "시스템이 준비하고 사람이 확인하는" 일을 한 곳에 쌓는다. 콘텐츠 검토·봉사 신청처럼 이미 자기 상태가 있는 것은
+/// 이 표에 복사하지 않고 대기함이 원천 테이블에서 직접 모은다(src/server/services/inbox.ts).
+model ApprovalRequest {
+  id          String    @id
+  merchantId  String    @map("merchant_id")
+  /// JOURNEY_STEP · RECEIPT_BATCH · DOCUMENT_SEND · CONTENT_CALENDAR … (approvals.ts 처리기 등록 키)
+  kind        String
+  title       String
+  summary     String?
+  payload     Json      @default("{}")
+  subjectType String?   @map("subject_type")
+  subjectId   String?   @map("subject_id")
+  payerId     String?   @map("payer_id")
+  /// 같은 일을 두 번 요청하지 않는 키
+  dedupeKey   String    @unique @map("dedupe_key")
+  /// PENDING · PROCESSING · APPROVED · REJECTED · EXPIRED · CANCELED · FAILED
+  status      String    @default("PENDING")
+  error       String?
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz(3)
+  decidedBy   String?   @map("decided_by")
+  note        String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([merchantId, status, createdAt])
+  @@map("approval_request")
 }
