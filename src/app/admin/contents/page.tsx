@@ -36,7 +36,7 @@ export default async function AdminContentsPage({
     }),
     prisma.contentPost.count({ where: { type: 'NOTICE' } }),
     prisma.contentPost.count({ where: { type: 'FAQ' } }),
-    prisma.contentPost.count({ where: { published: true } }),
+    prisma.contentPost.count({ where: { published: true, archivedAt: null } }),
   ]);
 
   return (
@@ -116,16 +116,21 @@ export default async function AdminContentsPage({
                       <CardTitle>{p.title}</CardTitle>
                       {p.pinned ? <Badge tone="warning">고정</Badge> : null}
                       <Badge tone={p.published ? 'success' : 'neutral'}>{p.published ? '공개' : '비공개'}</Badge>
+                      {p.archivedAt ? <Badge tone="warning">보관됨 · 공개 화면 미노출</Badge> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-ink-400">수정 {formatKst(p.updatedAt, false)}</span>
-                      <ActionButton disabled={!canEdit}
-                        action={deleteContentPost}
-                        values={{ id: p.id }}
-                        label="삭제"
-                        variant="danger"
-                        confirm={`"${p.title}" 게시글을 삭제합니다.`}
-                      />
+                      {p.archivedAt ? (
+                        <ActionButton disabled={!canEdit} action={deleteContentPost} values={{ id: p.id, restore: '1' }} label="복원" variant="secondary" />
+                      ) : (
+                        <ActionButton disabled={!canEdit}
+                          action={deleteContentPost}
+                          values={{ id: p.id }}
+                          label="보관"
+                          variant="danger"
+                          confirm={`"${p.title}" 게시글을 보관합니다. 공개 화면에서 내려가며 나중에 복원할 수 있습니다.`}
+                        />
+                      )}
                     </div>
                   </div>
 

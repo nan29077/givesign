@@ -17,7 +17,7 @@ const UNCATEGORIZED = '기타';
 
 export default async function FaqPage() {
   const allPosts = await prisma.contentPost.findMany({
-    where: { type: 'FAQ', published: true },
+    where: { type: 'FAQ', published: true, archivedAt: null },
     orderBy: { sortOrder: 'asc' },
   });
   const posts = allPosts.filter((post) => !isLegacyDonationContent(post));

@@ -8,7 +8,7 @@ import { formatKst } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
 import { sourceLabel } from '@/lib/attribution';
-import { listSupporters, pendingPledgeRequests, ROLE_LABEL, SEGMENT_LABEL, SEGMENTS, type Segment, type SupporterRole } from '@/server/services/supporters';
+import { listSupporters, pendingPledgeRequests, PLEDGE_REMINDER_INTERVAL_DAYS, ROLE_LABEL, SEGMENT_LABEL, SEGMENTS, type Segment, type SupporterRole } from '@/server/services/supporters';
 import { pledgeReminderAction } from '@/app/actions/automation';
 
 export const dynamic = 'force-dynamic';
@@ -128,7 +128,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
             </ul>
           ) : null}
           <div className="mt-4">
-            <ActionForm action={pledgeReminderAction} submitLabel="약정 안내 다시 보내기" variant="secondary" confirmMessage={`${pledgePending.length}명에게 정기후원 약정 링크를 다시 보냅니다.`} />
+            <ActionForm action={pledgeReminderAction} submitLabel="약정 안내 다시 보내기" variant="secondary" confirmMessage={`${pledgePending.length}명에게 정기후원 약정 링크를 문자로 다시 보냅니다. 최근 ${PLEDGE_REMINDER_INTERVAL_DAYS}일 안에 이미 받은 분은 제외됩니다.`} />
           </div>
         </Card>
         <Card>

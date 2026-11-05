@@ -1976,6 +1976,8 @@ model Banner {
   startsAt  DateTime? @map("starts_at") @db.Timestamptz(3)
   endsAt    DateTime? @map("ends_at") @db.Timestamptz(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// 보관(되돌릴 수 있는 삭제). 보관된 배너는 공개 화면에 나오지 않는다.
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
 
   @@index([position, active])
   @@map("banner")
@@ -1992,6 +1994,8 @@ model ContentPost {
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// 보관(되돌릴 수 있는 삭제). 보관된 글은 공개 화면에 나오지 않는다.
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
 
   @@index([type, published])
   @@map("content_post")
@@ -3138,6 +3142,9 @@ model NoticeRun {
   error          String?
   startedAt      DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
   finishedAt     DateTime? @map("finished_at") @db.Timestamptz(3)
+  /// 실행 선점(수동 "지금 보내기"·배치 겹침 방지). 조건부 갱신으로 잡고 TTL 이 지나면 다른 실행이 이어받는다.
+  lockedAt       DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy       String?   @map("locked_by")
 
   merchant   MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   deliveries NoticeDelivery[]
@@ -3152,7 +3159,7 @@ model NoticeDelivery {
   id          String   @id
   noticeRunId String   @map("notice_run_id")
   payerId     String   @map("payer_id")
-  /// SENT · FAILED · SKIPPED
+  /// SENDING(발송 전 선점) · SENT · FAILED · SKIPPED
   status      String
   channel     String?
   amount      BigInt   @default(0)
@@ -3342,7 +3349,7 @@ model SocialChannel {
   accessTokenEnc  String?        @map("access_token_enc")
   refreshTokenEnc String?        @map("refresh_token_enc")
   expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
-  /// CONNECTED · EXPIRED · REVOKED
+  /// CONNECTED · PENDING_OAUTH(실연동 OAuth 미구현 — 게시 불가) · EXPIRED · REVOKED
   status          String         @default("CONNECTED")
   /// mock 연결이면 실제 게시가 일어나지 않는다
   mock            Boolean        @default(true)

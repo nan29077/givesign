@@ -38,7 +38,7 @@ export default async function AdminBannersPage() {
 
   const now = new Date();
   const liveCount = banners.filter(
-    (b) => b.active && (!b.startsAt || b.startsAt <= now) && (!b.endsAt || b.endsAt >= now),
+    (b) => !b.archivedAt && b.active && (!b.startsAt || b.startsAt <= now) && (!b.endsAt || b.endsAt >= now),
   ).length;
 
   return (
@@ -115,16 +115,21 @@ export default async function AdminBannersPage() {
                       <Badge tone="brand">{positionLabel[b.position] ?? b.position}</Badge>
                       <CardTitle>{b.title}</CardTitle>
                       <Badge tone={b.active ? 'success' : 'neutral'}>{b.active ? '활성' : '비활성'}</Badge>
+                      {b.archivedAt ? <Badge tone="warning">보관됨 · 공개 화면 미노출</Badge> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-ink-400">등록 {formatKst(b.createdAt, false)}</span>
-                      <ActionButton disabled={!canEdit}
-                        action={deleteBanner}
-                        values={{ id: b.id }}
-                        label="삭제"
-                        variant="danger"
-                        confirm={`배너 "${b.title}" 을(를) 삭제합니다.`}
-                      />
+                      {b.archivedAt ? (
+                        <ActionButton disabled={!canEdit} action={deleteBanner} values={{ id: b.id, restore: '1' }} label="복원" variant="secondary" />
+                      ) : (
+                        <ActionButton disabled={!canEdit}
+                          action={deleteBanner}
+                          values={{ id: b.id }}
+                          label="보관"
+                          variant="danger"
+                          confirm={`배너 "${b.title}" 을(를) 보관합니다. 공개 화면에서 내려가며 나중에 복원할 수 있습니다.`}
+                        />
+                      )}
                     </div>
                   </div>
 

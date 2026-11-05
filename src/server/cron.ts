@@ -20,6 +20,9 @@ export function authorizeCron(req: Request): { ok: boolean; reason?: string } {
   return safeEqual(expected, matched[1]!.trim()) ? { ok: true } : { ok: false, reason: '비밀 불일치' };
 }
 
+/** job 결과에 이 키로 숫자를 넣으면 응답 상태 코드로 쓴다(본문에서는 빠진다). 예: 일부 단계 실패 → 500. */
+export const CRON_HTTP_STATUS = '__httpStatus' as const;
+
 export async function runCronJob(
   req: Request,
   name: string,
@@ -42,8 +45,8 @@ export async function runCronJob(
   }
   if (!locked) return NextResponse.json({ ok: true, skipped: true, message: '이전 실행이 아직 진행 중입니다.' });
   try {
-    const result = await job();
-    return NextResponse.json({ ok: true, ...result });
+    const { [CRON_HTTP_STATUS]: status, ...result } = await job();
+    return NextResponse.json({ ok: true, ...result }, { status: typeof status === 'number' ? status : 200 });
   } catch (e) {
     logger.error(`${name} 배치 실패`, { message: (e as Error).message });
     return NextResponse.json({ ok: false, message: '배치 실행 중 오류가 발생했습니다.' }, { status: 500 });

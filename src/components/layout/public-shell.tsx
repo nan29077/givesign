@@ -49,7 +49,7 @@ export async function PublicShell({
 
   // 문의 위젯의 FAQ 탭에 보여줄 상위 FAQ (고정글 우선)
   const faqCandidates = await prisma.contentPost.findMany({
-    where: { type: 'FAQ', published: true },
+    where: { type: 'FAQ', published: true, archivedAt: null },
     orderBy: [{ pinned: 'desc' }, { sortOrder: 'asc' }],
     take: 30,
     select: { id: true, title: true, body: true },

@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { kstDateKey } from '@/lib/datetime';
 import { featureVolunteerEnabled } from '@/lib/env';
 import { prisma } from '@/server/db';
+import { ownedContentItemId } from './attribution';
 import type { VolunteerApplicationStatus } from '@/generated/prisma/enums';
 import { currentTermsDoc } from './terms';
 import { issueVolunteerAgreement, type AgreementMeta } from './agreements';
@@ -99,6 +100,7 @@ export async function applyVolunteer(input: ApplyVolunteerInput) {
   const clean = (v: string | null | undefined, max: number) =>
     v?.trim() ? filterContent(v.trim(), { bannedWords: [], maxLength: max }).clean : null;
 
+  const contentItemId = await ownedContentItemId(merchant.id, input.contentItemId);
   let applicationId: string;
   try {
     applicationId = await prisma.$transaction(async (tx) => {
@@ -138,7 +140,7 @@ export async function applyVolunteer(input: ApplyVolunteerInput) {
           wish: clean(input.wish, 100),
           message: clean(input.message, 300),
           source: input.source ?? null,
-          contentItemId: input.contentItemId ?? null,
+          contentItemId,
         },
       });
       return app.id;

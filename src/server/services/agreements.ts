@@ -1,5 +1,5 @@
 import { env } from '@/lib/env';
-import { decrypt, sha256 } from '@/lib/crypto';
+import { decrypt, maskPhone, sha256 } from '@/lib/crypto';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
 import { formatNumber } from '@/lib/money';
@@ -47,6 +47,17 @@ export function agreementHash(snapshot: unknown): string {
   return sha256(stableStringify(snapshot));
 }
 
+/**
+ * 약정서에 남길 기관 문의처. 스냅샷은 영구 보존되고 후원자 화면·인쇄에 나가므로
+ * 휴대폰 번호(담당자 개인 번호일 수 있음)와 이메일 주소는 마스킹한다. 일반 전화(대표번호)는 그대로 둔다.
+ */
+export function maskedIssuerContact(name: string | null, phone: string | null, email: string | null): string | null {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  const phoneOut = !phone ? null : /^01[016789]/.test(digits) ? maskPhone(digits) : phone;
+  const emailOut = !email ? null : email.replace(/^([^@]{0,2})[^@]*@/, (_m, head: string) => `${head}***@`);
+  return [name, phoneOut, emailOut].filter(Boolean).join(' · ') || null;
+}
+
 async function issuerSnapshot(merchantId: string) {
   const m = await prisma.merchantProfile.findUniqueOrThrow({
     where: { id: merchantId },
@@ -61,7 +72,7 @@ async function issuerSnapshot(merchantId: string) {
     businessNo: m.businessNo ?? null,
     representative: m.representativeName ?? null,
     address: m.address ?? null,
-    contact: [m.contactName, m.contactPhone, m.contactEmail].filter(Boolean).join(' · ') || null,
+    contact: maskedIssuerContact(m.contactName ?? null, m.contactPhone ?? null, m.contactEmail ?? null),
     fundraisingRegNo: m.fundraisingRegNo ?? null,
   };
 }
@@ -163,6 +174,7 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
   const snapshot = {
     kind: 'RECURRING_PLEDGE',
     issuer: await issuerSnapshot(r.merchantId),
+    // 후원자 표시 이름은 약정 당사자 표기로 필요해 그대로 둔다(전화는 마스킹 값만). 규칙상 예외 — 점검 2026-11-05 C.
     donor: { name: r.payer.displayName ?? '후원자', phoneMasked: r.payer.phoneMasked },
     pledge: {
       amount: r.amount.toString(),
@@ -258,6 +270,22 @@ export async function completeESign(requestId: string, outcome: 'SIGNED' | 'DECL
     data: { esignStatus: outcome, signedAt: outcome === 'SIGNED' ? new Date() : null },
   });
   return { ok: true as const, already: updated.count === 0, status: outcome };
+}
+
+/** 이 기간 동안 결과가 오지 않은 전자서명 요청은 만료로 닫는다(서명 대기 집계가 영구히 쌓이지 않게). */
+export const ESIGN_REQUEST_TTL_DAYS = 30;
+
+/**
+ * 오래된 전자서명 요청(REQUESTED)을 EXPIRED 로 닫는다(/api/cron/cleanup).
+ * 조건부 갱신이라 그 사이 도착한 서명 결과(completeESign)를 덮어쓰지 않는다.
+ * 약정서 자체(동의 기록 + 해시)는 그대로 유효하다 — 전자서명은 덧붙이는 확인 수단이다.
+ */
+export async function expireStaleESignRequests(now = new Date()): Promise<number> {
+  const r = await prisma.agreementDocument.updateMany({
+    where: { esignStatus: 'REQUESTED', createdAt: { lt: new Date(now.getTime() - ESIGN_REQUEST_TTL_DAYS * 86_400_000) } },
+    data: { esignStatus: 'EXPIRED' },
+  });
+  return r.count;
 }
 
 /** 문서 해시 검증: 저장된 스냅샷이 발급 당시와 같은지. */

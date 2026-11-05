@@ -20,7 +20,11 @@ export interface ContentBrief {
   campaignTitle: string;
   summary: string;
   story: string | null;
-  beneficiary: string | null;
+  /**
+   * 수혜 대상 문구는 공급자에 넘기지 않는다. 기관이 실명·구체 정보를 적어 둘 수 있어
+   * 게시물에 실리면 복지 이용자가 식별될 수 있기 때문이다(CLAUDE.md 11항 — 수혜자 실명 금지).
+   */
+  beneficiary?: never;
   usagePlan: string | null;
   goalAmount: bigint;
   raisedAmount: bigint;
@@ -90,7 +94,6 @@ export const mockContentAdapter: ContentGenAdapter = {
       { caption: OPENERS[b.tone], durationSec: 5 },
       { caption: `${b.merchantName} · ${b.campaignTitle}`, durationSec: 5 },
       { caption: story, durationSec: 7 },
-      ...(b.beneficiary ? [{ caption: `함께할 이웃: ${firstSentence(b.beneficiary, 40)}`, durationSec: 6 }] : []),
       ...(b.usagePlan ? [{ caption: `후원금은 이렇게 쓰입니다. ${firstSentence(b.usagePlan, 40)}`, durationSec: 7 }] : []),
       { caption: `목표 ${won(b.goalAmount)} 중 ${pct}% 모였습니다${b.daysLeft !== null ? ` · ${b.daysLeft}일 남음` : ''}`, durationSec: 6 },
       { caption: `${how} ${CLOSERS[b.tone]}`, durationSec: 7 },

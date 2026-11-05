@@ -14,6 +14,7 @@ import { ALIMTALK_STATUS_LABEL } from '@/server/services/alimtalk';
 import { formatKst, kstMonthKey } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { monthRange } from '@/server/services/monthly-notice';
+import { stalePublishingBefore } from '@/server/services/content';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +37,8 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
   const [channels, contentAgg, publishFailed, notices, volunteerApps, agreements] = await Promise.all([
     prisma.merchantAlimtalkChannel.findMany({ include: { merchant: { select: { displayName: true, code: true } } }, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] }),
     prisma.contentItem.groupBy({ by: ['merchantId'], where: { createdAt: { gte: start, lt: end } }, _count: { _all: true }, _sum: { costKrw: true } }),
-    prisma.contentPublish.findMany({ where: { status: 'FAILED' }, include: { item: { select: { title: true, merchant: { select: { displayName: true } } } } }, orderBy: { updatedAt: 'desc' }, take: 50 }),
+    // 실패 + 게시 중에 멈춘 건(배치가 다음 실행에 되돌리지만, 그 전까지 관리자에게 보이게)
+    prisma.contentPublish.findMany({ where: { OR: [{ status: 'FAILED' }, { status: 'PUBLISHING', updatedAt: { lt: stalePublishingBefore() } }] }, include: { item: { select: { title: true, merchant: { select: { displayName: true } } } } }, orderBy: { updatedAt: 'desc' }, take: 50 }),
     prisma.noticeRun.findMany({ include: { merchant: { select: { displayName: true } } }, orderBy: { startedAt: 'desc' }, take: 50 }),
     prisma.volunteerApplication.count({ where: { createdAt: { gte: start } } }),
     prisma.agreementDocument.count({ where: { createdAt: { gte: start } } }),
@@ -107,11 +109,11 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
               {contentAgg.length === 0 ? <tr><Td className="text-ink-400">이번 달 생성 기록이 없습니다.</Td><Td /><Td /></tr> : null}
             </tbody>
           </Table>
-          <h2 className="text-[15px] font-black">게시 실패</h2>
+          <h2 className="text-[15px] font-black">게시 실패 · 게시 중 멈춤</h2>
           <Table>
             <thead><tr><Th>기관</Th><Th>콘텐츠</Th><Th>플랫폼</Th><Th>시도</Th><Th>사유</Th></tr></thead>
             <tbody>
-              {publishFailed.map((p) => <tr key={p.id}><Td>{p.item.merchant.displayName}</Td><Td>{p.item.title}</Td><Td>{PLATFORM_LABEL[p.platform]}</Td><Td className="tabular-nums">{p.attempts}</Td><Td className="text-[12px] text-danger-500">{p.error}</Td></tr>)}
+              {publishFailed.map((p) => <tr key={p.id}><Td>{p.item.merchant.displayName}</Td><Td>{p.item.title}</Td><Td>{PLATFORM_LABEL[p.platform]}</Td><Td className="tabular-nums">{p.attempts}</Td><Td className="text-[12px] text-danger-500">{p.status === 'PUBLISHING' ? '게시 중 멈춤(다음 배치에서 예약으로 되돌림) ' : ''}{p.error}</Td></tr>)}
               {publishFailed.length === 0 ? <tr><Td className="text-ink-400">실패한 게시가 없습니다.</Td><Td /><Td /><Td /><Td /></tr> : null}
             </tbody>
           </Table>
