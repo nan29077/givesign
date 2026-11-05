@@ -7,6 +7,7 @@ import { campaignStats } from './fundraising';
 import { registerJourneyEngine } from './journeys/engine';
 import { registerReceiptBatchHandler } from './receipt-batch';
 import { handleDocumentSigned } from './issued-documents';
+import { chargeDonorLabel } from './charge-events';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -47,10 +48,13 @@ export async function handleMerchantAlert(ev: StoredDomainEvent) {
     const amount = num(ev.payload.amount);
     const campaign = typeof ev.payload.campaignTitle === 'string' ? ` · ${ev.payload.campaignTitle}` : '';
     const channel = ev.payload.channel === 'RECURRING' ? '정기후원' : ev.payload.channel === 'WEB' ? '웹 후원' : '문자 후원';
+    // 이름은 payload 가 아니라 결제 건에서 읽는다. 익명 후원은 콘솔 목록과 같이 "익명의 후원자"(점검 A-M5).
+    const charge = await prisma.charge.findUnique({ where: { id: ev.subjectId }, select: { anonymous: true, displayName: true } });
+    const label = charge ? chargeDonorLabel(charge) : '후원자';
     await notifyUser({
       userId,
       title: `새 후원 ${formatWon(amount)}`,
-      body: `${channel}${campaign} — ${String(ev.payload.payerLabel ?? '후원자')}님`,
+      body: `${channel}${campaign} — ${label === '익명의 후원자' ? label : `${label}님`}`,
       linkUrl: '/studio/charges',
     });
     return;

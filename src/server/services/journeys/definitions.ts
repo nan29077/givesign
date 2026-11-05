@@ -134,6 +134,26 @@ const receiptInfoStep: StepDef = {
   },
 };
 
+function milestoneList(params: Record<string, ParamValue>): number[] {
+  return Array.isArray(params.milestones) ? (params.milestones as number[]) : [];
+}
+
+/** 봉사 전날 안내를 보내기 직전: 신청이 아직 승인 상태이고 같은 회차이며, 회차가 시작 전(30분 이상 남음)인가. */
+const REMINDER_MIN_LEAD_MS = 30 * 60_000;
+async function reminderStillValid(e: StepEnv): Promise<true | string> {
+  const c = e.run.context;
+  if (!c.applicationId) return true;
+  const a = await prisma.volunteerApplication.findFirst({
+    where: { id: c.applicationId, merchantId: e.run.merchantId },
+    select: { status: true, shiftId: true, shift: { select: { startsAt: true, archivedAt: true } } },
+  });
+  if (!a || a.status !== 'APPROVED') return '신청이 철회·반려되었거나 승인 상태가 아님';
+  if (c.shiftId && a.shiftId !== c.shiftId) return '회차가 바뀜';
+  if (!a.shift || a.shift.archivedAt) return '회차가 보관됨';
+  if (a.shift.startsAt.getTime() - e.now.getTime() < REMINDER_MIN_LEAD_MS) return '회차가 이미 시작했거나 곧 시작함';
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 
 export const JOURNEYS: JourneyDef[] = [
@@ -154,6 +174,8 @@ export const JOURNEYS: JourneyDef[] = [
       amount: String(ev.payload.amount ?? '0'),
       campaignId: str(ev.payload.campaignId),
       channel: str(ev.payload.channel),
+      // 보내기 직전 결제가 아직 성공 상태인지 엔진이 다시 본다(환불된 후원에는 감사장·안내를 보내지 않음 — 점검 A-M3).
+      chargeId: ev.subjectType === 'charge' ? ev.subjectId : null,
     }),
     steps: [
       documentStep({
@@ -187,15 +209,16 @@ export const JOURNEYS: JourneyDef[] = [
     triggers: ['recurring.milestone'],
     triggerLabel: '정기후원 누적 횟수 도달',
     defaultEnabled: true,
-    params: [{ key: 'milestones', label: '감사장을 보낼 누적 횟수', type: 'numberList', default: [12, 24, 36, 60, 120], unit: '회', hint: '쉼표로 구분. 1 을 넣으면 첫 출금 때도 보냅니다.' }],
+    params: [{ key: 'milestones', label: '감사장을 보낼 누적 횟수', type: 'numberList', default: [12, 24, 36, 60, 120], unit: '회', hint: '쉼표로 구분(1~1000, 12개까지). 적은 횟수마다 보냅니다. 1 을 넣으면 첫 출금 때도 보냅니다.' }],
+    // 이벤트는 출금이 성공할 때마다 난다(횟수 포함). 기관이 적은 횟수일 때만 실행을 만든다(점검 A-M4).
+    accept: (ev, params) => milestoneList(params).includes(numOr(ev.payload.count, -1)),
     buildContext: (ev) => ({ count: numOr(ev.payload.count), totalAmount: String(ev.payload.totalAmount ?? '0'), amount: String(ev.payload.amount ?? '0') }),
     steps: [
       documentStep({
         key: 'recurring-thanks',
         purpose: 'RECURRING_THANKS',
         async when(e) {
-          const list = Array.isArray(e.params.milestones) ? (e.params.milestones as number[]) : [];
-          return list.includes(e.run.context.count ?? -1) ? true : '설정한 누적 횟수가 아님';
+          return milestoneList(e.params).includes(e.run.context.count ?? -1) ? true : '설정한 누적 횟수가 아님';
         },
         async merge(e) {
           return { count: e.run.context.count ?? null, totalAmount: big(e.run.context.totalAmount), amount: big(e.run.context.amount), date: kstDateKey(e.now) };
@@ -314,16 +337,22 @@ export const JOURNEYS: JourneyDef[] = [
     triggerLabel: '봉사 회차 전날',
     defaultEnabled: true,
     params: [],
-    buildContext: (ev) => ({ schedule: str(ev.payload.schedule) }),
+    buildContext: (ev) => ({
+      schedule: str(ev.payload.schedule),
+      applicationId: ev.subjectType === 'volunteer_application' ? ev.subjectId : null,
+      shiftId: str(ev.payload.shiftId),
+      startsAt: str(ev.payload.startsAt),
+    }),
     steps: [
       {
         key: 'reminder',
         label: '일정 안내 문자',
         kind: 'message',
         sends: true,
-        describe: () => '내일 봉사 일정·장소를 문자로 안내합니다.',
+        describe: () => '내일 봉사 일정·장소를 문자로 안내합니다. 보내기 직전에 신청이 승인 상태이고 회차가 아직 시작 전인지 다시 확인합니다.',
         async when(e) {
-          return e.run.context.schedule ? true : '일정 정보 없음';
+          if (!e.run.context.schedule) return '일정 정보 없음';
+          return reminderStillValid(e);
         },
         async run(e) {
           const ok = await sendMtForPayer(e.run.payerId!, tpl.tplVolunteerReminder({ merchantName: e.merchant.displayName, schedule: e.run.context.schedule! }), null, e.run.merchantId);
@@ -336,19 +365,43 @@ export const JOURNEYS: JourneyDef[] = [
     key: 'year-end-thanks',
     label: '연말 감사장',
     group: '영수증',
-    description: '기부금영수증이 발급되면 그해 후원에 대한 연말 감사장을 함께 보냅니다(한 사람에게 한 해 한 번).',
-    triggers: ['receipt.issued'],
-    triggerLabel: '기부금영수증 발급',
+    description: '지난 한 해의 기부금영수증이 발급되면 그해 후원에 대한 연말 감사장을 보냅니다(한 사람에게 한 해 한 번). 연 1회 발급 기관은 그 영수증 발급 때, 매월 발급 기관은 12월분까지 모두 발급된 뒤(1~2월) 한 해 합계로 보냅니다.',
+    triggers: ['receipt.issued', 'receipt.year_closed'],
+    triggerLabel: '지난해 기부금영수증 발급 완료',
     defaultEnabled: true,
     params: [],
-    buildContext: (ev) => ({ taxYear: numOr(ev.payload.taxYear), totalAmount: String(ev.payload.totalAmount ?? '0'), count: numOr(ev.payload.chargeCount) }),
+    // 매월 발급 기관의 월별 영수증으로는 시작하지 않는다(한 달 금액으로 "한 해 동안" 감사장이 나가던 문제 — 점검 A-4).
+    // 그 기관은 receipt.year_closed(한 해 합계)로만 시작한다.
+    accept: (ev) => ev.type === 'receipt.year_closed' || ev.payload.receiptCycle !== 'MONTHLY',
+    buildContext: (ev) => ({
+      taxYear: numOr(ev.payload.taxYear),
+      totalAmount: String(ev.payload.totalAmount ?? '0'),
+      count: numOr(ev.payload.chargeCount),
+      receiptNo: str(ev.payload.receiptNo),
+    }),
     steps: [
       documentStep({
         key: 'year-end-letter',
         purpose: 'YEAR_END_THANKS',
         dedupeKey: (e) => `year-end:${e.run.merchantId}:${e.run.payerId}:${e.run.context.taxYear}`,
+        async when(e) {
+          // 아직 끝나지 않은 해(올해 귀속 수동 발급 등)에는 보내지 않는다 — 그해 감사장 키를 미리 써 버리지 않게.
+          const year = Number(kstDateKey(e.now).slice(0, 4));
+          if (!e.run.context.taxYear || e.run.context.taxYear >= year) return '아직 끝나지 않은 해의 영수증';
+          if (e.run.subjectType === 'donation_receipt') {
+            const m = await prisma.merchantProfile.findUnique({ where: { id: e.run.merchantId }, select: { receiptCycle: true } });
+            if (m?.receiptCycle === 'MONTHLY') return '매월 발급 기관은 한 해 발급이 끝난 뒤 보냄';
+          }
+          return true;
+        },
         async merge(e) {
-          return { taxYear: e.run.context.taxYear ?? null, totalAmount: big(e.run.context.totalAmount), count: e.run.context.count ?? null, date: kstDateKey(e.now) };
+          return {
+            taxYear: e.run.context.taxYear ?? null,
+            totalAmount: big(e.run.context.totalAmount),
+            count: e.run.context.count ?? null,
+            receiptNo: e.run.context.receiptNo ?? null,
+            date: kstDateKey(e.now),
+          };
         },
       }),
     ],

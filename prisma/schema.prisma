@@ -3573,17 +3573,25 @@ model ApprovalRequest {
   payerId     String?   @map("payer_id")
   /// 같은 일을 두 번 요청하지 않는 키
   dedupeKey   String    @unique @map("dedupe_key")
-  /// PENDING · PROCESSING · APPROVED · REJECTED · EXPIRED · CANCELED · FAILED
+  /// PENDING · PROCESSING · QUEUED(승인됨, 배치 실행 대기) · APPROVED · REJECTED · EXPIRED · CANCELED · FAILED
   status      String    @default("PENDING")
   error       String?
   expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
   decidedAt   DateTime? @map("decided_at") @db.Timestamptz(3)
   decidedBy   String?   @map("decided_by")
   note        String?
+  /// 승인 뒤 배치가 실행하는 요청(QUEUED)의 선점 — 실행 중인 배치가 잡은 시각·표식(2026-11-06 점검 A-1)
+  lockedAt    DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy    String?   @map("locked_by")
+  /// 배치 실행 시도 횟수(실패 누적). 한도를 넘기면 FAILED
+  attempts    Int       @default(0)
+  /// 배치 실행 진행·결과 문구(담당자 화면)
+  result      String?
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([merchantId, status, createdAt])
+  @@index([status, updatedAt])
   @@map("approval_request")
 }
 
@@ -3650,13 +3658,15 @@ model JourneyStepLog {
   runId     String   @map("run_id")
   stepIndex Int      @map("step_index")
   stepKey   String   @map("step_key")
-  /// DONE · SKIPPED · WAIT · AWAITING_APPROVAL · APPROVED · REJECTED · BLOCKED · FAILED · STOPPED
+  /// DONE · SKIPPED · WAIT · AWAITING_APPROVAL · APPROVED · REJECTED · BLOCKED · FAILED · STOPPED · SENDING(발송 예약)
   outcome   String
   /// 발송 단계면 SENT 로 표시(후원자당 발송 상한 계산에 쓴다)
   sent      Boolean  @default(false)
   detail    String?
   merchantId String  @map("merchant_id")
   payerId   String?  @map("payer_id")
+  /// 문자 단계 발송 중복 키 `journey:{runId}:{stepKey}`. 발송 전에 이 키로 SENDING 행을 먼저 만든다(겹친 실행·재시작에도 한 번 — 점검 A-3)
+  dedupeKey String?  @unique @map("dedupe_key")
   at        DateTime @default(now()) @db.Timestamptz(3)
 
   run JourneyRun @relation(fields: [runId], references: [id], onDelete: Cascade)

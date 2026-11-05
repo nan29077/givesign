@@ -39,6 +39,12 @@ export interface JourneyContext {
   schedule?: string | null;
   reason?: string | null;
   dayOfMonth?: number | null;
+  /** 결제에서 시작한 실행의 결제 건(발송 직전 환불 재확인 — 점검 A-M3) */
+  chargeId?: string | null;
+  /** 봉사 전날 안내: 신청·회차·시작 시각(발송 직전 재확인 — 점검 A-M6) */
+  applicationId?: string | null;
+  shiftId?: string | null;
+  startsAt?: string | null;
   /** 승인된 단계 key */
   approved?: Record<string, true>;
   /** 반려된 단계 key */
@@ -60,7 +66,7 @@ export type StepOutcome =
   | { type: 'retry'; until: Date; detail: string };
 
 export interface StepEnv {
-  run: { id: string; merchantId: string; payerId: string | null; journeyKey: string; triggerKey: string; startedAt: Date; context: JourneyContext };
+  run: { id: string; merchantId: string; payerId: string | null; journeyKey: string; triggerKey: string; startedAt: Date; context: JourneyContext; subjectType?: string | null };
   params: Record<string, ParamValue>;
   merchant: { id: string; displayName: string };
   now: Date;
@@ -95,8 +101,8 @@ export interface JourneyDef {
   triggerLabel: string;
   defaultEnabled: boolean;
   params: ParamDef[];
-  /** 이 이벤트로 실행을 시작할지(맞지 않으면 실행을 만들지 않는다) */
-  accept?(event: StoredDomainEvent): boolean;
+  /** 이 이벤트로 실행을 시작할지(맞지 않으면 실행을 만들지 않는다). params 는 그 기관의 저니 설정값 */
+  accept?(event: StoredDomainEvent, params: Record<string, ParamValue>): boolean;
   /** 실행 맥락 만들기 */
   buildContext(event: StoredDomainEvent): JourneyContext;
   steps: StepDef[];

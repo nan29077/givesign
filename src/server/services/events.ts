@@ -50,6 +50,10 @@ export const DOMAIN_EVENT_TYPES = [
   'receipt.info_needed',
   /** 봉사 회차 전날(저니 배치가 낸다) */
   'volunteer.shift_reminder_due',
+  /** 매월 발급 기관: 지난해 결제 건이 모두 영수증에 묶임(연말 감사장 — 영수증 배치가 낸다) */
+  'receipt.year_closed',
+  /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — 발급 문서·약정서 상태 반영 재확인 */
+  'document.closed',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 
@@ -152,8 +156,25 @@ export function unregisterConsumer(name: string) {
 // ---------------------------------------------------------------------------
 
 export const EVENT_MAX_ATTEMPTS = 6;
-/** 처리 중 표시가 이 시간 넘게 남아 있으면 죽은 실행으로 보고 다시 잡는다. */
+/**
+ * 처리 중 표시가 이 시간 넘게 남아 있으면 죽은 실행으로 보고 다시 잡는다.
+ * 선점 시각은 **그 이벤트를 잡는 순간**의 시각이다(배치 시작 시각이 아니다 — 점검 A-3).
+ * 한 배치의 처리 시간 상한(EVENT_BATCH_BUDGET_MS)과 events 배치 잠금(cron-registry lockTtlSec)은 이 값보다 짧거나 같다.
+ */
 export const EVENT_LEASE_MS = 5 * 60_000;
+/** 한 번의 processDomainEvents 가 새 이벤트를 잡는 시간 상한. 넘기면 남은 것은 다음 배치가 잡는다. */
+export const EVENT_BATCH_BUDGET_MS = 60_000;
+
+/**
+ * 기준 시각(now)에서 실제로 흐른 시간을 더한 시계. 배치가 시작 시각을 넘겨받아도 선점 시각은 "잡는 순간" 이 된다.
+ * (테스트가 미래 시각을 now 로 넘겨도 같은 방식으로 동작한다.)
+ */
+export function elapsedClock(base?: Date): () => Date {
+  const startedReal = Date.now();
+  const baseMs = base?.getTime() ?? startedReal;
+  return () => new Date(baseMs + (Date.now() - startedReal));
+}
+
 /** 재시도 간격(분): 1, 5, 15, 60, 180 */
 const BACKOFF_MIN = [1, 5, 15, 60, 180];
 
@@ -174,11 +195,13 @@ export interface ProcessEventsResult {
  * 대기 중인 이벤트를 선점해 소비자에게 나눠 준다.
  * 선점은 조건부 갱신(`locked_at` 이 비었거나 임대 만료)이라 두 배치가 겹쳐도 같은 이벤트를 함께 잡지 않는다.
  */
-export async function processDomainEvents(opts: { limit?: number; now?: Date } = {}): Promise<ProcessEventsResult> {
-  const now = opts.now ?? new Date();
+export async function processDomainEvents(opts: { limit?: number; now?: Date; budgetMs?: number } = {}): Promise<ProcessEventsResult> {
+  const clock = elapsedClock(opts.now);
+  const now = clock();
   const limit = opts.limit ?? 200;
   const owner = `${now.getTime()}:${generateToken(6)}`;
   const leaseCut = new Date(now.getTime() - EVENT_LEASE_MS);
+  const deadline = now.getTime() + (opts.budgetMs ?? EVENT_BATCH_BUDGET_MS);
   const result: ProcessEventsResult = { claimed: 0, done: 0, retry: 0, failed: 0, deliveries: 0 };
 
   const candidates = await prisma.domainEvent.findMany({
@@ -193,9 +216,15 @@ export async function processDomainEvents(opts: { limit?: number; now?: Date } =
   });
 
   for (const c of candidates) {
+    // 시간 상한: 오래 걸린 배치가 계속 새 이벤트를 잡으면 다음 배치와 겹친다. 남은 것은 다음 배치가 잡는다.
+    if (clock().getTime() >= deadline) break;
+    // 선점 시각 = 지금(잡는 순간). 배치 시작 시각으로 잡으면 오래 걸린 배치가 막 잡은 이벤트도
+    // 다음 배치에는 "임대 만료" 로 보여 두 번 처리된다(점검 A-3).
+    const claimAt = clock();
+    const cut = new Date(claimAt.getTime() - EVENT_LEASE_MS);
     const claim = await prisma.domainEvent.updateMany({
-      where: { id: c.id, status: 'PENDING', OR: [{ lockedAt: null }, { lockedAt: { lt: leaseCut } }] },
-      data: { lockedAt: now, lockedBy: owner },
+      where: { id: c.id, status: 'PENDING', OR: [{ lockedAt: null }, { lockedAt: { lt: cut } }] },
+      data: { lockedAt: claimAt, lockedBy: owner },
     });
     if (claim.count === 0) continue;
     result.claimed += 1;

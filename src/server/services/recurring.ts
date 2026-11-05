@@ -522,9 +522,11 @@ function cycleDate(cycleMonth: string, day: number): string {
   return `${cycleMonth}-${String(day).padStart(2, '0')}`;
 }
 
-/** 성공 처리: 주기를 한 달 넘기고 누적을 올린다. 같은 주기를 두 번 넘기지 않도록 현재 주기일 때만 갱신한다. */
-/** 누적 성공 횟수 이정표. 저니가 누적 감사장을 보낼 때 쓴다. */
-export const RECURRING_MILESTONES = [1, 6, 12, 24, 36, 60, 120];
+/**
+ * 성공 처리: 주기를 한 달 넘기고 누적을 올린다. 같은 주기를 두 번 넘기지 않도록 현재 주기일 때만 갱신한다.
+ * 출금이 성공할 때마다 recurring.milestone(누적 횟수 포함)을 낸다. 어떤 횟수에 감사장을 보낼지는
+ * 기관 저니 설정(정기후원 누적 감사 > 누적 횟수)이 거른다 — 기관이 적은 횟수와 실제 발송이 같다(점검 A-M4).
+ */
 
 async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amount: bigint) {
   const nextCycle = nextCycleOf(cycleMonth);
@@ -542,7 +544,7 @@ async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amou
   });
   if (updated.count === 0) return;
   const after = await prisma.recurringDonation.findUnique({ where: { id: r.id }, select: { successCount: true, totalAmount: true } });
-  if (after && RECURRING_MILESTONES.includes(after.successCount)) {
+  if (after) {
     await emitDomainEventSafe({
       merchantId: r.merchantId, type: 'recurring.milestone', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
       dedupeKey: `recurring.milestone:${r.id}:${after.successCount}`,

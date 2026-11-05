@@ -6,12 +6,15 @@ import { volunteerShiftsStartingOn } from '../volunteers';
 /**
  * 봉사 회차 전날 안내 이벤트(volunteer.shift_reminder_due) 만들기.
  *
- * /api/cron/events 가 매분 부르지만 KST 9시 이후에만 일하고, (신청, 회차)마다 한 번(dedupe)이라 여러 번 불러도 같다.
+ * /api/cron/events 가 매분 부르지만 KST 9~21시에만 일하고, (신청, 회차)마다 한 번(dedupe)이라 여러 번 불러도 같다.
  * 발송은 저니 'volunteer-reminder' 가 한다(야간 보류·수신 거부·상한 보호 공통 적용).
  */
 export async function emitShiftReminders(now = new Date()) {
   const kstHour = new Date(now.getTime() + 9 * 3_600_000).getUTCHours();
   if (kstHour < 9) return { emitted: 0, skipped: 'before-9' as const };
+  // 21시 이후에 만들면 야간 보류로 다음 날 9시에 나가 이른 회차는 시작 뒤에 도착한다(점검 A-M6).
+  // 21시 이후 승인된 내일 회차는 전날 안내를 보내지 않는다(배정 안내 문자는 승인 때 이미 나간다).
+  if (kstHour >= 21) return { emitted: 0, skipped: 'after-21' as const };
   const tomorrow = kstDateKey(new Date(now.getTime() + 86_400_000));
   let emitted = 0;
   try {
