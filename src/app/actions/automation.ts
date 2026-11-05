@@ -287,3 +287,18 @@ export async function connectChannelAction(_p: StudioActionState, f: FormData) {
     return { ok: true, message: '채널을 연결했습니다.' };
   });
 }
+
+/** 유튜브 비공개 업로드 → 공개 전환 (2026-11-06 7단계). 감사 전 앱이면 유튜브가 거절할 수 있고, 그 사유를 그대로 보여 준다. */
+export async function makeYoutubePublicAction(_p: StudioActionState, f: FormData) {
+  return withMerchant(async (merchantId, userId) => {
+    const { makeYoutubePublic, SocialOAuthError } = await import('@/server/services/social-oauth');
+    try {
+      await makeYoutubePublic(merchantId, text(f, 'publishId'), userId);
+    } catch (e) {
+      if (e instanceof SocialOAuthError) return { ok: false, message: e.message };
+      throw e;
+    }
+    revalidatePath(`/studio/content/${text(f, 'id')}`);
+    return { ok: true, message: '유튜브 영상을 공개로 전환했습니다.' };
+  });
+}
