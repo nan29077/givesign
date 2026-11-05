@@ -1,7 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
 import { prisma } from '@/server/db';
-import { getObject, newObjectName, objectNameFromUrl, putObject } from '@/server/uploads';
+import { getObject, newObjectName, objectNameFromUrl, putObject, putPrivateObject } from '@/server/uploads';
+import { hasMergeFields, renderMergeText, type MergeValues } from '@/lib/merge-fields';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import {
@@ -326,4 +327,96 @@ export async function saveTemplateLayout(
     stripped: res.file?.stripped ?? 0,
     coverOnlyPages: res.file?.coverOnlyPages ?? [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// 머지 필드 (용도별 자동 발송 문서)
+// ---------------------------------------------------------------------------
+
+/** 편집 기록의 새 글자 중 머지 필드({{후원자명}} 등)를 쓴 것이 있는지 */
+export function layoutHasMergeFields(raw: unknown): boolean {
+  const layout = parsePdfLayout(raw);
+  return !!layout && layout.edits.some((e) => e.kind !== 'erase' && hasMergeFields(e.text));
+}
+
+/** 편집 기록의 새 글자에 쓰인 머지 필드 이름 */
+export function layoutMergeTexts(raw: unknown): string[] {
+  const layout = parsePdfLayout(raw);
+  return layout ? layout.edits.filter((e) => e.kind !== 'erase').map((e) => e.text) : [];
+}
+
+export interface MergedPdf {
+  /** 결과 PDF. 머지할 것이 없으면 서식의 결과(또는 바탕) PDF 를 그대로 가리킨다(created=false). */
+  url: string | null;
+  objectName: string;
+  hash: string;
+  created: boolean;
+  missing: string[];
+  private: boolean;
+}
+
+/**
+ * 파일 서식의 편집 기록 글자에 머지 값을 채워 **새 PDF 파일**을 만든다(원본·서식 결과 PDF 는 고치지 않는다).
+ *
+ *  - 머지 필드가 없으면 새로 그리지 않고 서식의 결과 PDF(없으면 바탕 PDF)를 그대로 쓴다.
+ *  - `store: 'private'` 면 비공개 저장소에 둔다(후원자 이름이 든 열람 문서). 'public' 은 전자문서 봉투 스냅샷용
+ *    (서명 화면이 공개 객체 주소로 읽는다 — 기존 결과 PDF 와 같은 방식, 이름은 추측할 수 없는 32자리).
+ */
+export async function renderMergedTemplatePdf(
+  merchantId: string,
+  t: { basePdfUrl: string | null; basePdfHash: string | null; renderedPdfUrl: string | null; renderedPdfHash: string | null; pdfLayout: unknown },
+  values: MergeValues,
+  store: 'private' | 'public',
+): Promise<{ ok: true; pdf: MergedPdf } | { ok: false; message: string }> {
+  const layout = parsePdfLayout(t.pdfLayout);
+  const current = effectivePdf(t);
+  if (!t.basePdfUrl || !current) return { ok: false, message: '파일 서식의 편집 바탕 PDF 가 없습니다. 서식 파일을 다시 올려 주세요.' };
+  if (!layout || !layout.edits.some((e) => e.kind !== 'erase' && hasMergeFields(e.text))) {
+    const name = objectNameFromUrl(current.url);
+    if (!name) return { ok: false, message: '서식 PDF 를 찾을 수 없습니다.' };
+    if (store === 'private') {
+      // 열람 문서는 발급 당시 파일을 비공개 저장소에 따로 고정한다(열람 경로가 하나로 모이고, 서식이 바뀌어도 그대로).
+      const bytes = await readMediaPdf(current.url);
+      if (!bytes) return { ok: false, message: '서식 PDF 를 찾을 수 없습니다.' };
+      const copy = newObjectName('pdf');
+      await putPrivateObject(copy, Buffer.from(bytes), 'application/pdf');
+      return { ok: true, pdf: { url: null, objectName: copy, hash: sha256(bytes), created: true, missing: [], private: true } };
+    }
+    let hash = current.hash;
+    if (!hash) {
+      const bytes = await readMediaPdf(current.url);
+      if (!bytes) return { ok: false, message: '서식 PDF 를 찾을 수 없습니다.' };
+      hash = sha256(bytes);
+    }
+    return { ok: true, pdf: { url: current.url, objectName: name, hash, created: false, missing: [], private: false } };
+  }
+  const missing: string[] = [];
+  const merged: PdfLayout = {
+    ...layout,
+    edits: layout.edits.map((e) => {
+      if (e.kind === 'erase' || !hasMergeFields(e.text)) return e;
+      const r = renderMergeText(e.text, values);
+      for (const m of r.missing) if (!missing.includes(m)) missing.push(m);
+      return { ...e, text: r.text };
+    }),
+  };
+  const fontProblem = await fontOwnershipProblem(merchantId, merged);
+  if (fontProblem) return { ok: false, message: fontProblem };
+  const base = await readMediaPdf(t.basePdfUrl);
+  if (!base) return { ok: false, message: '원본 PDF 를 찾을 수 없습니다. 서식 파일을 다시 올려 주세요.' };
+  let rendered;
+  try {
+    rendered = await renderPdfLayout(base, merged, { loadAsset: loadFontAssetFor(merchantId) });
+  } catch (err) {
+    logger.warn('[pdf-form] 머지 PDF 생성 실패', { err: err instanceof Error ? err.message : String(err) });
+    return { ok: false, message: '문서 PDF 를 만들지 못했습니다. 서식의 원본 위 수정을 확인해 주세요.' };
+  }
+  const name = newObjectName('pdf');
+  const buf = Buffer.from(rendered.bytes);
+  if (store === 'private') {
+    await putPrivateObject(name, buf, 'application/pdf');
+    return { ok: true, pdf: { url: null, objectName: name, hash: rendered.sha256, created: true, missing, private: true } };
+  }
+  const url = await putObject(name, buf, 'application/octet-stream');
+  return { ok: true, pdf: { url, objectName: name, hash: rendered.sha256, created: true, missing, private: false } };
 }

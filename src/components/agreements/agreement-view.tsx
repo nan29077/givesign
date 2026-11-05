@@ -17,6 +17,8 @@ type Snap = {
   pledge?: { amountText: string; dayOfMonth: number; cycle: string; firstChargeOn: string; campaign: string; anonymous: boolean; message: string; method: string };
   application?: { wish: string | null; interests: string[]; availableDays: string[]; timeSlot: string | null; experience: string | null; emergency: string | null; safetyPledged: boolean; message: string | null };
   consent: { termsTitle: string; termsVersion: string | null; termsHash: string | null };
+  /** 기관 서식 본문(머지 결과, 2026-11-06 이후 발급분) */
+  form?: { name: string; body: string; templateRevision: string };
 };
 
 const ESIGN_LABEL: Record<string, { text: string; tone: 'neutral' | 'brand' | 'success' | 'danger' | 'warning' }> = {
@@ -78,6 +80,14 @@ export function AgreementView({ doc }: { doc: AgreementDocument }) {
             <Row k="비상연락처" v={s.application.emergency ?? '-'} />
             <Row k="안전 수칙 서약" v={s.application.safetyPledged ? '서약함' : '-'} />
           </dl>
+        </section>
+      ) : null}
+
+      {s.form?.body ? (
+        <section className="mt-5">
+          <h2 className="mb-1 text-[14px] font-black text-ink-700">{s.form.name}</h2>
+          <p className="whitespace-pre-wrap break-keep rounded-xl border border-ink-100 p-4 text-[13.5px] leading-relaxed text-ink-800">{s.form.body}</p>
+          <p className="mt-1 text-[11px] text-ink-400">기관 서식 판 {s.form.templateRevision} · 발급 당시 본문으로 고정</p>
         </section>
       ) : null}
 

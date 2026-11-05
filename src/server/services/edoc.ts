@@ -5,7 +5,7 @@ import { kv, consumeAttempt } from '@/server/redis';
 import { newId } from '@/lib/id';
 import { env, isLocal } from '@/lib/env';
 import { logger } from '@/lib/logger';
-import { addDays, formatKst, kstStartOfMonth } from '@/lib/datetime';
+import { addDays, formatKst, kstDateKey, kstStartOfMonth } from '@/lib/datetime';
 import {
   decrypt, encrypt, generateNumericCode, generateToken, hmac, maskName, maskPhone, normalizePhone, phoneHash, safeEqual, tokenHash,
 } from '@/lib/crypto';
@@ -15,6 +15,7 @@ import { applyMtTemplateOverride, tplEDocCompleted, tplEDocSignRequest, tplEDocV
 import { notifyUser } from '@/server/services/notifications';
 import { parseDocumentFields, storeSignature, validateValues, type DocumentField } from '@/server/services/documents';
 import { debitForEnvelope, maybeNotifyLowBalance, refundEnvelope } from '@/server/services/edoc-billing';
+import { hasMergeFields, renderMergeText, type MergeValues } from '@/lib/merge-fields';
 import type { Prisma } from '@/generated/prisma/client';
 import type { EDocEnvelopeStatus, EDocSignerRole, EDocSignerStatus, EDocSigningOrder } from '@/generated/prisma/enums';
 import type { Tone } from '@/lib/labels';
@@ -322,6 +323,32 @@ export interface CreateEnvelopeInput {
   signers: Array<{ name: string; phone: string; role: EDocSignerRole }>;
   prefill?: Record<string, string>;
   batchId?: string | null;
+  /**
+   * 머지 필드 값(용도별 자동 발송). 서식 본문·PDF 편집 글자의 {{후원자명}} 등을 채운다.
+   * 주지 않아도 기관명·대표자·발급일·후원자명(첫 서명자 이름)은 채운다. 값이 없는 필드는 빈칸이다.
+   */
+  merge?: MergeValues;
+  /** 이미 렌더한 본문·PDF 로 스냅샷을 만든다(issuePurposeDocument). 주면 merge 보다 우선한다. */
+  override?: { body?: string | null; pdfUrl?: string | null; pdfHash?: string | null };
+  /** true 면 봉투만 만들고 서명 링크 문자는 보내지 않는다(기관이 재안내로 보낸다). */
+  deferSend?: boolean;
+}
+
+/** 자동 발송(시스템)이 만든 봉투의 actorId */
+export const EDOC_SYSTEM_ACTOR = 'system';
+
+function actorOf(actorId: string) {
+  return actorId === EDOC_SYSTEM_ACTOR ? 'system' : `staff:${actorId}`;
+}
+
+/** 봉투 상태가 끝났을 때(완료·거절·취소·만료) 용도별 발급 문서·약정서에 반영한다. 실패해도 봉투는 그대로다. */
+async function settleLinked(envelopeId: string) {
+  try {
+    const { syncIssuedFromEnvelope } = await import('./issued-documents');
+    await syncIssuedFromEnvelope(envelopeId);
+  } catch (e) {
+    logger.error('전자문서 결과 반영 실패(발급 문서·약정서)', { envelopeId, message: (e as Error).message });
+  }
 }
 
 /** 서명자 입력 검증(화면·CSV 공용) */
@@ -356,17 +383,45 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
   const template = await prisma.documentTemplate.findFirst({ where: { id: input.templateId, merchantId: input.merchantId, active: true, archivedAt: null } });
   if (!template) throw new EDocError('사용할 수 있는 기관 서식을 골라 주세요.');
   const days = Math.min(EDOC_EXPIRE_DAYS_MAX, Math.max(1, Math.floor(input.expiresDays ?? EDOC_EXPIRE_DAYS_DEFAULT)));
+  let body = template.body;
+  let pdfUrl = template.templateType === 'FILE' ? (template.renderedPdfUrl ?? template.basePdfUrl) : null;
+  let pdfHash = template.templateType === 'FILE' ? (template.renderedPdfUrl ? template.renderedPdfHash : template.basePdfHash) : null;
+  if (input.override) {
+    if (input.override.body !== undefined) body = input.override.body;
+    if (input.override.pdfUrl !== undefined) {
+      pdfUrl = input.override.pdfUrl;
+      pdfHash = input.override.pdfHash ?? null;
+    }
+  } else {
+    // 서식 머지 필드: 기관이 직접 보내는 서명 요청에도 기관명·대표자·발급일·서명자 이름을 채운다(나머지는 빈칸).
+    const needBody = hasMergeFields(body);
+    const { layoutHasMergeFields, renderMergedTemplatePdf } = await import('./pdf-form');
+    const needPdf = template.templateType === 'FILE' && layoutHasMergeFields(template.pdfLayout);
+    if (needBody || needPdf) {
+      const m = await prisma.merchantProfile.findUnique({ where: { id: input.merchantId }, select: { displayName: true, representativeName: true } });
+      const values: MergeValues = {
+        기관명: m?.displayName ?? null, 대표자: m?.representativeName ?? null, 발급일: kstDateKey(), 후원자명: signers[0]!.name, ...(input.merge ?? {}),
+      };
+      if (needBody) body = renderMergeText(body, values).text;
+      if (needPdf) {
+        const merged = await renderMergedTemplatePdf(input.merchantId, template, values, 'public');
+        if (!merged.ok) throw new EDocError(merged.message);
+        pdfUrl = merged.pdf.url;
+        pdfHash = merged.pdf.hash;
+      }
+    }
+  }
   const snapshot: EDocSnapshot = {
     templateId: template.id,
     name: template.name,
     description: template.description,
     templateType: template.templateType,
-    body: template.body,
+    body,
     fields: parseDocumentFields(template.fields),
     fileUrl: template.fileUrl,
     fileName: template.fileName,
-    pdfUrl: template.templateType === 'FILE' ? (template.renderedPdfUrl ?? template.basePdfUrl) : null,
-    pdfHash: template.templateType === 'FILE' ? (template.renderedPdfUrl ? template.renderedPdfHash : template.basePdfHash) : null,
+    pdfUrl,
+    pdfHash,
     requireSignature: true,
   };
   const snapshotJson = JSON.stringify(snapshot);
@@ -419,7 +474,7 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
       await tx.eDocEnvelope.update({ where: { id: envelopeId }, data: { chargeSource: debit.source } });
       await appendEvent(tx, envelopeId, {
         type: 'CREATED',
-        actor: `staff:${input.actorId}`,
+        actor: actorOf(input.actorId),
         detail: { templateId: template.id, snapshotHash: sha(snapshotJson), signers: signers.length, order: sequential ? 'SEQUENTIAL' : 'PARALLEL', charge: debit.source, amount: debit.amount },
       });
       return debit;
@@ -429,7 +484,9 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
     throw e;
   }
 
-  const first = await prisma.eDocSigner.findMany({ where: { envelopeId, status: 'SENT' }, orderBy: { order: 'asc' }, select: { id: true } });
+  const first = input.deferSend
+    ? []
+    : await prisma.eDocSigner.findMany({ where: { envelopeId, status: 'SENT' }, orderBy: { order: 'asc' }, select: { id: true } });
   let sent = 0;
   let failed = 0;
   const devTokens: string[] = [];
@@ -519,7 +576,7 @@ export async function cancelEnvelope(input: { merchantId: string; envelopeId: st
   const reason = input.reason.trim().slice(0, 200);
   if (!reason) throw new EDocError('취소 사유를 입력해 주세요.');
   const e = await loadOwned(input.merchantId, input.envelopeId);
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const claimed = await tx.eDocEnvelope.updateMany({
       where: { id: e.id, status: { in: OPEN_STATUSES } },
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason },
@@ -537,6 +594,8 @@ export async function cancelEnvelope(input: { merchantId: string; envelopeId: st
     });
     return { refunded: refund.refunded };
   });
+  await settleLinked(e.id);
+  return result;
 }
 
 /** 재안내. 서명 전 서명자에게 새 링크를 보낸다. 1시간 간격, 최대 5회. */
@@ -565,6 +624,7 @@ export async function expireEDocEnvelopes(now = new Date()) {
         await appendEvent(tx, id, { type: 'EXPIRED', actor: 'system' });
       }
     });
+    await settleLinked(id);
   }
   return count;
 }
@@ -793,6 +853,7 @@ export async function signAsSigner(input: {
   });
 
   // 사후 처리(문자·알림). 실패해도 서명 결과는 그대로다.
+  if (outcome.completed) await settleLinked(s.envelopeId);
   try {
     const e = await prisma.eDocEnvelope.findUniqueOrThrow({ where: { id: s.envelopeId }, include: { merchant: { select: { userId: true, displayName: true } }, signers: true } });
     if (outcome.completed) {
@@ -840,6 +901,7 @@ export async function declineAsSigner(input: { token: string; proof: string | un
     if (moved.count !== 1) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
     await appendEvent(tx, s.envelopeId, { type: 'DECLINED', actor: `signer:${s.id}`, signerId: s.id, ip: input.ip, userAgent: input.userAgent, detail: { reason } });
   });
+  await settleLinked(s.envelopeId);
   try {
     const m = await prisma.eDocEnvelope.findUniqueOrThrow({ where: { id: s.envelopeId }, select: { title: true, merchant: { select: { userId: true } } } });
     await notifyUser({ userId: m.merchant.userId, title: '전자문서 서명이 거절되었습니다', body: `「${m.title}」 ${edocRoleLabel[s.role]} ${s.nameMasked}: ${reason}`, linkUrl: `/studio/e-documents/${s.envelopeId}` });

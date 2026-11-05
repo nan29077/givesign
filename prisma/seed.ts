@@ -8,6 +8,7 @@ import { SEED_VERSION, SEED_VERSION_KEY } from './seed-version.mjs';
 import { seedBaseData } from './seed-base';
 import { resolveSeedTier, seedAccountPassword, LOCAL_SEED_PASSWORD } from './seed-env';
 import { DOCUMENT_PRESETS, fieldsToStorage } from '../src/server/services/documents';
+import { ensureDefaultPurposeTemplates } from '../src/server/services/purpose-templates';
 
 // 실행 환경 판정(prisma/seed-env.ts).
 //  - prod    : 기준 데이터(약관·전역 정책·금칙어·필수 설정)만, 없는 것만 넣는다. 계정·샘플은 만들지 않는다.
@@ -138,6 +139,8 @@ async function main() {
         await prisma.documentTemplate.create({ data: { id: newId(), merchantId: merchant.id, templateType: 'PRESET', presetKey: key, name: preset.name, description: preset.description, body: preset.body, fields: fieldsToStorage(preset.fields), requireSignature: preset.requireSignature } });
       }
     }
+    // 용도별 자동 발송 기본 세트(감사장·확인서 등). 위 서식은 같은 기본 서식이면 용도만 붙인다. (로컬 샘플 전용 — 운영은 기관 승인 시점)
+    await ensureDefaultPurposeTemplates(merchant.id);
     // 상품. 비실물(포인트·상품권·이용권)과 실물을 함께 깔아 둔다.
     // 금액과 지급 포인트는 1:1 이 기본이다.
     const productCount = await prisma.chargeProduct.count({ where: { merchantId: merchant.id } });
