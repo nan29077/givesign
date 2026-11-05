@@ -16,7 +16,7 @@ import type { DeliveryStatus } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
-const STATUSES: DeliveryStatus[] = ['PENDING', 'SENT', 'FAILED', 'SKIPPED'];
+const STATUSES: DeliveryStatus[] = ['PENDING', 'ACCEPTED', 'SENT', 'FAILED', 'UNKNOWN', 'SKIPPED'];
 
 export default async function AdminMtMessagesPage({
   searchParams,

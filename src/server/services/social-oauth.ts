@@ -44,6 +44,19 @@ export class SocialOAuthError extends Error {
 }
 
 export class SocialTokenExpiredError extends Error {}
+/** 토큰 갱신이 일시 오류(네트워크·5xx·한도)로 실패 — 채널은 연결된 채로 두고 이번 시도만 실패한다(2026-11-06 점검 A-M11). */
+export class SocialTokenRefreshTransientError extends Error {}
+
+/**
+ * 토큰 갱신 실패가 "다시 연결해야 하는" 인증 실패인지. invalid_grant·401·공급자가 토큰 만료/폐기라고 알린 경우만.
+ * 네트워크 오류·5xx·429·invalid_client(우리 앱 설정 문제) 등은 일시 오류로 본다.
+ */
+export function isAuthFailure(e: unknown): boolean {
+  if (!(e instanceof SnsApiError)) return false;
+  if (e.authExpired) return true;
+  if (e.status === 401) return true;
+  return e.code === 'invalid_grant';
+}
 
 export const SOCIAL_STATE_TTL_MS = 10 * 60_000;
 /** 만료 이 시간 전부터 미리 갱신한다 */
@@ -221,7 +234,12 @@ async function writeSocialAudit(input: { actorUserId: string | null; action: str
 
 type ChannelRow = Awaited<ReturnType<typeof prisma.socialChannel.findUniqueOrThrow>>;
 
-async function markExpired(channel: ChannelRow, reason: string) {
+/** 채널을 만료로 바꾸고 기관에 한 번 알린다. 게시 중 토큰 폐기(AUTH_EXPIRED)에도 content.ts 가 부른다(A-M12). */
+export async function markChannelExpired(channel: Pick<ChannelRow, 'id' | 'merchantId' | 'platform'>, reason: string) {
+  return markExpired(channel, reason);
+}
+
+async function markExpired(channel: Pick<ChannelRow, 'id' | 'merchantId' | 'platform'>, reason: string) {
   const r = await prisma.socialChannel.updateMany({
     where: { id: channel.id, status: 'CONNECTED' },
     data: { status: 'EXPIRED', lastError: reason.slice(0, 300) },
@@ -242,7 +260,8 @@ async function markExpired(channel: ChannelRow, reason: string) {
 
 /**
  * 만료가 가까우면(5분 전) 리프레시 토큰으로 갱신한다. mock 채널·만료 시각 없는 토큰(메타 페이지 토큰)은 그대로.
- * 갱신할 수 없거나 실패하면 채널을 EXPIRED 로 바꾸고 기관에 알린 뒤 SocialTokenExpiredError 를 던진다.
+ * 갱신할 수 없거나 인증 실패(invalid_grant·401)면 채널을 EXPIRED 로 바꾸고 기관에 알린 뒤 SocialTokenExpiredError 를 던진다.
+ * 일시 오류(네트워크·5xx 등)는 채널을 연결된 채로 두고 SocialTokenRefreshTransientError 를 던진다 — 이번 시도만 실패(A-M11).
  */
 export async function refreshIfNeeded(channel: ChannelRow, now = new Date()): Promise<ChannelRow> {
   if (channel.mock) return channel;
@@ -259,7 +278,11 @@ export async function refreshIfNeeded(channel: ChannelRow, now = new Date()): Pr
   try {
     t = await refreshTokens(p, decrypt(channel.refreshTokenEnc));
   } catch (e) {
-    return fail((e as Error).message.slice(0, 200));
+    if (isAuthFailure(e)) return fail((e as Error).message.slice(0, 200));
+    const reason = (e as Error).message.slice(0, 200);
+    await prisma.socialChannel.updateMany({ where: { id: channel.id, status: 'CONNECTED' }, data: { lastError: `토큰 갱신 일시 오류: ${reason}`.slice(0, 300) } }).catch(() => undefined);
+    logger.warn('SNS 토큰 갱신 일시 오류 — 연결은 유지하고 다음에 다시 시도합니다', { platform: p, message: reason });
+    throw new SocialTokenRefreshTransientError(`토큰 갱신이 잠시 실패했습니다(다음 시도에 다시 갱신합니다): ${reason}`);
   }
   return prisma.socialChannel.update({
     where: { id: channel.id },

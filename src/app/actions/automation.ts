@@ -19,6 +19,7 @@ import {
   disconnectSocialChannel,
   regenerateContent,
   requestContent,
+  resolveUnknownPublish,
   saveContentSetting,
   schedulePublish,
   updateContentDraft,
@@ -257,6 +258,20 @@ export async function cancelPublishAction(_p: StudioActionState, f: FormData) {
     await writeAudit({ actorUserId: userId, action: 'CONTENT_PUBLISH_CANCEL', targetType: 'content_publish', targetId: text(f, 'publishId'), after: { itemId: text(f, 'id') } });
     revalidatePath(`/studio/content/${text(f, 'id')}`);
     return { ok: true, message: '예약을 취소했습니다.' };
+  });
+}
+
+/**
+ * 결과 미확인(UNKNOWN) 게시 정리(2026-11-06 점검 A-M9). 게시 도중 끊긴 건은 자동으로 다시 올리지 않는다 —
+ * 담당자가 채널을 확인하고 "다시 게시" 또는 "게시됨으로 표시" 를 고른다.
+ */
+export async function resolveUnknownPublishAction(_p: StudioActionState, f: FormData) {
+  return withMerchant(async (merchantId, userId) => {
+    const intent = text(f, 'intent') === 'republish' ? 'REPUBLISH' : 'MARK_PUBLISHED';
+    const r = await resolveUnknownPublish(merchantId, text(f, 'publishId'), intent, { url: text(f, 'url') || null });
+    await writeAudit({ actorUserId: userId, action: intent === 'REPUBLISH' ? 'CONTENT_PUBLISH_REPUBLISH' : 'CONTENT_PUBLISH_MARK_PUBLISHED', targetType: 'content_publish', targetId: text(f, 'publishId'), after: { itemId: text(f, 'id'), status: r } });
+    revalidatePath(`/studio/content/${text(f, 'id')}`);
+    return { ok: true, message: intent === 'REPUBLISH' ? '다시 게시하도록 예약했습니다(다음 배치).' : '게시됨으로 표시했습니다.' };
   });
 }
 

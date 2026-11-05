@@ -12,6 +12,9 @@ import { kv } from '@/server/redis';
  *  - 이동할 주소는 **게시 행에서 서버가 만든다.** 쿼리·경로로 대상 주소를 받지 않는다(오픈 리다이렉트 금지).
  *  - 봇·미리보기 수집기(User-Agent)는 세지 않는다. 이동은 똑같이 시킨다.
  *  - 같은 IP·같은 게시는 10분에 한 번만 센다(kv setnx). IP 는 HMAC 해시로만 키에 쓰고 저장하지 않는다.
+ *    IP 를 알 수 없으면 모든 방문자가 한 칸('unknown')을 나눠 써 10분에 1회만 세던 문제가 있었다 →
+ *    그때는 User-Agent HMAC 으로 나눈다(2026-11-06 점검 낮음).
+ *  - 다음(Daum) 앱 인앱 브라우저(UA 의 DaumApps)는 사람이다. 수집기는 Daumoa 만 제외한다(예전 /daum(oa)?/ 는 앱 사용자까지 뺐다).
  *    kv 를 확인할 수 없으면 세지 않는다(부풀리기보다 누락이 낫다).
  *  - 증가는 원자적 increment 한 번이다. 집계 실패가 이동을 막지 않는다.
  */
@@ -19,7 +22,7 @@ import { kv } from '@/server/redis';
 export const CLICK_DEDUPE_SEC = 10 * 60;
 
 const BOT_UA =
-  /bot|crawl|spider|slurp|preview|facebookexternalhit|facebot|meta-externalagent|kakaotalk-scrap|scrap|yeti|daum(oa)?|twitterbot|whatsapp|telegrambot|discordbot|slackbot|embedly|bingpreview|headless|lighthouse|curl|wget|python-requests|httpclient|axios|node-fetch|go-http-client/i;
+  /bot|crawl|spider|slurp|preview|facebookexternalhit|facebot|meta-externalagent|kakaotalk-scrap|scrap|yeti|daumoa|twitterbot|whatsapp|telegrambot|discordbot|slackbot|embedly|bingpreview|headless|lighthouse|curl|wget|python-requests|httpclient|axios|node-fetch|go-http-client/i;
 
 export function isBotUserAgent(ua: string | null | undefined): boolean {
   if (!ua || !ua.trim()) return true;
@@ -65,7 +68,8 @@ export async function recordContentClick(input: { publishId: string; ip: string 
   const target = `${env.baseUrl}${clickTargetPath(pub)}`;
   if (isBotUserAgent(input.userAgent)) return { found: true, target, counted: false, reason: 'bot' };
 
-  const ipKey = hmac(`click:${input.ip?.trim() || 'unknown'}`);
+  const ip = input.ip?.trim();
+  const ipKey = hmac(ip ? `click:${ip}` : `click:ua:${input.userAgent?.trim() ?? ''}`);
   const fresh = await kv.setnx(`click:${pub.id}:${ipKey}`, '1', CLICK_DEDUPE_SEC).catch(() => null);
   if (fresh === null) return { found: true, target, counted: false, reason: 'error' };
   if (!fresh) return { found: true, target, counted: false, reason: 'duplicate' };

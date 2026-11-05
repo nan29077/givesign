@@ -1,4 +1,4 @@
-import { call, readJson, SnsApiError } from './http';
+import { assertCaptionFits, call, readJson, SnsApiError } from './http';
 import { absoluteMediaUrl, publishSceneImages } from './media';
 import type { SnsPublishRequest, SnsPublishResult } from './index';
 
@@ -40,7 +40,7 @@ export async function publishTiktok(req: SnsPublishRequest): Promise<SnsPublishR
   if (req.kind === 'SHORTFORM') {
     if (!req.videoUrl) throw new SnsApiError('올릴 영상 파일이 없습니다. (영상 조립 공급자 연동 전에는 영상을 올릴 수 없습니다)', 0, 'NO_VIDEO');
     data = await tiktokPost('/v2/post/publish/video/init/', token, {
-      post_info: { title: req.caption.slice(0, 2200), privacy_level: 'SELF_ONLY', disable_duet: false, disable_comment: false, disable_stitch: false, is_aigc: true },
+      post_info: { title: assertCaptionFits(req.caption, { chars: 2200 }, '틱톡 캡션'), privacy_level: 'SELF_ONLY', disable_duet: false, disable_comment: false, disable_stitch: false, is_aigc: true },
       source_info: { source: 'PULL_FROM_URL', video_url: absoluteMediaUrl(req.videoUrl) },
     });
   } else {
@@ -49,7 +49,7 @@ export async function publishTiktok(req: SnsPublishRequest): Promise<SnsPublishR
       media_type: 'PHOTO',
       post_mode: 'DIRECT_POST',
       is_aigc: true,
-      post_info: { title, description: req.caption.slice(0, 4000), privacy_level: 'SELF_ONLY', disable_comment: false, auto_add_music: true },
+      post_info: { title, description: assertCaptionFits(req.caption, { chars: 4000 }, '틱톡 설명'), privacy_level: 'SELF_ONLY', disable_comment: false, auto_add_music: true },
       source_info: { source: 'PULL_FROM_URL', photo_images: urls, photo_cover_index: 0 },
     });
   }

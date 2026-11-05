@@ -396,7 +396,10 @@ export async function markShiftAttendance(input: { merchantId: string; applicati
   if (!app || !app.shift) throw new VolunteerError('회차 신청을 찾을 수 없습니다.');
   if (app.status !== 'APPROVED') throw new VolunteerError('승인된 신청만 출석·불참을 처리할 수 있습니다.');
   const shiftDate = dateKeyOf(app.shift.shiftDate);
-  if (shiftDate > kstDateKey(input.now ?? new Date())) throw new VolunteerError('회차 날짜가 되어야 출석·불참을 처리할 수 있습니다.');
+  const now = input.now ?? new Date();
+  if (shiftDate > kstDateKey(now)) throw new VolunteerError('회차 날짜가 되어야 출석·불참을 처리할 수 있습니다.');
+  // 같은 날이라도 회차 시작 전에는 출석·불참을 받지 않는다(2026-11-06 점검 낮음 — 아침에 미리 출석 처리 방지).
+  if (app.shift.startsAt.getTime() > now.getTime()) throw new VolunteerError('회차 시작 시각이 지나야 출석·불참을 처리할 수 있습니다.');
   const shift = app.shift;
   return prisma.$transaction(async (tx) => {
     const r = await tx.volunteerApplication.updateMany({

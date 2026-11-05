@@ -26,7 +26,7 @@ export interface FilterResult {
   containsPersonalInfo: boolean;
 }
 
-const RRN = /\b\d{6}[-\s]?[1-4]\d{6}\b/g; // 주민등록번호
+const RRN = /\b\d{6}[-\s]?[1-8]\d{6}\b/g; // 주민등록번호(1~4)·외국인등록번호(5~8)
 const CARD = /\b(?:\d{4}[-\s]?){3}\d{4}\b/g;
 const PHONE = /\b01[016789][-\s]?\d{3,4}[-\s]?\d{4}\b/g;
 const TEL = /\b0(?:2|[3-6]\d)[-\s]?\d{3,4}[-\s]?\d{4}\b/g;

@@ -96,7 +96,8 @@ export function buildScriptPrompt(b: ContentBrief, kind: ContentKind) {
 const PHONE_RE = /01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}|0\d{1,2}[-\s.]\d{3,4}[-\s.]\d{4}/;
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.]+/;
 const URL_RE = /https?:\/\/|www\./i;
-const RRN_RE = /\d{6}[-\s]?[1-4]\d{6}/;
+/** 뒷자리 첫 숫자 1~4 주민등록번호, 5~8 외국인등록번호 (2026-11-06 점검 A-M13) */
+const RRN_RE = /\d{6}[-\s]?[1-8]\d{6}/;
 
 /** 개인정보 패턴(전화·이메일·주민번호). 걸리면 사유. */
 export function personalInfoHit(text: string): string | null {
@@ -104,6 +105,17 @@ export function personalInfoHit(text: string): string | null {
   if (EMAIL_RE.test(text)) return '이메일 주소';
   if (RRN_RE.test(text)) return '주민등록번호로 보이는 숫자';
   return null;
+}
+
+/**
+ * 흔한 성씨 + 이름 1~2자 + 호칭(띄어쓰기 없이) — "김영희할머니께", "박철수씨" 같은 실명 표현. 마스킹(김OO)은 통과.
+ * 어림 검사다(오탐을 줄이려 어르신·학생 같은 일반 명사형 호칭은 넣지 않았다). 최종 확인은 담당자가 한다.
+ */
+export const REAL_NAME_RE = /(?:^|[^가-힣])[김이박최정강조윤장임한오서신권황안송류홍전고문양손배백허유남심노하곽성차주우구민진나엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국은편용예경봉][가-힣]{1,2}(?:씨|할머니|할아버지|군|양)/;
+
+/** 수혜자 실명으로 보이는 표현(어림). 콘텐츠 대본·AI 초안이 함께 쓴다. */
+export function realNameHit(text: string): boolean {
+  return REAL_NAME_RE.test(text);
 }
 
 function str(v: unknown) {
@@ -159,6 +171,8 @@ export function validateScriptJson(
     if (banned) return { ok: false, reason: `금지어 "${banned}" 를 썼습니다` };
     const pii = personalInfoHit(t);
     if (pii) return { ok: false, reason: `${pii}를 썼습니다` };
+    // 수혜자 실명·실사진을 쓰지 않는다(CLAUDE.md 11항). 콘텐츠 대본에도 AI 초안과 같은 실명 검사를 한다(2026-11-06 점검 낮음).
+    if (realNameHit(t)) return { ok: false, reason: '실명으로 보이는 표현을 썼습니다(김OO처럼 가려 쓰거나 빼 주세요)' };
     if (URL_RE.test(t)) return { ok: false, reason: '링크를 직접 썼습니다' };
     if (t.includes('AI 생성 콘텐츠')) return { ok: false, reason: 'AI 표시는 시스템이 붙입니다' };
   }

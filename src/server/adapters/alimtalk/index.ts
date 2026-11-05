@@ -26,11 +26,27 @@ export interface AlimtalkSendRequest {
 
 export interface AlimtalkSendResult {
   providerMessageId: string;
+  /**
+   * true 면 공급자가 **접수만** 했다(최종 전달 결과는 리포트로 따로 온다) → 이력은 ACCEPTED 로 두고
+   * alimtalk-reports 배치가 결과를 조회한다. false(mock)면 그 자리에서 최종이다.
+   */
+  pendingReport: boolean;
+}
+
+/** 전달 결과 조회 한 건. DELIVERED = 수신 완료, FAILED = 공급자가 명시한 실패 코드, PENDING = 아직 모름. */
+export interface AlimtalkReport {
+  outcome: 'DELIVERED' | 'FAILED' | 'PENDING';
+  statusCode: string | null;
+  reason: string | null;
+  /** 공급자가 알려 준 수신 시각(있으면) */
+  receivedAt?: Date | null;
 }
 
 export interface AlimtalkAdapter {
   info(): AdapterInfo;
   send(req: AlimtalkSendRequest): Promise<ProviderResult<AlimtalkSendResult>>;
+  /** 접수한 메시지의 전달 결과 조회. 접수만 하는 공급자(솔라피)만 구현한다. */
+  report?(providerMessageId: string): Promise<ProviderResult<AlimtalkReport>>;
 }
 
 const globalForAlimtalk = globalThis as unknown as {
@@ -65,7 +81,8 @@ export const mockAlimtalkAdapter: AlimtalkAdapter = {
     outbox.push({ to: req.to, text: req.text, templateCode: req.templateCode, at: new Date(), id });
     if (outbox.length > 500) outbox.splice(0, outbox.length - 500);
     logger.info('알림톡(mock) 발송', { template: req.templateCode, bytes: Buffer.byteLength(req.text) });
-    return { ok: true, data: { providerMessageId: id }, latencyMs: 5 };
+    // mock 은 리포트가 없다 — 그 자리에서 최종(전달 결과를 꾸미지 않고 mock 표시로 남는다).
+    return { ok: true, data: { providerMessageId: id, pendingReport: false }, latencyMs: 5 };
   },
 };
 

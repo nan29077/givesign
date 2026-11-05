@@ -108,22 +108,36 @@ async function sendMtDetailed(input: {
     // sendAlimtalk 은 어댑터 예외도 결과 값으로 돌려준다(예외를 던지지 않는다).
     const at = await sendAlimtalk(normalizePhone(input.phone), route, template.text);
     if (at.ok) {
-      // 이미 발송됐다. 이후 기록 갱신이 실패해도 발송 결과(성공)를 바꾸지 않는다.
+      // 이미 발송(접수)됐다. 이후 기록 갱신이 실패해도 발송 결과를 바꾸지 않는다.
+      // 솔라피처럼 접수만 하는 공급자는 ACCEPTED 로 두고, 전달 결과는 alimtalk-reports 배치가 확인한다.
+      // 그 배치가 명시적 실패 코드를 받으면 같은 본문을 문자로 한 번 대체한다(fallback=true) — 그래서 원문 암호문을 잠시 둔다.
+      // (2026-11-06 점검 A-5: 예전에는 접수 2000 을 SENT 로 적어 카카오 전달 실패가 묻혔다)
+      const now = new Date();
+      const accepted = at.pendingReport;
       await prisma.mtOutboundMessage
         .update({
           where: { id: row.id },
-          data: {
-            status: 'SENT',
-            providerCode: `alimtalk:${at.provider}`,
-            providerMessageId: at.messageId,
-            attempts: { increment: 1 },
-            sentAt: new Date(),
-          },
+          data: accepted
+            ? {
+                status: 'ACCEPTED',
+                providerCode: `alimtalk:${at.provider}`,
+                providerMessageId: at.messageId,
+                attempts: { increment: 1 },
+                acceptedAt: now,
+                bodyEnc: encrypt(template.text),
+              }
+            : {
+                status: 'SENT',
+                providerCode: `alimtalk:${at.provider}`,
+                providerMessageId: at.messageId,
+                attempts: { increment: 1 },
+                sentAt: now,
+              },
         })
         .catch((e) => logger.error('알림톡 발송 이력 갱신 실패', { id: row!.id, message: (e as Error).message }));
       if (input.chargeId) {
         await prisma.charge
-          .update({ where: { id: input.chargeId }, data: { mtStatus: 'SENT' } })
+          .update({ where: { id: input.chargeId }, data: { mtStatus: accepted ? 'ACCEPTED' : 'SENT' } })
           .catch((e) => logger.error('결제 건 문자 상태 갱신 실패', { chargeId: input.chargeId, message: (e as Error).message }));
       }
       return { ok: true, id: row.id, channel: 'ALIMTALK', fallback: false };

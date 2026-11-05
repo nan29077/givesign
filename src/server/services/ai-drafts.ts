@@ -6,7 +6,7 @@ import { consumeRateLimit } from '@/server/rate-limit';
 import { completeJson, getLlmAdapter, llmUsable, LlmError, type LlmAdapter } from '@/server/adapters/llm';
 import { AdapterNotConfiguredError } from '@/server/adapters/types';
 import { llmConfig } from '@/lib/env';
-import { personalInfoHit } from '@/server/adapters/content/llm-script';
+import { personalInfoHit, realNameHit } from '@/server/adapters/content/llm-script';
 import { THANKS_MT_MAX_LENGTH, THANKS_MT_VARIABLES } from './mt-templates';
 import { recordAiUsage, type AiFeature } from './ai-usage';
 import { CONTENT_KIND_SHORT, contentConversions } from './content';
@@ -40,12 +40,6 @@ const DRAFT_SYSTEM_BASE = [
   '링크(주소)·전화번호·계좌번호를 쓰지 않는다. 이모지를 쓰지 않는다. 정중한 존댓말.',
 ].join('\n');
 
-/**
- * 흔한 성씨 + 이름 1~2자 + 호칭(띄어쓰기 없이) — "김영희할머니께", "박철수씨" 같은 실명 표현. 마스킹(김OO)은 통과.
- * 어림 검사다(오탐을 줄이려 어르신·학생 같은 일반 명사형 호칭은 넣지 않았다). 최종 확인은 담당자가 한다.
- */
-const REAL_NAME_RE = /(?:^|[^가-힣])[김이박최정강조윤장임한오서신권황안송류홍전고문양손배백허유남심노하곽성차주우구민진나엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국은편용예경봉][가-힣]{1,2}(?:씨|할머니|할아버지|군|양)/;
-
 /** 계좌번호 모양(숫자-숫자-숫자). 날짜(2026-11-06)는 제외. */
 const ACCOUNT_RE = /(?<!\d)(?!\d{4}-\d{1,2}-\d{1,2}(?!\d))\d{2,6}-\d{2,6}-\d{2,8}(?!\d)/;
 
@@ -54,7 +48,7 @@ export function draftTextViolation(text: string, bannedWords: string[] = []): st
   if (pii) return `${pii}가 들어 있습니다`;
   if (/https?:\/\/|www\./i.test(text)) return '링크가 들어 있습니다';
   if (ACCOUNT_RE.test(text)) return '계좌번호로 보이는 숫자가 들어 있습니다';
-  if (REAL_NAME_RE.test(text)) return '실명으로 보이는 표현이 들어 있습니다';
+  if (realNameHit(text)) return '실명으로 보이는 표현이 들어 있습니다';
   const hit = bannedWords.find((w) => w && text.includes(w));
   if (hit) return `금지어 "${hit}" 가 들어 있습니다`;
   return null;
@@ -66,7 +60,9 @@ async function bannedWordsOf(merchantId: string) {
 }
 
 async function rateLimit(key: string) {
-  const r = await consumeRateLimit('ai-draft', key, llmConfig().draftPerMinute, 60);
+  // 저장소 장애 때 열어 두면 기관당 분당 한도가 사라지고 유료 LLM 호출이 무제한이 된다 → 닫는다(2026-11-06 점검 낮음).
+  const r = await consumeRateLimit('ai-draft', key, llmConfig().draftPerMinute, 60, { failClosed: true });
+  if (!r.ok && r.count === 0) throw new AiDraftError('AI 초안 요청 한도를 확인할 수 없어 잠시 멈췄습니다. 잠시 뒤 다시 시도해 주세요.');
   if (!r.ok) throw new AiDraftError('AI 초안 요청이 너무 잦습니다. 1분 뒤에 다시 시도해 주세요.');
 }
 
@@ -221,7 +217,8 @@ export const INQUIRY_AI_CATEGORY_LABEL: Record<InquiryAiCategory, string> = {
 /** 공급자로 보내기 전에 문의 본문의 연락처·계좌·주민번호를 가린다(외부 전송 최소화). */
 export function maskForLlm(text: string) {
   return text
-    .replace(/\d{6}[-\s]?[1-4]\d{6}/g, '[주민번호]')
+    // 뒷자리 첫 숫자 1~4 = 주민등록번호, 5~8 = 외국인등록번호(2026-11-06 점검 A-M13).
+    .replace(/\d{6}[-\s]?[1-8]\d{6}/g, '[주민번호]')
     .replace(/01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}/g, '[전화번호]')
     .replace(/0\d{1,2}[-\s.]\d{3,4}[-\s.]\d{4}/g, '[전화번호]')
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[이메일]')

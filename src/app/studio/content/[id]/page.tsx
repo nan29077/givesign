@@ -17,6 +17,7 @@ import {
   cancelPublishAction,
   makeYoutubePublicAction,
   regenerateContentAction,
+  resolveUnknownPublishAction,
   schedulePublishAction,
   updateContentAction,
 } from '@/app/actions/automation';
@@ -35,7 +36,8 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
   const item = await prisma.contentItem.findFirst({ where: { id, merchantId }, include: { publishes: { orderBy: { createdAt: 'asc' } }, jobs: true } });
   if (!item) notFound();
   const [channels, conv, campaign, previewCaption] = await Promise.all([
-    prisma.socialChannel.findMany({ where: { merchantId, status: 'CONNECTED' } }),
+    // 실연동이면 mock 시절 연결은 게시 대상이 아니다(content.ts publishableChannelWhere 와 같은 기준).
+    prisma.socialChannel.findMany({ where: { merchantId, status: 'CONNECTED', mock: snsIsMock() } }),
     contentConversions(merchantId, [item.id]),
     item.campaignId ? prisma.campaign.findUnique({ where: { id: item.campaignId }, select: { title: true, code: true } }) : null,
     renderCaption(item, 'INSTAGRAM'),
@@ -160,11 +162,12 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                     <input type="hidden" name="id" value={item.id} />
                     <div className="flex flex-wrap gap-2">
                       {platforms.map((p) => {
-                        const ok = connected.has(p) && PLATFORM_KINDS[p].includes(item.kind);
+                        const noVideo = item.kind === 'SHORTFORM' && !item.videoUrl;
+                        const ok = connected.has(p) && PLATFORM_KINDS[p].includes(item.kind) && !noVideo;
                         return (
                           <label key={p} className={`rounded-xl border px-3 py-2 text-[13px] font-bold ${ok ? 'cursor-pointer border-ink-200 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50' : 'border-ink-100 text-ink-300'}`}>
                             <input type="checkbox" name="platform" value={p} disabled={!ok} className="sr-only" />
-                            {PLATFORM_LABEL[p]}{!connected.has(p) ? ' (미연결)' : !PLATFORM_KINDS[p].includes(item.kind) ? ' (형식 불가)' : ''}
+                            {PLATFORM_LABEL[p]}{!connected.has(p) ? ' (미연결)' : !PLATFORM_KINDS[p].includes(item.kind) ? ' (형식 불가)' : noVideo ? ' (영상 없음)' : ''}
                           </label>
                         );
                       })}
@@ -179,7 +182,7 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                 {item.publishes.map((p) => (
                   <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[13px]">
                     <span>
-                      <b>{PLATFORM_LABEL[p.platform]}</b> <Badge tone={p.status === 'PUBLISHED' ? 'success' : p.status === 'FAILED' ? 'danger' : 'neutral'} className="ml-1">{PUBLISH_STATUS_LABEL[p.status] ?? p.status}</Badge>
+                      <b>{PLATFORM_LABEL[p.platform]}</b> <Badge tone={p.status === 'PUBLISHED' ? 'success' : p.status === 'FAILED' ? 'danger' : p.status === 'UNKNOWN' ? 'warning' : 'neutral'} className="ml-1">{PUBLISH_STATUS_LABEL[p.status] ?? p.status}</Badge>
                       {p.mock ? <Badge tone="warning" className="ml-1">mock — 실제 게시 안 됨</Badge> : null}
                       <span className="ml-2 text-ink-400">{p.publishedAt ? `게시 ${formatKst(p.publishedAt, false)}` : `예약 ${formatKst(p.scheduledAt, false)}`}</span>
                       {p.error ? <span className="ml-2 text-danger-500">{p.error}</span> : null}
@@ -194,6 +197,21 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                           <input type="hidden" name="id" value={item.id} />
                           <input type="hidden" name="publishId" value={p.id} />
                         </ActionForm>
+                      ) : null}
+                      {p.status === 'UNKNOWN' ? (
+                        <>
+                          <ActionForm action={resolveUnknownPublishAction} submitLabel="다시 게시" variant="secondary" size="sm" confirmMessage="채널에 이미 올라가 있지 않은지 먼저 확인해 주세요. 올라가 있다면 두 번 게시됩니다.">
+                            <input type="hidden" name="id" value={item.id} />
+                            <input type="hidden" name="publishId" value={p.id} />
+                            <input type="hidden" name="intent" value="republish" />
+                          </ActionForm>
+                          <ActionForm action={resolveUnknownPublishAction} submitLabel="게시됨으로 표시" variant="ghost" size="sm">
+                            <input type="hidden" name="id" value={item.id} />
+                            <input type="hidden" name="publishId" value={p.id} />
+                            <input type="hidden" name="intent" value="mark" />
+                            <Input name="url" placeholder="게시물 주소(선택, https://)" className="h-8 w-48 text-[12px]" />
+                          </ActionForm>
+                        </>
                       ) : null}
                       {p.status === 'SCHEDULED' ? (
                         <ActionForm action={cancelPublishAction} submitLabel="취소" variant="ghost" size="sm">

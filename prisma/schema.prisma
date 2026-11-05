@@ -255,6 +255,10 @@ enum DeliveryStatus {
   SENT
   FAILED
   SKIPPED
+  /// 공급자가 접수만 했고 최종 전달 결과(리포트)를 기다리는 중 — 솔라피 알림톡 (2026-11-06 점검 A-5)
+  ACCEPTED
+  /// 접수 뒤 오래 결과를 받지 못함. 자동으로 다시 보내지 않고 관리자가 확인한다
+  UNKNOWN
 
   @@map("delivery_status")
 }
@@ -1159,6 +1163,12 @@ model MtOutboundMessage {
   /// 알림톡을 시도했다가 실패해 문자로 대체 발송했는지
   fallback          Boolean        @default(false)
   sentAt            DateTime?      @map("sent_at") @db.Timestamptz(3)
+  /// 알림톡 접수(ACCEPTED) 시각 — 리포트 조회 시한(UNKNOWN 전환)의 기준
+  acceptedAt        DateTime?      @map("accepted_at") @db.Timestamptz(3)
+  /// 마지막 전달 결과 조회 시각 (alimtalk-reports 배치)
+  reportCheckedAt   DateTime?      @map("report_checked_at") @db.Timestamptz(3)
+  /// 전달 실패 시 같은 본문을 문자로 대체하기 위한 원문 암호문. 결과가 확정되면 지운다.
+  bodyEnc           String?        @map("body_enc")
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
 
   charge Charge? @relation(fields: [chargeId], references: [id])
@@ -3463,7 +3473,7 @@ model ContentPublish {
   id             String         @id
   itemId         String         @map("item_id")
   platform       SocialPlatform
-  /// SCHEDULED · PUBLISHING · PUBLISHED · PRIVATE_UPLOADED · FAILED · CANCELED
+  /// SCHEDULED · PUBLISHING · PUBLISHED · PRIVATE_UPLOADED · FAILED · CANCELED · UNKNOWN(게시 도중 끊김 — 담당자 확인)
   status         String         @default("SCHEDULED")
   mock           Boolean        @default(true)
   scheduledAt    DateTime       @map("scheduled_at") @db.Timestamptz(3)

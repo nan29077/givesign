@@ -190,7 +190,7 @@ describe('[2] 출석·불참', () => {
     const { p, s, a, appId } = await approvedOnTodayShift();
     await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow(/회차 날짜/);
     // 회차가 오늘이 되었다고 친다
-    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() - 60_000) } });
     const act = await markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId });
     expect(act?.minutes).toBe(120);
     expect(act?.title).toBe(p.title);
@@ -209,12 +209,45 @@ describe('[2] 출석·불참', () => {
 
   it('불참은 NO_SHOW 이고 활동이 기록되지 않는다', async () => {
     const { s, a, appId } = await approvedOnTodayShift();
-    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() - 60_000) } });
     expect(await markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: false, userId: fx.merchantUserId })).toBeNull();
     expect((await prisma.volunteerApplication.findUniqueOrThrow({ where: { id: appId } })).status).toBe('NO_SHOW');
     expect(await prisma.volunteerActivity.count({ where: { payerId: a.id } })).toBe(0);
     await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow();
     await expect(markShiftAttendance({ merchantId: 'other', applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow(/찾을 수 없/);
+  });
+});
+
+describe('[2-1] 2026-11-06 점검 낮음 — 시작 전 출석 · 보관과 동시 신청', () => {
+  it('같은 날이라도 회차 시작 전에는 출석·불참을 받지 않는다', async () => {
+    const p = await openPosting();
+    const s = await addShift(fx.merchantId, p.id, { date: daysFromToday(2), startTime: '09:00', endTime: '11:00', capacity: 5 });
+    const a = await newPayer();
+    const appId = await applyVolunteer({ ...base, payerId: a.id, merchantId: fx.merchantId, postingId: p.id, shiftId: s.id });
+    await decideVolunteer({ merchantId: fx.merchantId, applicationId: appId, decision: 'APPROVE', userId: fx.merchantUserId });
+    // 오늘 회차인데 한 시간 뒤 시작
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() + 3600_000) } });
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow(/시작 시각/);
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: false, userId: fx.merchantUserId })).rejects.toThrow(/시작 시각/);
+    // 시작 뒤에는 된다
+    await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId, now: new Date(Date.now() + 3600_000 + 60_000) })).resolves.toBeTruthy();
+  });
+
+  it('회차 보관과 신청이 동시에 와도 "보관된 회차에 진행 중 신청" 이 남지 않는다', async () => {
+    const p = await openPosting();
+    for (let i = 0; i < 4; i += 1) {
+      const s = await addShift(fx.merchantId, p.id, { date: daysFromToday(3 + i), startTime: '10:00', endTime: '12:00', capacity: 5 });
+      const py = await newPayer();
+      await Promise.allSettled([
+        applyVolunteer({ ...base, payerId: py.id, merchantId: fx.merchantId, postingId: p.id, shiftId: s.id }),
+        setShiftArchived(fx.merchantId, s.id, true),
+      ]);
+      const after = await prisma.volunteerShift.findUniqueOrThrow({ where: { id: s.id } });
+      const live = await prisma.volunteerApplication.count({ where: { shiftId: s.id, status: { in: ['RECEIVED', 'APPROVED'] } } });
+      // 둘 중 하나만 이긴다: 보관됐으면 진행 중 신청이 없고, 신청이 들어갔으면 보관되지 않았다
+      expect(after.archivedAt !== null && live > 0).toBe(false);
+      expect(after.appliedCount).toBe(live);
+    }
   });
 });
 

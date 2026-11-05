@@ -424,7 +424,7 @@ describe('[3] SNS 게시 요청 형태', () => {
     expect(formOf(calls[0]!).get('access_token')).toBe('ACCESS-OLD');
   });
 
-  it('배치 게시: 영상이 없는 숏폼은 실패 사유를 남기고 재시도로 돌린다', async () => {
+  it('배치 게시: 영상이 없는 숏폼은 공급자를 부르지 않고 재시도 없이 실패로 닫는다(2026-11-06 점검 낮음)', async () => {
     liveSocial();
     await connectedChannel('YOUTUBE');
     const item = await prisma.contentItem.create({
@@ -432,10 +432,12 @@ describe('[3] SNS 게시 요청 형태', () => {
     });
     const pub = await prisma.contentPublish.create({ data: { id: newId(), itemId: item.id, platform: 'YOUTUBE', status: 'SCHEDULED', mock: false, scheduledAt: new Date(Date.now() - 1000) } });
     const r = await processContentQueue(new Date());
-    expect(r.retried).toBe(1);
+    expect(r.failed).toBe(1);
     const after = await prisma.contentPublish.findUniqueOrThrow({ where: { id: pub.id } });
-    expect(after.status).toBe('SCHEDULED');
+    expect(after.status).toBe('FAILED');
     expect(after.error).toMatch(/영상 파일이 없습니다/);
+    // 모든 게시가 실패로 끝나면 콘텐츠가 '게시 예약' 에 남지 않는다
+    expect((await prisma.contentItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('APPROVED');
     expect(calls).toHaveLength(0);
   });
 });
