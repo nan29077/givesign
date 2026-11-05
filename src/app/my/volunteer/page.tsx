@@ -8,6 +8,7 @@ import { DonorActionForm } from '@/components/my/donor-action-form';
 import { withdrawVolunteerAction } from '@/app/actions/volunteer';
 import { VOLUNTEER_STATUS_LABEL } from '@/server/services/volunteers';
 import { formatKst } from '@/lib/datetime';
+import { shiftWhenLabel } from '@/lib/volunteer-schedule';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,7 @@ export default async function MyVolunteerPage() {
   const { payerId } = await requirePayerContext('/my/volunteer');
   if (!payerId) return <EmptyState title={NO_PAYER_TITLE} description={NO_PAYER_DESC} />;
   const [apps, acts] = await Promise.all([
-    prisma.volunteerApplication.findMany({ where: { payerId }, include: { merchant: { select: { displayName: true, code: true } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.volunteerApplication.findMany({ where: { payerId }, include: { merchant: { select: { displayName: true, code: true } }, posting: { select: { title: true } }, shift: { select: { shiftDate: true, startTime: true, endTime: true } } }, orderBy: { createdAt: 'desc' } }),
     prisma.volunteerActivity.findMany({ where: { payerId }, include: { merchant: { select: { displayName: true } } }, orderBy: { activityDate: 'desc' }, take: 50 }),
   ]);
   const total = acts.reduce((a, r) => a + r.minutes, 0);
@@ -37,6 +38,7 @@ export default async function MyVolunteerPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[15px] font-black text-ink-900">{a.merchant.displayName} <Badge tone={a.status === 'APPROVED' ? 'success' : a.status === 'RECEIVED' ? 'warning' : 'neutral'} className="ml-1">{VOLUNTEER_STATUS_LABEL[a.status]}</Badge></p>
+                {a.posting ? <p className="text-[13px] font-semibold text-ink-700">{a.posting.title}{a.shift ? ` · ${shiftWhenLabel(a.shift)}` : ''}</p> : null}
                 <p className="text-[12px] text-ink-400">{formatKst(a.createdAt, false)} 신청 {a.agreementDocId ? <>· <Link href={`/my/agreements/${a.agreementDocId}`} className="font-bold text-brand-700">신청서</Link></> : null}</p>
               </div>
               {a.status === 'RECEIVED' || a.status === 'APPROVED' ? (

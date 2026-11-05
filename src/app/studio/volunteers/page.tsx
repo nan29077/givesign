@@ -13,6 +13,7 @@ import { sourceLabel } from '@/lib/attribution';
 import { VOLUNTEER_STATUS_LABEL } from '@/server/services/volunteers';
 import { dayLabel, slotLabel } from '@/server/services/agreements';
 import { decideVolunteerAction, recordActivityAction } from '@/app/actions/automation';
+import { shiftScheduleLabel, shiftWhenLabel } from '@/lib/volunteer-schedule';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,14 +26,18 @@ export default async function StudioVolunteersPage({ searchParams }: { searchPar
   const { merchantId } = await requireMerchant();
   const sp = await searchParams;
   const tab = sp.tab === 'active' || sp.tab === 'closed' ? sp.tab : 'received';
-  const statusFilter = tab === 'received' ? ['RECEIVED'] : tab === 'active' ? ['APPROVED'] : ['REJECTED', 'WITHDRAWN'];
+  const statusFilter = tab === 'received' ? ['RECEIVED'] : tab === 'active' ? ['APPROVED'] : ['REJECTED', 'WITHDRAWN', 'COMPLETED', 'NO_SHOW'];
   const today = kstDateKey();
   const monthStart = `${today.slice(0, 7)}-01`;
 
   const [apps, counts, monthActs, recentActs] = await Promise.all([
     prisma.volunteerApplication.findMany({
       where: { merchantId, status: { in: statusFilter as never } },
-      include: { payer: { select: { id: true, displayName: true, phoneMasked: true, volunteerProfile: true } } },
+      include: {
+        payer: { select: { id: true, displayName: true, phoneMasked: true, volunteerProfile: true } },
+        posting: { select: { id: true, title: true, place: true } },
+        shift: { select: { shiftDate: true, startTime: true, endTime: true } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 200,
     }),
@@ -50,13 +55,18 @@ export default async function StudioVolunteersPage({ searchParams }: { searchPar
       <PageHeader
         title="자원봉사"
         description="문자 '봉사'·후원페이지·SNS 링크로 들어온 신청을 승인하고 일정을 안내합니다. 활동을 기록하면 1365 자원봉사포털 등록 자료로 내려받을 수 있습니다."
-        action={<a href={`/api/studio/volunteers/export?from=${monthStart}&to=${today}`} className="text-[13px] font-bold text-brand-700">이번 달 활동 CSV</a>}
+        action={
+          <span className="flex gap-4">
+            <Link href="/studio/volunteers/postings" className="text-[13px] font-bold text-brand-700">모집 공고·회차</Link>
+            <a href={`/api/studio/volunteers/export?from=${monthStart}&to=${today}`} className="text-[13px] font-bold text-brand-700">이번 달 활동 CSV</a>
+          </span>
+        }
       />
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="새 신청" value={`${formatNumber(c('RECEIVED'))}건`} tone={c('RECEIVED') ? 'warning' : 'neutral'} />
         <StatTile label="활동 중" value={`${formatNumber(c('APPROVED'))}명`} tone="brand" />
         <StatTile label="이번 달 활동" value={`${formatNumber(monthActs._count._all)}회`} sub={`${((monthActs._sum.minutes ?? 0) / 60).toFixed(1)}시간`} />
-        <StatTile label="종료·철회" value={`${formatNumber(c('REJECTED') + c('WITHDRAWN'))}건`} />
+        <StatTile label="종료·철회" value={`${formatNumber(c('REJECTED') + c('WITHDRAWN') + c('COMPLETED') + c('NO_SHOW'))}건`} sub={c('COMPLETED') || c('NO_SHOW') ? `회차 완료 ${c('COMPLETED')} · 불참 ${c('NO_SHOW')}` : undefined} />
       </div>
 
       <div className="mb-4 flex gap-2">
@@ -77,8 +87,14 @@ export default async function StudioVolunteersPage({ searchParams }: { searchPar
                   <div>
                     <p className="text-[15px] font-black text-ink-900">
                       {displayPayerName(a.payer.displayName ?? '')} <span className="ml-1 font-mono text-[12px] font-normal text-ink-400">{a.payer.phoneMasked}</span>
-                      <Badge tone={a.status === 'APPROVED' ? 'success' : a.status === 'RECEIVED' ? 'warning' : 'neutral'} className="ml-2">{VOLUNTEER_STATUS_LABEL[a.status]}</Badge>
+                      <Badge tone={a.status === 'APPROVED' ? 'success' : a.status === 'RECEIVED' ? 'warning' : a.status === 'NO_SHOW' ? 'danger' : 'neutral'} className="ml-2">{VOLUNTEER_STATUS_LABEL[a.status]}</Badge>
                     </p>
+                    {a.posting ? (
+                      <p className="mt-1 text-[12.5px] text-ink-700">
+                        공고 <Link href={`/studio/volunteers/postings/${a.posting.id}`} className="font-bold text-brand-700">{a.posting.title}</Link>
+                        {a.shift ? <> · 회차 {shiftWhenLabel(a.shift)}</> : null}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-[12.5px] text-ink-500">
                       {formatKst(a.createdAt, false)} 신청 · 유입 {sourceLabel(a.source)} {a.agreementDocId ? <>· <Link href={`/studio/agreements/${a.agreementDocId}`} className="font-bold text-brand-700">신청서 보기</Link></> : null}
                     </p>
@@ -100,7 +116,7 @@ export default async function StudioVolunteersPage({ searchParams }: { searchPar
                     <ActionForm action={decideVolunteerAction} submitLabel="승인하고 안내 보내기" size="sm">
                       <input type="hidden" name="id" value={a.id} />
                       <input type="hidden" name="decision" value="APPROVE" />
-                      <Field label="활동 일정·장소 안내 (문자로 나갑니다)"><Input name="assignment" maxLength={120} placeholder="예: 11/8(토) 10시 복지관 1층 급식실, 앞치마 지참" /></Field>
+                      <Field label="활동 일정·장소 안내 (문자로 나갑니다)"><Input name="assignment" maxLength={120} defaultValue={a.shift ? shiftScheduleLabel(a.shift, a.posting?.place) : undefined} placeholder="예: 11/8(토) 10시 복지관 1층 급식실, 앞치마 지참" /></Field>
                       <Field label="내부 메모 (후원자에게 보이지 않음)"><Input name="memo" maxLength={300} /></Field>
                     </ActionForm>
                     <ActionForm action={decideVolunteerAction} submitLabel="반려" variant="ghost" size="sm" confirmMessage="이 신청을 반려합니다. 신청자에게 문자는 보내지 않습니다.">

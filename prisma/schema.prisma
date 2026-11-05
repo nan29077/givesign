@@ -502,6 +502,12 @@ model PayerProfile {
   registeredAt           DateTime?             @map("registered_at") @db.Timestamptz(3)
   onboardingStatus       PayerOnboardingStatus @default(UNREGISTERED) @map("onboarding_status")
   registrationLinkSentAt DateTime?             @map("registration_link_sent_at") @db.Timestamptz(3)
+  /// 같은 사람이 번호를 바꿔 후원자가 둘이 된 경우, 조회·집계에서 합칠 대상 후원자 id(1단계만, 관리자 병합).
+  /// 결제·약정·봉사·영수증 행은 옮기지 않는다. 영수증은 각자 명의로 발급된다.
+  mergedIntoId           String?               @map("merged_into_id")
+  mergedAt               DateTime?             @map("merged_at") @db.Timestamptz(3)
+  mergedBy               String?               @map("merged_by")
+  mergeNote              String?               @map("merge_note")
   createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -523,6 +529,7 @@ model PayerProfile {
 
   @@index([lockedUntil])
   @@index([onboardingStatus])
+  @@index([mergedIntoId])
   @@map("payer_profile")
 }
 
@@ -2993,6 +3000,10 @@ enum VolunteerApplicationStatus {
   APPROVED
   REJECTED
   WITHDRAWN
+  /// 회차 활동 완료(출석 확인 → 활동 기록 자동 생성)
+  COMPLETED
+  /// 회차 불참
+  NO_SHOW
 
   @@map("volunteer_application_status")
 }
@@ -3041,14 +3052,23 @@ model VolunteerApplication {
   decidedBy   String?                    @map("decided_by")
   withdrawnAt DateTime?                  @map("withdrawn_at") @db.Timestamptz(3)
   agreementDocId String?                 @map("agreement_doc_id")
+  /// 모집 공고·회차 신청이면 채워진다(일반 신청은 비어 있음). 2026-11-06
+  postingId   String?                    @map("posting_id")
+  shiftId     String?                    @map("shift_id")
+  /// 출석 확인(COMPLETED) · 불참(NO_SHOW) 처리 시각과 처리자
+  attendedAt  DateTime?                  @map("attended_at") @db.Timestamptz(3)
+  attendedBy  String?                    @map("attended_by")
   createdAt   DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  merchant MerchantProfile   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer    PayerProfile      @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  posting  VolunteerPosting? @relation(fields: [postingId], references: [id], onDelete: SetNull)
+  shift    VolunteerShift?   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   @@index([merchantId, status, createdAt])
   @@index([payerId])
+  @@index([shiftId, status])
   @@map("volunteer_application")
 }
 
@@ -3355,6 +3375,8 @@ model ContentItem {
   createdBy    String        @map("created_by")
   approvedBy   String?       @map("approved_by")
   approvedAt   DateTime?     @map("approved_at") @db.Timestamptz(3)
+  /// 자원봉사 모집 공고 콘텐츠면 그 공고(선택, 관계 없는 스칼라). 2026-11-06
+  postingId    String?       @map("posting_id")
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -3736,4 +3758,74 @@ model AiCache {
 
   @@unique([merchantId, feature, cacheKey])
   @@map("ai_cache")
+}
+
+// ===========================================================================
+// 자원봉사 모집 공고 · 회차 (2026-11-06 고도화 6단계)
+// ===========================================================================
+
+enum VolunteerPostingStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  ARCHIVED
+
+  @@map("volunteer_posting_status")
+}
+
+/// 자원봉사 모집 공고. 공개 후원페이지에는 OPEN 이면서 모집 기간 안인 공고만 보인다.
+model VolunteerPosting {
+  id           String                 @id
+  /// 기관 (관계 없는 스칼라)
+  merchantId   String                 @map("merchant_id")
+  title        String
+  /// 활동 분야 (VOLUNTEER_INTERESTS 중 하나)
+  interest     String
+  description  String
+  /// 활동 장소 (텍스트)
+  place        String
+  /// 모집 기간 (KST 날짜, 양끝 포함)
+  recruitFrom  DateTime               @map("recruit_from") @db.Date
+  recruitTo    DateTime               @map("recruit_to") @db.Date
+  /// 필요 사항 (준비물·자격 등)
+  requirements String?
+  status       VolunteerPostingStatus @default(DRAFT)
+  createdBy    String                 @map("created_by")
+  archivedAt   DateTime?              @map("archived_at") @db.Timestamptz(3)
+  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  shifts       VolunteerShift[]
+  applications VolunteerApplication[]
+
+  @@index([merchantId, status, recruitTo])
+  @@map("volunteer_posting")
+}
+
+/// 공고의 활동 회차. 정원은 applied_count 조건부 증가(applied_count < capacity)로 지킨다.
+model VolunteerShift {
+  id           String    @id
+  postingId    String    @map("posting_id")
+  merchantId   String    @map("merchant_id")
+  /// 활동 날짜 (KST)
+  shiftDate    DateTime  @map("shift_date") @db.Date
+  /// KST 시각 "HH:MM"
+  startTime    String    @map("start_time")
+  endTime      String    @map("end_time")
+  /// 시작·끝 시각 (UTC 저장, KST 날짜+시각으로 계산)
+  startsAt     DateTime  @map("starts_at") @db.Timestamptz(3)
+  endsAt       DateTime  @map("ends_at") @db.Timestamptz(3)
+  capacity     Int
+  /// 진행 중(접수·승인) 신청 수. 신청 시 조건부 증가, 철회·반려 시 감소.
+  appliedCount Int       @default(0) @map("applied_count")
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  posting      VolunteerPosting       @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  applications VolunteerApplication[]
+
+  @@index([postingId, shiftDate])
+  @@index([startsAt])
+  @@map("volunteer_shift")
 }

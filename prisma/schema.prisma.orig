@@ -3265,6 +3265,10 @@ enum ContentKind {
   SHORTFORM
   IMAGE_SQUARE
   IMAGE_STORY
+  /// 카드뉴스 세트 (4:5 1080×1350, 5~7장)
+  CARD_NEWS
+  /// 피드 이미지 한 장 (4:5 1080×1350)
+  IMAGE_FEED
 
   @@map("content_kind")
 }
@@ -3289,12 +3293,28 @@ model MerchantContentSetting {
   tone        String   @default("WARM")
   /// 콘텐츠에 쓰지 않을 단어
   bannedWords String[] @map("banned_words")
-  /// 승인 없이 바로 게시 예약까지 진행 (기본 꺼짐)
+  /// 자동 승인 (기본 꺼짐). 생성 직후 같은 검사(금지어·자막 길이·링크·AI 표시)와 모집등록번호가 있으면
+  /// 담당자 승인 없이 APPROVED 로 둔다. 게시 예약은 하지 않는다 — 콘텐츠 캘린더의 autoSchedule 이 켜져 있고
+  /// 캘린더가 만든 콘텐츠일 때만 그 슬롯 시각으로 자동 예약한다(content-calendar.ts).
   autoApprove Boolean  @default(false) @map("auto_approve")
   /// 월 생성 한도 (건)
   monthlyLimit Int     @default(30) @map("monthly_limit")
   /// 기본 해시태그
   hashtags    String[]
+  /// 콘텐츠 캘린더(자율 생성) 사용
+  calendarEnabled Boolean @default(false) @map("calendar_enabled")
+  /// 주당 생성 건수 (1~7)
+  weeklyCount Int      @default(3) @map("weekly_count")
+  /// 생성 요일 (0=일 … 6=토, KST). 비우면 weeklyCount 로 고르게 고른다.
+  days        Int[]    @default([1, 3, 5])
+  /// 게시 시각 (0~23시, KST)
+  postHour    Int      @default(19) @map("post_hour")
+  /// 캘린더가 돌아가며 만들 형식. 비우면 숏폼·카드뉴스.
+  kinds       ContentKind[]
+  /// 자동 게시 대상 플랫폼 (연결된 채널 중)
+  platforms   SocialPlatform[]
+  /// 캘린더 콘텐츠가 승인되면 슬롯 시각으로 게시 예약 (SOCIAL_PUBLISH_ENABLED 일 때만)
+  autoSchedule Boolean @default(false) @map("auto_schedule")
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
@@ -3319,6 +3339,10 @@ model ContentItem {
   hashtags     String[]
   /// 대표 이미지/썸네일 SVG
   coverSvg     String?       @map("cover_svg")
+  /// 조립한 9:16 영상(mp4) 공개 주소. FFMPEG_PATH 가 없으면 비어 있다(만든 척하지 않는다).
+  videoUrl     String?       @map("video_url")
+  /// 플랫폼별 캡션 변형 {PLATFORM: {title?, text}} — LLM 공급자일 때만 저장. 없으면 규칙 기반으로 바꾼다.
+  platformCaptions Json?     @map("platform_captions")
   /// 생성형 AI 산출물 표시 (AI 기본법) — 항상 true 로 만든다
   aiLabeled    Boolean       @default(true) @map("ai_labeled")
   /// 기부금품 모집등록번호가 콘텐츠에 들어갔는지. false 면 승인할 수 없다.
@@ -3367,6 +3391,9 @@ enum SocialPlatform {
   YOUTUBE
   INSTAGRAM
   FACEBOOK
+  TIKTOK
+  NAVER_BLOG
+  KAKAO_CHANNEL
 
   @@map("social_platform")
 }
@@ -3655,4 +3682,58 @@ model IssuedDocument {
   @@index([payerId, createdAt])
   @@index([merchantId, purpose, subjectType, subjectId])
   @@map("issued_document")
+}
+
+/// 콘텐츠 캘린더 슬롯. (기관, 슬롯 시각) 당 1행 — 같은 슬롯에 두 번 만들지 않는다.
+/// 만들지 못한 이유(한도·캠페인 없음)는 행으로 남기지 않는다(조건이 풀리면 다음 배치가 만든다).
+model ContentSlot {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  slotAt     DateTime @map("slot_at") @db.Timestamptz(3)
+  kind       ContentKind
+  campaignId String?  @map("campaign_id")
+  itemId     String?  @map("item_id")
+  /// GENERATING · REVIEW · APPROVED · SCHEDULED · FAILED
+  status     String   @default("GENERATING")
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, slotAt])
+  @@index([itemId])
+  @@index([campaignId, createdAt])
+  @@map("content_slot")
+}
+
+/// LLM 호출 비용 기록 (기능별). 콘텐츠 대본·AI 초안 공통.
+model AiUsage {
+  id           String   @id
+  /// 기관 (관리자 화면 기능이면 문의의 기관, 없으면 null)
+  merchantId   String?  @map("merchant_id")
+  /// content_script · campaign_draft · thanks_draft · inquiry_draft · content_insight
+  feature      String
+  provider     String
+  model        String
+  inputTokens  Int      @default(0) @map("input_tokens")
+  outputTokens Int      @default(0) @map("output_tokens")
+  costKrw      Int      @default(0) @map("cost_krw")
+  ok           Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, createdAt])
+  @@index([createdAt])
+  @@map("ai_usage")
+}
+
+/// AI 결과 캐시 (콘텐츠 성과 요약 — 기관당 하루 1회).
+model AiCache {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  feature    String
+  cacheKey   String   @map("cache_key")
+  result     Json
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, feature, cacheKey])
+  @@map("ai_cache")
 }

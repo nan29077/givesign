@@ -41,6 +41,17 @@
    - **AI 초안**(`ai-drafts.ts` — 캠페인·감사 문구·문의 답변·성과 요약)은 입력칸을 채우기만 한다. 자동 저장·자동 발송·자동 게시를 만들지 않는다. 기관(관리자)당 분당 `AI_DRAFT_PER_MINUTE` 회. LLM 이 mock 이면 화면은 버튼 대신 "AI 공급자 연결 후 사용". 공급자로 보내는 문의 본문은 연락처·계좌를 가린다(`maskForLlm`). 수혜자 실명·연락처 패턴은 거절한다.
    - 영상(mp4)은 `FFMPEG_PATH` + sharp 가 있을 때만 조립해 `content_item.video_url` 에 둔다. TTS 는 계약 전이라 만들지 않는다(만든 척하지 않음). 플랫폼별 캡션 규칙은 `content-captions.ts` 한 곳(링크·AI 표시는 잘리지 않는다).
 
+## 자원봉사 모집 공고·회차 (2026-11-06)
+
+- 공고 `volunteer_posting`(DRAFT·OPEN·CLOSED·ARCHIVED, 모집 기간 KST 양끝 포함) + 회차 `volunteer_shift`(KST 날짜 + "HH:MM", `starts_at/ends_at` UTC 함께 저장, 하루를 넘기지 않음). 공개 후원페이지에는 OPEN 이면서 모집 기간 안인 공고만 보인다. 지우지 않고 보관한다.
+- 회차 정원은 `applied_count < capacity` 조건부 증가(행 단위 원자 갱신)로만 지킨다. 철회·반려 때 같은 트랜잭션에서 되돌린다. 정원은 신청 수보다 작게 줄일 수 없고, 진행 중 신청이 있는 회차는 보관하지 않는다.
+- 진행 중 신청 유니크: 일반 신청(회차 없음)은 기관당 1건(`volunteer_application_live_uniq`), 회차 신청은 (기관, 후원자, 회차) 1건(`volunteer_application_shift_live_uniq`).
+- 마감·기간 밖 공고, 시작한 회차, 보관 회차에는 신청을 거절한다. 회차가 있는 공고는 회차를 골라야 한다.
+- 승인 시 배정 안내를 비우면 "M/D(요일) HH:MM~HH:MM · 장소" 로 채운다(`shiftScheduleLabel`). 출석 → 회차 길이만큼 활동 기록 + `COMPLETED`(조건부 전환으로 1회), 불참 → `NO_SHOW`. 회차 날짜 전에는 처리하지 않는다.
+- D-1 안내 대상은 `volunteerShiftsStartingOn(dateKey)`(발송하지 않음, 저니가 보낸다).
+- 콘텐츠 짧은 링크 `/go/[publishId]` 는 `content_publish.clicks` 를 센다(봇 UA 제외, 같은 IP·게시 10분 1회 — IP 는 HMAC 키로만). 이동 주소는 게시 행에서 서버가 만든다(쿼리로 받지 않음).
+- 후원자 병합(`/admin/payers/[id]`, 감사로그 `PAYER_MERGE`/`PAYER_UNMERGE`, 근거 필수)은 `payer_profile.merged_into_id` 표시만 한다. 결제·약정·봉사·영수증 행은 옮기지 않고 통합 구성원·후원자 누적에서만 합산한다. 1단계만, 순환 금지(두 행 FOR UPDATE). 영수증은 각자 명의. 기관 콘솔은 "병합됨" 표시만.
+
 ## 약관
 
 약관 본문은 `prisma/terms-content.ts` 에 두고 시드로 넣는다. 개정할 때는 `TERMS_VERSION` 과 `TERMS_EFFECTIVE_FROM` 을 올리고 **이전 버전을 비활성화하지 않는다** — 현행본은 시행일로 고르고(`terms.ts`), 이전 버전에만 동의한 후원자는 다음 후원 확정 화면에서 재동의한다(`staleRequiredConsents`). 약관은 후원(기부) 서비스 기준이다. 상품·포인트 대금 표현을 다시 넣지 않는다.
@@ -89,6 +100,7 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 | 기관 정보 | `/studio/profile` | 기관 유형·고유번호·대표자·지정기부금단체·모집등록번호 |
 | 후원자·봉사자 | `/studio/supporters` | 통합 구성원·세그먼트·기관 명단 업로드·약정 미완료 재안내 (`/studio/donors` 는 후원자 상세 분석) |
 | 자원봉사 | `/studio/volunteers` | 신청 승인·배정·활동 기록·1365 등록 자료 CSV (`FEATURE_VOLUNTEER`) |
+| 자원봉사 모집 공고 | `/studio/volunteers/postings` · `/studio/volunteers/postings/[id]` | 공고 등록·수정·모집 시작/마감·보관, 회차(날짜·시각·정원) 추가/보관, 회차별 신청 현황·출석/불참. 공개 `/donate/[code]/volunteer/[postingId]` |
 | 약정서·신청서 | `/studio/agreements` | 전자 약정서·신청서 보관·판 이력 |
 | 콘텐츠 만들기 / SNS 채널 | `/studio/content` · `/studio/channels` | 숏폼·카드뉴스·피드 이미지 생성·승인·예약 게시, 콘텐츠 캘린더(자율 생성)·성과 요약 (`FEATURE_CONTENT`). 채널: 유튜브·인스타그램·페이스북·틱톡·네이버 블로그·카카오 채널 |
 | 알림톡·월간 안내 | `/studio/notices` | 카카오 채널·템플릿 코드, 월간 안내·영수증 주기 |

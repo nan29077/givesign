@@ -21,10 +21,12 @@ import {
   riskTypeLabel,
 } from '@/lib/labels';
 import { resolvePolicy } from '@/server/services/limits';
+import { searchMergeCandidates } from '@/server/services/payer-merge';
+import { mergePayerAction, unmergePayerAction } from '@/app/actions/admin/payer-merge';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminPayerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function AdminPayerDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ mergeQ?: string }> }) {
   // 레이아웃 가드에만 기대지 않는다. App Router 는 layout 과 page 를 함께 렌더하므로
   // 비관리자 요청에서도 이 페이지의 조회가 실행될 수 있다(스튜디오·마이페이지와 같은 규약).
   const me = await requireAdmin();
@@ -34,6 +36,8 @@ export default async function AdminPayerDetailPage({ params }: { params: Promise
   const canEditLimits = canManageMoney(me.adminPermission);
 
   const { id } = await params;
+  const mergeQ = ((await searchParams).mergeQ ?? '').trim().slice(0, 40);
+  const canEditMerge = canManageMoney(me.adminPermission);
 
   const payer = await prisma.payerProfile.findUnique({
     where: { id },
@@ -43,6 +47,7 @@ export default async function AdminPayerDetailPage({ params }: { params: Promise
       lockedUntil: true, blockedAt: true, blockedReason: true,
       firstSeenAt: true, registeredAt: true, createdAt: true,
       onboardingStatus: true, registrationLinkSentAt: true,
+      mergedIntoId: true, mergedAt: true, mergeNote: true,
       user: { select: { email: true, name: true, status: true } },
       paymentTokens: {
         orderBy: { registeredAt: 'desc' },
@@ -109,6 +114,15 @@ export default async function AdminPayerDetailPage({ params }: { params: Promise
       _count: { _all: true },
     }),
     resolvePolicy(null, id),
+  ]);
+
+  // 병합: 이 후원자가 병합된 대상 / 이 후원자에 병합된 원본 / 대상 검색
+  const [mergedInto, mergedChildren, mergeCandidates] = await Promise.all([
+    payer.mergedIntoId
+      ? prisma.payerProfile.findUnique({ where: { id: payer.mergedIntoId }, select: { id: true, displayName: true, phoneMasked: true } })
+      : null,
+    prisma.payerProfile.findMany({ where: { mergedIntoId: payer.id }, select: { id: true, displayName: true, phoneMasked: true, mergedAt: true, mergeNote: true } }),
+    !payer.mergedIntoId && mergeQ ? searchMergeCandidates(mergeQ, payer.id) : Promise.resolve([]),
   ]);
 
   const now = new Date();
@@ -219,6 +233,66 @@ export default async function AdminPayerDetailPage({ params }: { params: Promise
             </div>
           </Card>
         </div>
+
+        <Card>
+          <CardTitle>후원자 병합</CardTitle>
+          <p className="mt-1 text-[12.5px] text-ink-500">
+            같은 사람이 번호를 바꿔 후원자가 둘이 된 경우에만 씁니다. 결제·정기 약정·자원봉사·영수증 데이터는 <b>옮기지 않고</b>,
+            기관 콘솔의 통합 구성원·후원자 누적에서만 한 사람으로 묶습니다. <b>기부금영수증은 각자 명의 그대로 발급됩니다.</b> 병합은 한 단계만 허용합니다.
+          </p>
+          <div className="mt-3 space-y-3">
+            {payer.mergedIntoId ? (
+              <>
+                <Notice tone="warning" title="다른 후원자에 병합됨">
+                  대상: {mergedInto ? <Link href={`/admin/payers/${mergedInto.id}`} className="font-semibold text-brand-700">{mergedInto.displayName ?? '후원자'} {mergedInto.phoneMasked}</Link> : payer.mergedIntoId}
+                  {' '}· {formatKst(payer.mergedAt, false)} · 근거: {payer.mergeNote ?? '-'}
+                </Notice>
+                <ActionForm disabled={!canEditMerge} action={unmergePayerAction} submitLabel="병합 해제" variant="secondary" confirm="병합을 해제합니다. 기관 화면 집계가 다시 두 사람으로 나뉩니다.">
+                  <input type="hidden" name="sourceId" value={payer.id} />
+                  <AdminField label="해제 사유 (선택)"><AdminInput name="note" maxLength={300} /></AdminField>
+                </ActionForm>
+              </>
+            ) : (
+              <>
+                {mergedChildren.length ? (
+                  <div className="text-[12.5px] text-ink-600">
+                    이 후원자에 병합된 후원자:
+                    <ul className="mt-1 space-y-0.5">
+                      {mergedChildren.map((c) => (
+                        <li key={c.id}><Link href={`/admin/payers/${c.id}`} className="font-semibold text-brand-700">{c.displayName ?? '후원자'} {c.phoneMasked}</Link> · {formatKst(c.mergedAt, false)} · {c.mergeNote}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-ink-400">병합된 후원자가 있는 후원자는 다른 후원자에 다시 병합할 수 없습니다.</p>
+                  </div>
+                ) : (
+                  <>
+                    <form method="get" className="flex gap-2">
+                      <AdminInput name="mergeQ" defaultValue={mergeQ} placeholder="대상 후원자 검색: 새 휴대폰 번호 전체 · 번호 끝자리 · 표시 이름" />
+                      <button type="submit" className="shrink-0 rounded-lg border border-ink-200 px-3 text-[12px] font-semibold text-ink-700">검색</button>
+                    </form>
+                    {mergeQ && mergeCandidates.length === 0 ? <p className="text-[12.5px] text-ink-400">찾은 후원자가 없습니다.</p> : null}
+                    {mergeCandidates.map((c) => (
+                      <div key={c.id} className="rounded-lg border border-ink-100 p-3">
+                        <p className="text-[13px] font-semibold text-ink-900">
+                          {c.displayName ?? '후원자'} <span className="font-mono text-[12px] text-ink-500">{c.phoneMasked}</span>
+                          <span className="ml-2 text-[11px] font-normal text-ink-400">생성 {formatKst(c.createdAt, false)}</span>
+                          {c.mergedIntoId ? <Badge tone="warning" className="ml-2">다른 후원자에 병합됨 — 대상으로 쓸 수 없음</Badge> : null}
+                        </p>
+                        {!c.mergedIntoId ? (
+                          <ActionForm disabled={!canEditMerge} action={mergePayerAction} submitLabel="이 후원자에 병합" variant="danger" confirm={`${payer.phoneMasked} 후원자를 ${c.phoneMasked} 후원자에 병합합니다. 데이터는 옮기지 않고 집계에서만 합칩니다.`}>
+                            <input type="hidden" name="sourceId" value={payer.id} />
+                            <input type="hidden" name="targetId" value={c.id} />
+                            <AdminField label="병합 근거 (필수, 4자 이상)"><AdminInput name="note" maxLength={300} placeholder="예: 2026-11-06 본인 통화 확인, 번호 변경" /></AdminField>
+                          </ActionForm>
+                        ) : null}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </Card>
 
         <section>
           <SectionTitle title="사회복지기관별 결제" description="상위 10곳" />

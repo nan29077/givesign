@@ -7,6 +7,7 @@ import { PAID_STATUSES } from '@/components/studio/shared';
 import { addDays, formatKst, kstStartOfDay } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
+import { foldMergedSums } from '@/server/services/payer-merge';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,8 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
   const filter = sp.filter === 'recurring' || sp.filter === 'lapsed' || sp.filter === 'receipt' ? sp.filter : 'all';
 
   // 누적은 결제 성공 건 집계로 계산한다(payer_merchant_link 의 totalAmount 는 환불 전 값이 남을 수 있다).
-  const sums = await prisma.charge.groupBy({
+  // 관리자가 병합한 후원자(번호 변경 등)는 대상 후원자 한 줄로 합산한다(결제 건은 옮기지 않는다).
+  const rawSums = await prisma.charge.groupBy({
     by: ['payerId'],
     where: { merchantId, isTest: false, status: { in: PAID_STATUSES }, payerId: { not: null } },
     _sum: { amount: true },
@@ -35,6 +37,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
     _max: { paidAt: true },
     _min: { paidAt: true },
   });
+  const { sums, mergedCount } = await foldMergedSums(rawSums);
   const payerIds = sums.map((s) => s.payerId!).filter(Boolean);
   const [payers, recurring, profiles, members, memberCount] = await Promise.all([
     prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, phoneHash: true } }),
@@ -70,6 +73,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
       recurring: r ?? null,
       receiptReady: receiptReady.has(s.payerId!),
       lapsed: (s._max.paidAt?.getTime() ?? 0) < ninetyDaysAgo && !r,
+      merged: (mergedCount.get(s.payerId!) ?? 0) > 0,
     };
   });
   if (q) rows = rows.filter((r) => r.name.includes(q) || r.phoneMasked.includes(q));
@@ -140,6 +144,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
                   <span className="ml-2 font-mono text-[12px] text-ink-400">{r.phoneMasked}</span>
                   {r.member ? <Badge tone="brand" className="ml-2">회원</Badge> : null}
                   {r.lapsed ? <Badge tone="warning" className="ml-2">휴면</Badge> : null}
+                  {r.merged ? <Badge tone="neutral" className="ml-2">병합됨</Badge> : null}
                 </Td>
                 <Td className="font-semibold tabular-nums text-ink-900">{formatWon(r.total)}</Td>
                 <Td className="tabular-nums">{formatNumber(r.count)}회</Td>
