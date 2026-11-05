@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { env, isLocal } from '@/lib/env';
-import { safeEqual } from '@/lib/crypto';
+import { generateToken, safeEqual } from '@/lib/crypto';
 import { logger } from '@/lib/logger';
 import { kv } from '@/server/redis';
 import { runScheduledPayouts } from '@/server/services/auto-settlement';
@@ -49,9 +49,12 @@ export async function GET(req: Request) {
   // 돈이 나가는 배치다. 잠금을 못 잡으면 돌리지 않는다.
   // Redis 오류를 "잠금 획득"으로 바꾸면(예전 .catch(() => true)) 겹쳐 도는 것을 막는
   // 유일한 장치가 장애 때 정확히 사라진다.
+  // 잠금 값에 이번 실행의 표식을 넣어, 끝날 때 내 잠금일 때만 푼다(정기후원 배치와 같은 방식).
+  // 실행이 TTL 을 넘기면 뒤에 잡은 다른 실행의 잠금을 지워 세 번째 실행이 겹칠 수 있다.
+  const owner = `${Date.now()}:${generateToken(8)}`;
   let locked: boolean;
   try {
-    locked = await kv.setnx(LOCK_KEY, String(Date.now()), LOCK_TTL_SEC);
+    locked = await kv.setnx(LOCK_KEY, owner, LOCK_TTL_SEC);
   } catch (e) {
     logger.error('자동 정산 배치 잠금 획득 실패 — 실행하지 않습니다', { message: (e as Error).message });
     return NextResponse.json(
@@ -79,6 +82,7 @@ export async function GET(req: Request) {
     logger.error('자동 정산 배치 실패', { message: (e as Error).message });
     return NextResponse.json({ ok: false, message: '배치 실행 중 오류가 발생했습니다.' }, { status: 500 });
   } finally {
-    await kv.del(LOCK_KEY).catch(() => undefined);
+    const current = await kv.get(LOCK_KEY).catch(() => null);
+    if (current === owner) await kv.del(LOCK_KEY).catch(() => undefined);
   }
 }
