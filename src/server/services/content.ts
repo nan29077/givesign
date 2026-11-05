@@ -20,6 +20,7 @@ import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_LABEL, PLATFORM_SRC } from '@/s
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { getObject, objectNameFromUrl } from '@/server/uploads';
 import { collectSocialMetrics, socialPublishAuth } from './social-oauth';
+import { goLink } from './content-clicks';
 import { campaignStats } from './fundraising';
 import { monthRange } from './monthly-notice';
 import { recordAiUsage } from './ai-usage';
@@ -302,15 +303,22 @@ async function recordJob(itemId: string, step: Step, provider: string, status: '
   });
 }
 
-export async function buildBrief(merchantId: string, campaignId: string, toneOverride?: Tone): Promise<{ brief: ContentBrief; color: string; logo: string | null }> {
-  const [merchant, campaign, page, setting, route] = await Promise.all([
+export async function buildBrief(merchantId: string, campaignId: string, toneOverride?: Tone, postingId?: string | null): Promise<{ brief: ContentBrief; color: string; logo: string | null }> {
+  const [merchant, campaign, page, setting, route, posting] = await Promise.all([
     prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, fundraisingRegNo: true, description: true, avatarUrl: true } }),
     prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } }),
     prisma.merchantDonationPage.findUnique({ where: { merchantId }, select: { color: true, intro: true } }),
     getContentSetting(merchantId),
     moRoute(merchantId),
+    // 봉사 모집 공고와 연결된 콘텐츠면 공고 내용(분야·장소·모집 기간)을 대본에 넣는다(6단계 연결).
+    postingId
+      ? prisma.volunteerPosting.findFirst({ where: { id: postingId, merchantId, archivedAt: null }, select: { title: true, interest: true, description: true, place: true, recruitTo: true } })
+      : Promise.resolve(null),
   ]);
   const stats = (await campaignStats([campaign.id])).get(campaign.id);
+  const recruit = posting
+    ? `자원봉사 모집: ${posting.title} (${posting.interest} · ${posting.place}, ${posting.recruitTo.toISOString().slice(5, 10).replace('-', '/')}까지). ${posting.description}`.slice(0, 300)
+    : null;
   const daysLeft = Math.max(0, Math.ceil((campaign.endsOn.getTime() - Date.now()) / 86_400_000));
   const color = page?.color ?? '#28634e';
   const prefix = route?.mode === 'SHARED_PREFIX' && route.keyword ? `${route.keyword} ` : '';
@@ -323,8 +331,8 @@ export async function buildBrief(merchantId: string, campaignId: string, toneOve
       merchantBusiness: page?.intro?.trim() || null,
       campaignTitle: campaign.title,
       summary: campaign.summary,
-      story: campaign.story,
-      usagePlan: campaign.usagePlan,
+      story: recruit ? [campaign.story, recruit].filter(Boolean).join(' ') : campaign.story,
+      usagePlan: recruit ? `${campaign.usagePlan ?? ''} 함께할 자원봉사자도 모집합니다. 같은 번호로 '봉사' 를 보내 신청하세요.`.trim() : campaign.usagePlan,
       goalAmount: campaign.goalAmount,
       raisedAmount: stats?.raised ?? 0n,
       daysLeft: campaign.status === 'ACTIVE' ? daysLeft : null,
@@ -375,7 +383,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
   const provider = adapter.info().provider;
   const claimed: Step[] = [];
   try {
-    const { brief, color, logo } = await buildBrief(item.merchantId, item.campaignId, toneOverride);
+    const { brief, color, logo } = await buildBrief(item.merchantId, item.campaignId, toneOverride, item.postingId);
     const kind = item.kind;
     let cost = 0;
 
@@ -540,8 +548,10 @@ type CaptionItem = { id: string; merchantId: string; campaignId: string | null; 
  * 플랫폼별 게시 글(제목·본문). LLM 이 쓴 변형이 저장돼 있으면 그것을, 없으면(mock·담당자 수정 후) 기본 캡션을 규칙으로 바꾼다.
  * platform 이 null 이면(QR·기타) 기본 캡션 그대로.
  */
-export async function renderPlatformPost(item: CaptionItem, platform: SocialPlatform | null): Promise<PlatformPost> {
-  const link = await contentLink(item.merchantId, item.campaignId, platform, item.id);
+export async function renderPlatformPost(item: CaptionItem, platform: SocialPlatform | null, opts: { publishId?: string } = {}): Promise<PlatformPost> {
+  // 실제 게시(게시 행이 있을 때)는 기브싸인 짧은 링크(/go/게시 id)로 — 클릭을 직접 센다(봇·10분 중복 제외).
+  // 대상 주소는 /go 가 게시 행에서 서버로 만든다(쿼리로 받지 않음). 내려받기·미리보기는 후원페이지 주소 그대로.
+  const link = opts.publishId ? goLink(opts.publishId) : await contentLink(item.merchantId, item.campaignId, platform, item.id);
   const base = item.caption ?? '';
   if (!platform) return { title: item.title ?? null, text: base.replace(LINK_TOKEN, link) };
   const stored = (item.platformCaptions && typeof item.platformCaptions === 'object' ? (item.platformCaptions as Record<string, PlatformPost>)[platform] : null) ?? null;
@@ -767,7 +777,7 @@ async function publishOne(publishId: string, now: Date) {
     }
   }
   const scenes = (p.item.scenes as unknown as Scene[]) ?? [];
-  const post = await renderPlatformPost(p.item, p.platform);
+  const post = await renderPlatformPost(p.item, p.platform, { publishId: p.id });
   try {
     const res = await getSnsAdapter().publish({
       platform: p.platform,

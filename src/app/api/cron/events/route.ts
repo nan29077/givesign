@@ -3,6 +3,7 @@ import { processDomainEvents } from '@/server/services/events';
 import { registerDefaultConsumers } from '@/server/services/event-consumers';
 import { advanceDueJourneyRuns } from '@/server/services/journeys/engine';
 import { expireApprovals } from '@/server/services/approvals';
+import { emitShiftReminders } from '@/server/services/journeys/reminders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,10 +20,12 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   registerDefaultConsumers();
   return runCronJob(req, 'events', 240, async () => {
+    // 봉사 회차 전날 안내 이벤트(9시 이후, 신청·회차마다 한 번) → 같은 배치에서 저니가 처리한다.
+    const reminders = await emitShiftReminders();
     const events = await processDomainEvents({ limit: 300 });
     // 기한이 된 저니 실행(대기·보류가 끝난 것)을 이어 간다.
     const journeys = await advanceDueJourneyRuns({ limit: 300 });
     const approvalsExpired = await expireApprovals();
-    return { events, journeys, approvalsExpired };
+    return { reminders, events, journeys, approvalsExpired };
   });
 }
