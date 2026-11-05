@@ -141,11 +141,16 @@ export async function setShiftCapacity(merchantId: string, shiftId: string, capa
 export async function setShiftArchived(merchantId: string, shiftId: string, archived: boolean) {
   const s = await prisma.volunteerShift.findFirst({ where: { id: shiftId, merchantId } });
   if (!s) throw new VolunteerError('회차를 찾을 수 없습니다.');
-  if (archived) {
-    const live = await prisma.volunteerApplication.count({ where: { shiftId: s.id, status: { in: [...LIVE] } } });
+  if (!archived) return prisma.volunteerShift.update({ where: { id: s.id }, data: { archivedAt: null } });
+  // 신청(자리 잡기 = 회차 행 UPDATE)과 직렬화한다: 회차 행을 잠근 뒤 진행 중 신청을 세고 보관한다.
+  // 신청이 먼저 자리를 잡았으면 그 커밋을 기다려 신청을 보고 거절하고, 보관이 먼저면 신청의 자리 잡기가
+  // archived_at IS NULL 조건에서 떨어진다(2026-11-06 점검 낮음 — 보관과 동시 신청 경쟁).
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "volunteer_shift" WHERE "id" = ${s.id} FOR UPDATE`;
+    const live = await tx.volunteerApplication.count({ where: { shiftId: s.id, status: { in: [...LIVE] } } });
     if (live > 0) throw new VolunteerError('진행 중 신청이 있는 회차는 보관할 수 없습니다. 신청을 먼저 처리해 주세요.');
-  }
-  return prisma.volunteerShift.update({ where: { id: s.id }, data: { archivedAt: archived ? new Date() : null } });
+    return tx.volunteerShift.update({ where: { id: s.id }, data: { archivedAt: new Date() } });
+  });
 }
 
 /** 콘솔 목록: 공고 + 회차 수·신청 수 */

@@ -1,4 +1,4 @@
-import { call, expectJson, form, SnsApiError, sleep } from './http';
+import { assertCaptionFits, call, expectJson, form, SnsApiError, sleep } from './http';
 import { appSecretProof, graphBase } from './oauth';
 import { absoluteMediaUrl, publishSceneImages } from './media';
 import type { SnsMetrics, SnsPublishRequest, SnsPublishResult } from './index';
@@ -63,7 +63,7 @@ async function waitContainer(token: string, containerId: string) {
 
 export async function publishInstagram(req: SnsPublishRequest): Promise<SnsPublishResult> {
   const { token, account } = need(req);
-  const caption = req.caption.slice(0, 2200);
+  const caption = assertCaptionFits(req.caption, { chars: 2200 }, '인스타그램 캡션');
   let creationId: string;
   if (req.kind === 'SHORTFORM') {
     if (!req.videoUrl) throw new SnsApiError('올릴 영상 파일이 없습니다. (영상 조립 공급자 연동 전에는 릴스를 올릴 수 없습니다)', 0, 'NO_VIDEO');
@@ -97,7 +97,7 @@ export async function publishInstagram(req: SnsPublishRequest): Promise<SnsPubli
 
 export async function publishFacebook(req: SnsPublishRequest): Promise<SnsPublishResult> {
   const { token, account } = need(req);
-  const message = req.caption.slice(0, 5000);
+  const message = assertCaptionFits(req.caption, { chars: 5000 }, '페이스북 게시 글');
   let postId: string;
   if (req.kind === 'SHORTFORM') {
     if (!req.videoUrl) throw new SnsApiError('올릴 영상 파일이 없습니다. (영상 조립 공급자 연동 전에는 영상을 올릴 수 없습니다)', 0, 'NO_VIDEO');

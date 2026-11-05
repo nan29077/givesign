@@ -190,7 +190,7 @@ describe('[2] 출석·불참', () => {
     const { p, s, a, appId } = await approvedOnTodayShift();
     await expect(markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId })).rejects.toThrow(/회차 날짜/);
     // 회차가 오늘이 되었다고 친다
-    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() - 60_000) } });
     const act = await markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: true, userId: fx.merchantUserId });
     expect(act?.minutes).toBe(120);
     expect(act?.title).toBe(p.title);
@@ -209,7 +209,7 @@ describe('[2] 출석·불참', () => {
 
   it('불참은 NO_SHOW 이고 활동이 기록되지 않는다', async () => {
     const { s, a, appId } = await approvedOnTodayShift();
-    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`) } });
+    await prisma.volunteerShift.update({ where: { id: s.id }, data: { shiftDate: new Date(`${today()}T00:00:00Z`), startsAt: new Date(Date.now() - 60_000) } });
     expect(await markShiftAttendance({ merchantId: fx.merchantId, applicationId: appId, attended: false, userId: fx.merchantUserId })).toBeNull();
     expect((await prisma.volunteerApplication.findUniqueOrThrow({ where: { id: appId } })).status).toBe('NO_SHOW');
     expect(await prisma.volunteerActivity.count({ where: { payerId: a.id } })).toBe(0);

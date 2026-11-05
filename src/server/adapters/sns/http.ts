@@ -69,3 +69,17 @@ export async function expectJson(res: Response, what: string): Promise<Record<st
 export function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+/**
+ * 캡션 길이 검증. 어댑터는 캡션을 **자르지 않는다** — 꼬리의 "AI 생성 콘텐츠·모집등록번호·후원 링크" 가 잘리면 안 되기 때문이다
+ * (2026-11-06 점검 A-M10). 길이 맞춤은 content-captions.ts 가 하고, 그래도 넘치면 여기서 검증 실패로 돌려준다.
+ */
+export function assertCaptionFits(caption: string, limit: { chars?: number; bytes?: number }, what: string): string {
+  if (limit.chars && Array.from(caption).length > limit.chars) {
+    throw new SnsApiError(`${what}이(가) ${limit.chars.toLocaleString()}자를 넘어 올리지 않았습니다. 캡션 본문을 줄여 주세요.`, 0, 'CAPTION_TOO_LONG');
+  }
+  if (limit.bytes && Buffer.byteLength(caption, 'utf8') > limit.bytes) {
+    throw new SnsApiError(`${what}이(가) ${limit.bytes.toLocaleString()}바이트를 넘어 올리지 않았습니다. 캡션 본문을 줄여 주세요.`, 0, 'CAPTION_TOO_LONG');
+  }
+  return caption;
+}

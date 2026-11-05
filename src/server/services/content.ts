@@ -17,14 +17,15 @@ import {
 } from '@/server/adapters/content';
 import { loadSharp } from '@/server/adapters/content/video';
 import { getSnsAdapter, PLATFORM_KINDS, PLATFORM_LABEL, PLATFORM_SRC } from '@/server/adapters/sns';
+import { SNS_AUTH_EXPIRED } from '@/server/adapters/sns/live';
 import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { getObject, objectNameFromUrl } from '@/server/uploads';
-import { collectSocialMetrics, socialPublishAuth } from './social-oauth';
+import { collectSocialMetrics, markChannelExpired, SocialTokenExpiredError, socialPublishAuth } from './social-oauth';
 import { goLink } from './content-clicks';
 import { campaignStats } from './fundraising';
 import { monthRange } from './monthly-notice';
 import { recordAiUsage } from './ai-usage';
-import { adaptCaption, composeFromVariant, LINK_TOKEN, postToText, type PlatformPost } from './content-captions';
+import { adaptCaption, captionProblem, composeFromVariant, LINK_TOKEN, postToText, type PlatformPost } from './content-captions';
 import { ownedPostingId } from './volunteer-postings';
 
 /**
@@ -73,6 +74,7 @@ export const CONTENT_STATUS_LABEL: Record<string, string> = {
 export const PUBLISH_STATUS_LABEL: Record<string, string> = {
   SCHEDULED: '예약',
   PUBLISHING: '게시 중',
+  UNKNOWN: '결과 미확인(확인 필요)',
   PUBLISHED: '게시됨',
   PRIVATE_UPLOADED: '비공개 업로드(공개 전환 필요)',
   FAILED: '실패',
@@ -529,6 +531,15 @@ export async function contentLink(merchantId: string, campaignId: string | null,
   return `${env.baseUrl}${path}?${q}`;
 }
 
+/**
+ * 캡션 {링크} 자리에 들어갈 수 있는 가장 긴 링크 길이. 게시 링크(/go/게시 id)와 후원페이지 링크(유입 경로 포함) 중 긴 쪽.
+ * 캡션 길이를 이 값으로 맞춰야 치환 뒤에도 "AI 생성 콘텐츠·모집등록번호·링크" 꼬리가 잘리지 않는다(2026-11-06 점검 A-M10).
+ */
+export function captionLinkReserve(): number {
+  const id = 'X'.repeat(26);
+  return Math.max(goLink(id).length, `${env.baseUrl}/donate/${'X'.repeat(16)}/campaigns/${id}?${attributionQuery('NAVER_BLOG', id)}`.length);
+}
+
 /** LLM 플랫폼 변형 → 링크 자리({링크})가 남은 완성 캡션 */
 function composeStoredCaptions(
   variants: Record<string, { title?: string; body: string }>,
@@ -537,7 +548,7 @@ function composeStoredCaptions(
   const out: Record<string, PlatformPost> = {};
   for (const [k, v] of Object.entries(variants)) {
     if (!Object.hasOwn(PLATFORM_LABEL, k) || !v || typeof v.body !== 'string') continue;
-    out[k] = composeFromVariant(k as SocialPlatform, v, common);
+    out[k] = composeFromVariant(k as SocialPlatform, v, common, captionLinkReserve());
   }
   return out;
 }
@@ -555,8 +566,14 @@ export async function renderPlatformPost(item: CaptionItem, platform: SocialPlat
   const base = item.caption ?? '';
   if (!platform) return { title: item.title ?? null, text: base.replace(LINK_TOKEN, link) };
   const stored = (item.platformCaptions && typeof item.platformCaptions === 'object' ? (item.platformCaptions as Record<string, PlatformPost>)[platform] : null) ?? null;
-  const post = stored && typeof stored.text === 'string' ? stored : adaptCaption(base, platform);
-  return { title: post.title ?? null, text: post.text.replace(LINK_TOKEN, link) };
+  const post = stored && typeof stored.text === 'string' ? stored : adaptCaption(base, platform, undefined, Math.max(link.length, captionLinkReserve()));
+  const out = { title: post.title ?? null, text: post.text.replace(LINK_TOKEN, link) };
+  // 예전 규칙으로 저장된 캡션이 실제 링크로 바꾼 뒤 길이를 넘으면, 꼬리를 고정한 채 본문만 다시 줄인다(자르지 않음).
+  if (captionProblem(platform, out)) {
+    const refit = adaptCaption(postToText(post), platform, undefined, link.length);
+    return { title: refit.title ?? out.title, text: refit.text.replace(LINK_TOKEN, link) };
+  }
+  return out;
 }
 
 export async function renderCaption(item: CaptionItem, platform: SocialPlatform | null) {
@@ -657,8 +674,9 @@ export async function autoScheduleSlotItem(itemId: string, now = new Date()): Pr
     await note('APPROVED', 'SNS 자동 게시가 열리지 않아 예약하지 않았습니다(내려받아 직접 게시).');
     return [];
   }
-  const channels = await prisma.socialChannel.findMany({ where: { merchantId: slot.merchantId, status: 'CONNECTED', platform: { in: setting.platforms } } });
-  const targets = channels.map((c) => c.platform).filter((p) => PLATFORM_KINDS[p].includes(item.kind));
+  const channels = await prisma.socialChannel.findMany({ where: { merchantId: slot.merchantId, status: 'CONNECTED', platform: { in: setting.platforms }, ...publishableChannelWhere() } });
+  const full = await prisma.contentItem.findUnique({ where: { id: itemId }, select: { videoUrl: true } });
+  const targets = channels.map((c) => c.platform).filter((p) => PLATFORM_KINDS[p].includes(item.kind) && !needsVideo(item.kind, full?.videoUrl));
   if (targets.length === 0) {
     await note('APPROVED', '연결된 자동 게시 채널 중 이 형식을 올릴 곳이 없습니다.');
     return [];
@@ -714,6 +732,23 @@ export async function disconnectSocialChannel(merchantId: string, platform: Soci
   await prisma.socialChannel.updateMany({ where: { merchantId, platform }, data: { status: 'REVOKED', accessTokenEnc: null, refreshTokenEnc: null } });
 }
 
+function snsIsMockNow() {
+  return getSnsAdapter().info().mode === 'mock';
+}
+
+/**
+ * 게시에 쓸 수 있는 채널 조건. 실연동이면 mock 시절 연결(토큰 없음)은 제외한다 — 예약했다가 배치에서
+ * 토큰 없음으로 실패하는 대신 다시 연결하라고 알린다(2026-11-06 점검 낮음). mock 공급자면 mock 연결만.
+ */
+function publishableChannelWhere() {
+  return { mock: snsIsMockNow() };
+}
+
+/** 숏폼은 영상 파일이 있어야 어느 플랫폼에도 올릴 수 있다(장면 이미지로 대신하지 않는다). */
+function needsVideo(kind: ContentKind, videoUrl: string | null | undefined) {
+  return kind === 'SHORTFORM' && !videoUrl;
+}
+
 export async function schedulePublish(merchantId: string, id: string, platforms: SocialPlatform[], at: Date) {
   if (!env.automation.socialPublishEnabled) {
     throw new ContentError('SNS 자동 게시가 아직 열리지 않았습니다(플랫폼 심사 전). 승인된 콘텐츠를 내려받아 직접 올려 주세요.');
@@ -721,14 +756,17 @@ export async function schedulePublish(merchantId: string, id: string, platforms:
   const item = await ownItem(merchantId, id);
   if (!['APPROVED', 'SCHEDULED', 'PUBLISHED'].includes(item.status)) throw new ContentError('승인된 콘텐츠만 게시할 수 있습니다.');
   if (platforms.length === 0) throw new ContentError('게시할 채널을 골라 주세요.');
-  const channels = await prisma.socialChannel.findMany({ where: { merchantId, platform: { in: platforms }, status: 'CONNECTED' } });
+  const channels = await prisma.socialChannel.findMany({ where: { merchantId, platform: { in: platforms }, status: 'CONNECTED', ...publishableChannelWhere() } });
   const connected = new Set(channels.map((c) => c.platform));
   const created: SocialPlatform[] = [];
   for (const p of platforms) {
-    if (!connected.has(p)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 채널이 연결되어 있지 않습니다.`);
+    if (!connected.has(p)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 채널이 연결되어 있지 않습니다.${snsIsMockNow() ? '' : ' (mock 시절 연결은 실연동 게시에 쓸 수 없어 다시 연결해야 합니다)'}`);
     if (!PLATFORM_KINDS[p].includes(item.kind)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 에는 이 형식을 올릴 수 없습니다.`);
+    // 영상이 없는 숏폼을 영상 플랫폼에 예약하면 배치에서 세 번 실패하고 끝난다 — 예약 단계에서 막는다(2026-11-06 점검 낮음).
+    if (needsVideo(item.kind, item.videoUrl)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p}: 숏폼 영상 파일이 없어 예약할 수 없습니다. (영상 조립 FFMPEG_PATH 설정 후 다시 만들거나 장면을 내려받아 직접 올려 주세요)`);
     const existing = await prisma.contentPublish.findUnique({ where: { itemId_platform: { itemId: id, platform: p } } });
-    if (existing && ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING'].includes(existing.status)) continue;
+    // 결과 미확인(UNKNOWN)은 실제로 올라갔을 수 있다 — 예약으로 덮지 않고 "다시 게시"/"게시됨으로 표시" 로만 푼다.
+    if (existing && ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING', 'UNKNOWN'].includes(existing.status)) continue;
     await prisma.contentPublish.upsert({
       where: { itemId_platform: { itemId: id, platform: p } },
       create: { id: newId(), itemId: id, platform: p, scheduledAt: at, status: 'SCHEDULED', mock: getSnsAdapter().info().mode === 'mock' },
@@ -747,6 +785,18 @@ export async function cancelPublish(merchantId: string, publishId: string) {
   if (r.count === 0) throw new ContentError('이미 게시됐거나 처리 중인 예약은 취소할 수 없습니다.');
 }
 
+/**
+ * 콘텐츠의 게시가 모두 끝났으면 콘텐츠 상태를 맞춘다. 하나라도 올라갔으면 PUBLISHED,
+ * 남은 예약·진행·미확인이 없고 하나도 올라가지 않았으면 APPROVED 로 되돌린다(SCHEDULED 에 남지 않게 — 2026-11-06 점검 낮음).
+ */
+async function settleItemStatus(itemId: string) {
+  const rows = await prisma.contentPublish.groupBy({ by: ['status'], where: { itemId }, _count: { _all: true } });
+  const n = (st: string[]) => rows.filter((r) => st.includes(r.status)).reduce((a, r) => a + r._count._all, 0);
+  if (n(['SCHEDULED', 'PUBLISHING', 'UNKNOWN']) > 0) return;
+  const next = n(['PUBLISHED', 'PRIVATE_UPLOADED']) > 0 ? 'PUBLISHED' : 'APPROVED';
+  await prisma.contentItem.updateMany({ where: { id: itemId, status: { in: ['SCHEDULED', 'PUBLISHED'] } }, data: { status: next } });
+}
+
 async function publishOne(publishId: string, now: Date) {
   // 예약 → 게시 중 전환을 조건부 갱신으로 잡는다. 겹쳐 도는 배치가 같은 게시를 두 번 올리지 않는다.
   const claim = await prisma.contentPublish.updateMany({
@@ -756,53 +806,91 @@ async function publishOne(publishId: string, now: Date) {
   if (claim.count === 0) return 'SKIPPED' as const;
   const p = await prisma.contentPublish.findUniqueOrThrow({ where: { id: publishId }, include: { item: true } });
   const channel = await prisma.socialChannel.findUnique({ where: { merchantId_platform: { merchantId: p.item.merchantId, platform: p.platform } } });
-  const fail = async (message: string) => {
-    const retry = p.attempts < PUBLISH_MAX_ATTEMPTS;
-    await prisma.contentPublish.update({
-      where: { id: p.id },
+  /**
+   * 게시 실패 처리. **PUBLISHING 일 때만** 바꾼다(2026-11-06 점검 A-M8) — 이미 성공으로 기록됐거나 다른 경로가 바꾼 행을
+   * 예약으로 되돌려 다시 올리는 일이 없게. noRetry 면(토큰 만료·검증 실패) 재시도 없이 실패로 닫는다.
+   */
+  const fail = async (message: string, opts: { noRetry?: boolean } = {}) => {
+    const retry = !opts.noRetry && p.attempts < PUBLISH_MAX_ATTEMPTS;
+    const r = await prisma.contentPublish.updateMany({
+      where: { id: p.id, status: 'PUBLISHING' },
       data: retry
         ? { status: 'SCHEDULED', scheduledAt: new Date(now.getTime() + 30 * 60_000), error: message.slice(0, 300) }
         : { status: 'FAILED', error: message.slice(0, 300) },
     });
+    if (r.count === 0) return 'SKIPPED' as const;
+    if (!retry) await settleItemStatus(p.itemId).catch(() => undefined);
     return retry ? ('RETRY' as const) : ('FAILED' as const);
   };
-  if (!channel || channel.status !== 'CONNECTED') return fail('채널 연결이 끊겼습니다. SNS 채널을 다시 연결해 주세요.');
+  if (!channel || channel.status !== 'CONNECTED') return fail('채널 연결이 끊겼습니다. SNS 채널을 다시 연결해 주세요.', { noRetry: channel?.status === 'EXPIRED' || channel?.status === 'REVOKED' });
+  if (!snsIsMockNow() && channel.mock) return fail('mock 시절 연결이라 실제로 올릴 수 없습니다. SNS 채널에서 계정 로그인으로 다시 연결해 주세요.', { noRetry: true });
+  if (needsVideo(p.item.kind, p.item.videoUrl)) return fail('올릴 영상 파일이 없습니다. (영상 조립 공급자 연동 전에는 숏폼 영상이 만들어지지 않습니다)', { noRetry: true });
   if (p.platform === 'INSTAGRAM') {
     const recent = await prisma.contentPublish.count({
       where: { platform: 'INSTAGRAM', status: { in: ['PUBLISHED', 'PRIVATE_UPLOADED'] }, publishedAt: { gte: new Date(now.getTime() - 86_400_000) }, item: { merchantId: p.item.merchantId } },
     });
     if (recent >= INSTAGRAM_DAILY_LIMIT) {
-      await prisma.contentPublish.update({ where: { id: p.id }, data: { status: 'SCHEDULED', scheduledAt: new Date(now.getTime() + 3600_000), attempts: { decrement: 1 }, error: '인스타그램 24시간 게시 한도(50건) — 1시간 뒤 다시 시도' } });
+      await prisma.contentPublish.updateMany({ where: { id: p.id, status: 'PUBLISHING' }, data: { status: 'SCHEDULED', scheduledAt: new Date(now.getTime() + 3600_000), attempts: { decrement: 1 }, error: '인스타그램 24시간 게시 한도(50건) — 1시간 뒤 다시 시도' } });
       return 'DEFERRED' as const;
     }
   }
   const scenes = (p.item.scenes as unknown as Scene[]) ?? [];
-  const post = await renderPlatformPost(p.item, p.platform, { publishId: p.id });
+  // 공급자 호출 전 단계 — 여기서 난 예외는 아직 아무것도 올리지 않았으므로 실패 처리(재시도)로 돌린다.
+  let post: PlatformPost;
+  let auth: Awaited<ReturnType<typeof socialPublishAuth>>;
   try {
-    const res = await getSnsAdapter().publish({
+    post = await renderPlatformPost(p.item, p.platform, { publishId: p.id });
+    // 링크·AI 표시·모집등록번호를 자르지 않는다. 넘치면 검증 실패로 닫는다(A-M10, 어댑터는 자르지 않음).
+    const problem = captionProblem(p.platform, post);
+    if (problem) return fail(problem, { noRetry: true });
+    auth = await socialPublishAuth(channel);
+  } catch (e) {
+    // 토큰 갱신 실패는 refreshIfNeeded 가 채널을 만료로 바꿨다 — 재시도해도 같은 결과다(A-M12).
+    return fail((e as Error).message, { noRetry: e instanceof SocialTokenExpiredError });
+  }
+  let res;
+  try {
+    res = await getSnsAdapter().publish({
       platform: p.platform,
-      ...(await socialPublishAuth(channel)),
+      ...auth,
       caption: post.text,
       title: post.title ?? p.item.title,
       assets: scenes.map((s) => s.svg),
       kind: p.item.kind,
       videoUrl: p.item.videoUrl,
     });
-    if (!res.ok || !res.data) return fail(res.message ?? '게시에 실패했습니다.');
-    await prisma.contentPublish.update({
-      where: { id: p.id },
-      data: { status: res.data.status, mock: res.data.mock, externalPostId: res.data.externalPostId, url: res.data.url, publishedAt: new Date(), error: null },
-    });
-    const left = await prisma.contentPublish.count({ where: { itemId: p.itemId, status: { in: ['SCHEDULED', 'PUBLISHING'] } } });
-    if (left === 0) await prisma.contentItem.update({ where: { id: p.itemId }, data: { status: 'PUBLISHED' } });
-    await emitDomainEventSafe({
-      merchantId: p.item.merchantId, type: 'content.published', subjectType: 'content_publish', subjectId: p.id,
-      payload: { itemId: p.itemId, platform: p.platform, mock: res.data.mock, url: res.data.url ?? null },
-    });
-    return 'PUBLISHED' as const;
   } catch (e) {
     return fail((e as Error).message);
   }
+  if (!res.ok || !res.data) {
+    if (res.code === SNS_AUTH_EXPIRED) {
+      // 게시 중 토큰 폐기 — 채널을 만료로 바꾸고(기관 알림) 재시도하지 않는다(2026-11-06 점검 A-M12).
+      await markChannelExpired(channel, res.message ?? '게시 중 인증 만료').catch((e) => logger.error('SNS 채널 만료 처리 실패', { message: (e as Error).message }));
+      return fail(`${res.message ?? '인증이 만료되었습니다.'} SNS 채널을 다시 연결해 주세요.`, { noRetry: true });
+    }
+    return fail(res.message ?? '게시에 실패했습니다.');
+  }
+  // ---- 여기부터는 이미 올라갔다. 아래 기록이 실패해도 예약으로 되돌리지 않는다(A-M8 — 중복 게시 방지). ----
+  const data = res.data;
+  try {
+    await prisma.contentPublish.updateMany({
+      where: { id: p.id, status: 'PUBLISHING' },
+      data: { status: data.status, mock: data.mock, externalPostId: data.externalPostId, url: data.url, publishedAt: new Date(), error: null },
+    });
+  } catch (e) {
+    // 성공 기록이 안 됐다 — PUBLISHING 으로 남고, 고착 복구가 UNKNOWN 으로 닫아 담당자가 확인한다(자동 재게시 없음).
+    logger.error('SNS 게시 성공 기록 실패 — 결과 미확인으로 남깁니다', { publishId: p.id, externalPostId: data.externalPostId, message: (e as Error).message });
+    await prisma.contentPublish
+      .updateMany({ where: { id: p.id, status: 'PUBLISHING' }, data: { status: 'UNKNOWN', externalPostId: data.externalPostId, url: data.url, error: '게시는 성공했지만 기록에 실패했습니다. 채널에서 확인 후 "게시됨으로 표시" 해 주세요.' } })
+      .catch(() => undefined);
+    return 'PUBLISHED' as const;
+  }
+  await settleItemStatus(p.itemId).catch((e) => logger.error('콘텐츠 상태 갱신 실패', { itemId: p.itemId, message: (e as Error).message }));
+  await emitDomainEventSafe({
+    merchantId: p.item.merchantId, type: 'content.published', subjectType: 'content_publish', subjectId: p.id,
+    payload: { itemId: p.itemId, platform: p.platform, mock: data.mock, url: data.url ?? null },
+  });
+  return 'PUBLISHED' as const;
 }
 
 /** 게시 중(PUBLISHING) 상태가 이보다 오래 갱신이 없으면 게시 도중 멈춘 것으로 본다. */
@@ -814,22 +902,46 @@ export function stalePublishingBefore(now = new Date()) {
 }
 
 /**
- * 게시 도중 멈춘 건(프로세스 종료·타임아웃) 복구. 결과를 모르므로 다시 예약으로 되돌리되,
- * 시도 횟수를 다 썼으면 실패로 닫는다. 조건부 갱신이라 그 사이 끝난 게시는 건드리지 않는다.
- * 공급자에 실제로 올라갔을 수 있으므로 사유에 "이미 올라갔는지 확인" 을 남긴다.
+ * 게시 도중 멈춘 건(프로세스 종료·타임아웃) 정리. 공급자에 실제로 올라갔을 수 있으므로 **자동으로 다시 올리지 않는다**
+ * (2026-11-06 점검 A-M9). 결과 미확인(UNKNOWN)으로 닫고, 담당자가 채널을 확인한 뒤
+ * "다시 게시"(resolveUnknownPublish REPUBLISH) 또는 "게시됨으로 표시"(MARK_PUBLISHED)를 고른다. 조건부 갱신이라 그 사이 끝난 게시는 건드리지 않는다.
  */
 export async function recoverStalePublishing(now = new Date()) {
   const threshold = new Date(now.getTime() - PUBLISHING_STALE_MS);
-  const note = '게시 도중 응답이 끊겨 결과를 확인하지 못했습니다. 채널에 이미 올라갔는지 확인해 주세요.';
-  const failed = await prisma.contentPublish.updateMany({
-    where: { status: 'PUBLISHING', updatedAt: { lt: threshold }, attempts: { gte: PUBLISH_MAX_ATTEMPTS } },
-    data: { status: 'FAILED', error: note },
+  const note = '게시 도중 응답이 끊겨 결과를 확인하지 못했습니다. 채널에 이미 올라갔는지 확인한 뒤 "다시 게시" 또는 "게시됨으로 표시" 를 골라 주세요.';
+  const stale = await prisma.contentPublish.findMany({ where: { status: 'PUBLISHING', updatedAt: { lt: threshold } }, select: { id: true }, take: 200 });
+  let unknown = 0;
+  for (const s of stale) {
+    const r = await prisma.contentPublish.updateMany({ where: { id: s.id, status: 'PUBLISHING', updatedAt: { lt: threshold } }, data: { status: 'UNKNOWN', error: note } });
+    unknown += r.count;
+  }
+  return { unknown };
+}
+
+/**
+ * 결과 미확인 게시 정리(기관 담당자). REPUBLISH = 지금 다시 예약(시도 횟수 초기화), MARK_PUBLISHED = 채널에서 확인했으니 게시됨으로.
+ * UNKNOWN 일 때만 조건부로 바꾼다.
+ */
+export async function resolveUnknownPublish(merchantId: string, publishId: string, action: 'REPUBLISH' | 'MARK_PUBLISHED', input: { url?: string | null; now?: Date } = {}) {
+  const p = await prisma.contentPublish.findFirst({ where: { id: publishId, item: { merchantId } } });
+  if (!p) throw new ContentError('게시 기록을 찾을 수 없습니다.');
+  const now = input.now ?? new Date();
+  if (action === 'REPUBLISH') {
+    if (!env.automation.socialPublishEnabled) throw new ContentError('SNS 자동 게시가 열려 있지 않습니다.');
+    const r = await prisma.contentPublish.updateMany({ where: { id: p.id, status: 'UNKNOWN' }, data: { status: 'SCHEDULED', scheduledAt: now, attempts: 0, error: null } });
+    if (r.count === 0) throw new ContentError('결과 미확인 상태의 게시만 다시 게시할 수 있습니다.');
+    await prisma.contentItem.updateMany({ where: { id: p.itemId, status: { in: ['APPROVED', 'PUBLISHED'] } }, data: { status: 'SCHEDULED' } });
+    return 'SCHEDULED' as const;
+  }
+  const url = input.url?.trim() || null;
+  if (url && !/^https:\/\/[^\s]{4,500}$/.test(url)) throw new ContentError('게시물 주소는 https:// 로 시작해야 합니다.');
+  const r = await prisma.contentPublish.updateMany({
+    where: { id: p.id, status: 'UNKNOWN' },
+    data: { status: 'PUBLISHED', publishedAt: p.publishedAt ?? now, url: url ?? p.url, error: null },
   });
-  const requeued = await prisma.contentPublish.updateMany({
-    where: { status: 'PUBLISHING', updatedAt: { lt: threshold }, attempts: { lt: PUBLISH_MAX_ATTEMPTS } },
-    data: { status: 'SCHEDULED', scheduledAt: now, error: note },
-  });
-  return { requeued: requeued.count, failed: failed.count };
+  if (r.count === 0) throw new ContentError('결과 미확인 상태의 게시만 게시됨으로 표시할 수 있습니다.');
+  await settleItemStatus(p.itemId);
+  return 'PUBLISHED' as const;
 }
 
 /** 배치: 멈춘 생성 재개 → 멈춘 게시 복구 → 예약 게시 → 지표 수집 */
@@ -849,8 +961,7 @@ export async function processContentQueue(now = new Date()) {
     result.resumed += 1;
   }
   const rec = await recoverStalePublishing(now);
-  result.recovered = rec.requeued + rec.failed;
-  result.failed += rec.failed;
+  result.recovered = rec.unknown;
   if (env.automation.socialPublishEnabled) {
     const due = await prisma.contentPublish.findMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: now } }, select: { id: true }, orderBy: { scheduledAt: 'asc' }, take: 50 });
     for (const d of due) {

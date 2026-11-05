@@ -147,7 +147,7 @@ describe('[C] 콘텐츠', () => {
     expect((await prisma.contentItem.findUniqueOrThrow({ where: { id: item2.id } })).status).toBe('GENERATING');
   });
 
-  it('게시 중(PUBLISHING)에 멈춘 건은 배치가 예약으로 되돌리고, 시도를 다 썼으면 실패로 닫는다', async () => {
+  it('게시 중(PUBLISHING)에 멈춘 건은 자동 재게시하지 않고 결과 미확인(UNKNOWN)으로 닫는다 (2026-11-06 A-M9)', async () => {
     const c = await seedCampaign();
     const item = await prisma.contentItem.create({
       data: { id: newId(), merchantId: fx.merchantId, campaignId: c.id, kind: 'IMAGE_SQUARE', status: 'SCHEDULED', title: 't', provider: 'mock', createdBy: fx.merchantUserId },
@@ -157,12 +157,13 @@ describe('[C] 콘텐츠', () => {
     const p3 = await prisma.contentPublish.create({ data: { id: newId(), itemId: item.id, platform: 'YOUTUBE', scheduledAt: new Date(), status: 'PUBLISHING', attempts: 1 } });
     const stale = new Date(Date.now() - PUBLISHING_STALE_MS - 60_000);
     await prisma.$executeRaw`UPDATE content_publish SET updated_at = ${stale} WHERE id IN (${p1.id}, ${p2.id})`;
-    // 채널이 없어 다시 예약된 건도 게시 시도에서 재시도로 돌아간다 — 고착만 풀리면 된다
     const r = await processContentQueue();
     expect(r.recovered).toBe(2);
+    expect(r.published).toBe(0);
     const rows = new Map((await prisma.contentPublish.findMany({ where: { itemId: item.id } })).map((p) => [p.id, p]));
-    expect(rows.get(p1.id)!.status).not.toBe('PUBLISHING');
-    expect(rows.get(p2.id)!.status).toBe('FAILED');
+    expect(rows.get(p1.id)!.status).toBe('UNKNOWN');
+    expect(rows.get(p2.id)!.status).toBe('UNKNOWN');
+    expect(rows.get(p1.id)!.error).toMatch(/다시 게시/);
     expect(rows.get(p3.id)!.status).toBe('PUBLISHING'); // 아직 진행 중일 수 있는 건은 건드리지 않는다
   });
 

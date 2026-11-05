@@ -1,4 +1,4 @@
-import { call, expectJson, SnsApiError } from './http';
+import { assertCaptionFits, call, expectJson, SnsApiError } from './http';
 import { loadVideoBytes } from './media';
 import type { SnsMetrics, SnsPublishRequest, SnsPublishResult } from './index';
 
@@ -21,9 +21,11 @@ function hashtags(caption: string) {
 export async function publishYoutube(req: SnsPublishRequest): Promise<SnsPublishResult> {
   if (!req.accessToken) throw new SnsApiError('유튜브 토큰이 없습니다. 채널을 다시 연결해 주세요.', 0, 'NO_TOKEN', true);
   if (!req.videoUrl) throw new SnsApiError('올릴 영상 파일이 없습니다. (영상 조립 공급자 연동 전에는 숏폼 영상이 만들어지지 않습니다)', 0, 'NO_VIDEO');
+  // 설명은 UTF-8 5,000바이트(글자 아님)이고 꺾쇠(< >)를 받지 않는다. 자르지 않고 넘치면 실패(2026-11-06 점검 A-M10·낮음).
+  const description = assertCaptionFits(req.caption.replace(/[<>]/g, ''), { bytes: 5000 }, '유튜브 설명');
   const video = await loadVideoBytes(req.videoUrl);
   const meta = {
-    snippet: { title: req.title.slice(0, 100), description: req.caption.slice(0, 5000), tags: hashtags(req.caption), categoryId: '29' },
+    snippet: { title: Array.from(req.title.replace(/[<>]/g, '')).slice(0, 100).join(''), description, tags: hashtags(req.caption), categoryId: '29' },
     status: { privacyStatus: 'private', selfDeclaredMadeForKids: false, containsSyntheticMedia: true },
   };
   const init = await call(YT_UPLOAD_URL, {
