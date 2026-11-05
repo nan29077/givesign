@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { BadgeCheck, CalendarClock, CheckCircle2, Clock3, HandHeart, HeartHandshake, MessageSquareText, Phone, Repeat, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { BadgeCheck, CalendarClock, CheckCircle2, Clock3, HandHeart, HeartHandshake, Info, MessageSquareText, Phone, Repeat, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { prisma } from '@/server/db';
 import { getSessionUser } from '@/server/auth';
 import { doneeVerified } from '@/server/services/receipts';
@@ -23,6 +23,7 @@ import { OrgLogo } from '@/components/brand/org-logo';
 import { DonorShell } from '@/components/public/donor-shell';
 import { getDonorMember, type DonorViewer } from '@/server/services/donor-members';
 import { formatMoNumber } from '@/lib/mo-number';
+import { isOptimizableImage } from '@/lib/image-src';
 import { ProgressBar } from '@/components/public/progress-bar';
 
 /**
@@ -95,9 +96,11 @@ function Landing({
   const prefix = route?.mode === 'SHARED_PREFIX' && route.keyword ? `${route.keyword} ` : '';
   const smsBody = `${prefix}${keyword ? `${keyword} ` : ''}응원합니다`;
   const smsHref = route ? `sms:${route.phoneNumber}?body=${encodeURIComponent(smsBody)}` : null;
-  const webHref = `/c/${org.code}${campaign?.open ? `?campaign=${campaign.id}` : ''}`;
+  // #web: /c 의 웹 후원(PIN) 패널로 바로 이동한다(휴대폰에서는 문자 영역 아래에 있다).
+  const webHref = `/c/${org.code}${campaign?.open ? `?campaign=${campaign.id}` : ''}#web`;
   const recurringHref = `/my/recurring/new?merchant=${org.code}${campaign?.open ? `&campaign=${campaign.id}` : ''}`;
   const hero = campaign?.imageUrl || page.heroUrl || '/assets/givesign/hero.png';
+  const heroRaw = !isOptimizableImage(hero);
   const openCampaigns = campaigns.filter((c) => c.open);
   const closedCampaigns = campaigns.filter((c) => c.status === 'CLOSED');
   const campaignCards = readCampaignCards(campaign?.cardNews);
@@ -116,10 +119,10 @@ function Landing({
         <div className="mt-5 flex flex-wrap gap-2"><span className="rounded-full bg-[#edf5ee] px-3 py-1.5 text-xs font-bold" style={{ color }}>{campaignStatusLabel[campaign.status].text}</span>{campaign.open ? <span className="rounded-full bg-[#fff4e7] px-3 py-1.5 text-xs font-bold text-amber-800">{daysLeft(campaign.endsOn)}일 남음</span> : null}</div>
         <h1 className="mt-4 break-words text-[27px] font-black leading-snug tracking-[-0.04em] text-ink-900 sm:text-[34px]">{campaign.title}</h1>
         <p className="mt-3 text-[15px] leading-7 text-ink-500">{campaign.summary}</p>
-        <Image unoptimized width={1200} height={800} src={hero} alt={`${campaign.title} 표지`} className="mt-6 aspect-[3/2] w-full rounded-[24px] object-cover" priority />
+        <Image unoptimized={heroRaw} width={1200} height={800} sizes="(min-width: 760px) 680px, 100vw" src={hero} alt={`${campaign.title} 표지`} className="mt-6 aspect-[3/2] w-full rounded-[24px] object-cover" priority />
       </section> : <>
       <div className="relative mx-4 mt-5 overflow-hidden rounded-[30px] sm:mx-7">
-        <Image unoptimized width={1600} height={800} src={hero} alt="" className="aspect-[16/11] w-full object-cover sm:aspect-[2/1]" priority />
+        <Image unoptimized={heroRaw} width={1600} height={800} sizes="(min-width: 760px) 680px, 100vw" src={hero} alt="" className="aspect-[16/11] w-full object-cover sm:aspect-[2/1]" priority />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(27,104,69,.88),rgba(27,104,69,.42)_55%,rgba(27,104,69,.05))]" />
         <div className="absolute inset-x-0 top-0 p-6 pt-10 text-white sm:p-10 sm:pt-16">
           <p className="inline-block rounded-full border border-white/40 bg-white/15 px-3.5 py-1.5 text-[11.5px] font-bold backdrop-blur">
@@ -182,6 +185,16 @@ function Landing({
             <HandHeart size={16} strokeWidth={1.7} /> 자원봉사 신청
           </Link>
         ) : null}
+        {/*
+          정기후원·자원봉사는 결제수단(PayerProfile) 기준이라 기브싸인 통합 후원자 계정으로 진행된다.
+          이 기관 회원(DonorMember)과 다른 계정이므로 누르기 전에 알린다(점검 F 중간).
+        */}
+        <p className="mt-2 flex items-start justify-center gap-1 text-left text-[11.5px] leading-relaxed text-ink-500">
+          <Info size={13} strokeWidth={1.8} className="mt-0.5 shrink-0" />
+          <span>
+            정기후원{featureVolunteerEnabled() ? '·자원봉사 신청' : ''}은 기브싸인 통합 계정으로 진행됩니다. 이 기관 회원 계정과는 별도로 로그인합니다.
+          </span>
+        </p>
         {route ? (
           <p className="mt-3 text-[12.5px] text-ink-500">
             후원 문자 번호 <span className="font-mono font-extrabold" style={{ color }}>{formatMoNumber(route.phoneNumber)}</span>
@@ -207,14 +220,14 @@ function Landing({
         {/* 문자후원 내역 */}
         {donors.length > 0 ? (
           <section>
-            <SectionHead title="문자후원 내역" />
+            <SectionHead title="최근 후원" />
             <ul className="grid gap-3 sm:grid-cols-3">
               {donors.map((d, i) => (
                 <li key={i} className="flex flex-col rounded-[24px] border border-ink-100 bg-white p-4 shadow-[0_2px_10px_rgba(23,22,26,0.04)]">
                   <div className="flex items-start justify-between gap-2">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-600">
-                        <MessageSquareText size={17} strokeWidth={1.7} />
+                        {d.recurring ? <Repeat size={17} strokeWidth={1.7} /> : <HeartHandshake size={17} strokeWidth={1.7} />}
                       </span>
                       <span className="truncate text-[16px] font-black tabular-nums text-ink-900">{formatWon(d.amount)}</span>
                     </span>
@@ -247,7 +260,7 @@ function Landing({
             <div className="grid gap-3 sm:grid-cols-2">
               {openCampaigns.map((c) => (
                 <Link key={c.id} href={`/donate/${org.code}/campaigns/${c.id}`} className="group overflow-hidden rounded-[24px] border border-ink-100 bg-white shadow-[0_2px_10px_rgba(23,22,26,0.04)] transition-shadow hover:shadow-lg">
-                  <Image unoptimized width={800} height={450} src={c.imageUrl || page.heroUrl || '/assets/givesign/hero.png'} alt="" className="aspect-video w-full object-cover" />
+                  <CampaignThumb src={c.imageUrl || page.heroUrl || '/assets/givesign/hero.png'} />
                   <div className="p-4">
                     <p className="text-[11.5px] font-bold" style={{ color }}>{c.featured ? '집중 모금 · ' : ''}{daysLeft(c.endsOn)}일 남음</p>
                     <h3 className="mt-1 text-[15.5px] font-extrabold text-ink-900 group-hover:underline">{c.title}</h3>
@@ -317,7 +330,7 @@ function Landing({
             {page.transparencyUrl ? <Row k="결산·사업보고" v={<a href={page.transparencyUrl} target="_blank" rel="noreferrer" className="font-bold underline" style={{ color }}>공시 보기</a>} /> : null}
           </dl>
           <p className="mt-3 text-[11.5px] leading-relaxed text-ink-400">
-            후원금은 기브싸인 정산을 거쳐 기관 계좌로 지급되며, 결제가 완료된 후원만 집계·영수증에 반영됩니다. 환불은 기관 정책에 따릅니다.
+            후원금은 기브싸인 정산을 거쳐 기관 계좌로 지급되며, 출금이 완료된 후원만 집계·영수증에 반영됩니다. 환불은 기관 정책에 따릅니다.
           </p>
         </section>
 
@@ -333,6 +346,20 @@ function MethodButton({ href, color, icon, label, external = false }: { href: st
     <a href={href} className={cls} style={{ backgroundColor: color }}>{icon}{label}</a>
   ) : (
     <Link href={href} className={cls} style={{ backgroundColor: color }}>{icon}{label}</Link>
+  );
+}
+
+function CampaignThumb({ src }: { src: string }) {
+  return (
+    <Image
+      unoptimized={!isOptimizableImage(src)}
+      width={800}
+      height={450}
+      sizes="(min-width: 640px) 340px, 100vw"
+      src={src}
+      alt=""
+      className="aspect-video w-full object-cover"
+    />
   );
 }
 

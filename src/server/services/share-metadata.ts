@@ -1,6 +1,7 @@
 import type { Metadata, ResolvingMetadata } from 'next';
 import { prisma } from '@/server/db';
 import { normalizeMerchantCode } from '@/lib/id';
+import { SITE_NAME } from '@/lib/site-url';
 
 /** 공개 캠페인은 주제에 어울리는 생성형 이미지+로고+슬로건 합성 카드를 사용한다. */
 function campaignShareImage(text: string) {
@@ -29,7 +30,7 @@ export async function donationShareMetadata(code: string, campaignId: string | u
   const image = new URL(campaign ? campaignShareImage(`${campaign.title} ${campaign.summary} ${campaign.beneficiary || ''}`) : '/assets/givesign-share-v10.png', base).toString();
   return {
     title: { absolute: title }, description, alternates: { canonical: url },
-    openGraph: { title, description, url, siteName: '기브싸인 GiveSign', type: 'website', locale: 'ko_KR', images: [{ url: image, width: 1200, height: 630, alt: '기브싸인 로고와 나눔의 메시지를 담은 캠페인 공유카드' }] },
+    openGraph: { title, description, url, siteName: SITE_NAME, type: 'website', locale: 'ko_KR', images: [{ url: image, width: 1200, height: 630, alt: '기브싸인 로고와 나눔의 메시지를 담은 캠페인 공유카드' }] },
     twitter: { card: 'summary_large_image', title, description, images: [image] },
   };
 }

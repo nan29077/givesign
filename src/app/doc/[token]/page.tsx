@@ -40,7 +40,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ token
           <Card>
             <div className="flex items-center gap-2 text-danger-500">
               <CircleX size={20} strokeWidth={1.7} />
-              <p className="text-[16px] font-extrabold text-ink-900">문서를 열 수 없습니다</p>
+              <h1 className="text-[16px] font-extrabold text-ink-900">문서를 열 수 없습니다</h1>
             </div>
             <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
             <div className="mt-3">

@@ -51,7 +51,7 @@ export default async function LoginPage({
       <PageHeader
         eyebrow="로그인"
         title="기브싸인 계정으로 로그인"
-        description="후원 내역, 결제 수단, 한도 설정은 로그인 후 확인할 수 있습니다."
+        description="후원 내역, 결제수단, 한도 설정은 로그인 후 확인할 수 있습니다."
       />
 
       {sp.next ? (
@@ -102,7 +102,7 @@ export default async function LoginPage({
         </div>
 
         <p className="mt-4 text-center text-[13px] text-ink-500">
-          아직 계정이 없으신가요{' '}
+          아직 계정이 없으신가요?{' '}
           <Link href="/signup" className="font-semibold text-brand-700">
             후원자 회원가입
           </Link>
@@ -111,7 +111,7 @@ export default async function LoginPage({
 
       <div className="mt-4">
         <Notice tone="neutral" title="문자후원은 회원가입 없이도 이용할 수 있습니다">
-          문자와 결제수단 등록만으로 결제할 수 있습니다. 회원가입은 후원 내역과 한도 설정을 웹에서 관리하기 위한 선택
+          문자와 결제수단 등록만으로 후원할 수 있습니다. 회원가입은 후원 내역과 한도 설정을 웹에서 관리하기 위한 선택
           기능입니다.
         </Notice>
       </div>
@@ -135,21 +135,25 @@ function LoginAside() {
   return (
     <div className="sticky top-24 space-y-3">
       <Card>
-        <CardTitle>비밀번호가 기억나지 않나요</CardTitle>
+        <CardTitle>비밀번호가 기억나지 않나요?</CardTitle>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          현재 비밀번호 재설정은 고객센터 문의를 통해 처리하고 있습니다. 가입한 이메일과 함께 접수해 주세요.
+          비밀번호 재설정 화면에서 가입한 이메일로 재설정 링크를 요청할 수 있습니다. 메일이 오지 않거나 간편 로그인으로
+          가입하셨다면 고객센터로 문의해 주세요.
         </p>
-        <LinkButton href="/support" variant="secondary" size="md" className="mt-3 w-full">
+        <LinkButton href="/reset-password" variant="primary" size="md" className="mt-3 w-full">
+          비밀번호 재설정
+        </LinkButton>
+        <LinkButton href="/support" variant="secondary" size="md" className="mt-2 w-full">
           고객센터 문의
         </LinkButton>
       </Card>
       <Card>
-        <CardTitle>사회복지기관이신가요</CardTitle>
+        <CardTitle>사회복지기관이신가요?</CardTitle>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          가입 신청 후 승인되면 사회복지기관 콘솔에서 결제 수신번호와 후원 설정을 관리할 수 있습니다.
+          도입 신청 후 승인되면 기관 콘솔에서 후원 문자 번호와 후원 설정을 관리할 수 있습니다.
         </p>
         <LinkButton href="/merchant-apply" variant="secondary" size="md" className="mt-3 w-full">
-          사회복지기관 가입 신청
+          기관 도입 신청
         </LinkButton>
       </Card>
     </div>

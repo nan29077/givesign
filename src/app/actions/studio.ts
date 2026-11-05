@@ -7,6 +7,7 @@ import { prisma } from '@/server/db';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { RETURN_SHIPMENT_STATUSES, shipmentStatusLabel } from '@/lib/labels';
 import { newId } from '@/lib/id';
+import { isPresetBanner } from '@/lib/banners';
 import { accountTail4, decrypt, encrypt, isValidResident, maskName, maskPhone, maskResident, normalizeResident } from '@/lib/crypto';
 import { resolvePolicy } from '@/server/services/limits';
 import { issueMerchantApiKey } from '@/server/services/partner-auth';
@@ -1694,7 +1695,7 @@ export async function updateChargePageAction(
       bannerPreset &&
       bannerPreset !== 'custom' &&
       bannerPreset !== 'auto' &&
-      !/^\/banners\/[a-z0-9-]+\.png$/.test(bannerPreset)
+      !isPresetBanner(bannerPreset)
     ) {
       return { ok: false, message: '배너 선택 값이 올바르지 않습니다.' };
     }

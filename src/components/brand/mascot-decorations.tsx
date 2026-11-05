@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import { cx } from '@/components/ui';
+import { isOptimizableImage } from '@/lib/image-src';
 
 /** 공개 서브페이지와 콘솔 제목 옆에 쓰는 기브싸인 마스코트. */
 export function MascotAccent({ className }: { seed: string; className?: string }) {
@@ -13,17 +14,20 @@ export function MascotAccent({ className }: { seed: string; className?: string }
   );
 }
 
-/** 모든 PC 공개 화면의 앱 바깥 여백에 공통으로 노출되는 기브싸인 사무실 장면. */
+/**
+ * 모든 PC 공개 화면의 앱 바깥 여백에 공통으로 노출되는 기브싸인 사무실 장면.
+ * 1180px 미만에서는 CSS 로 숨기므로 미리 불러오지 않는다(priority 없음, 지연 로딩).
+ */
 export function PublicMarginMascots({ src = '/assets/givesign/hero.png' }: { src?: string }) {
   return (
     <div className="public-mascot-scene" aria-hidden="true">
       <Image
-        unoptimized
+        unoptimized={!isOptimizableImage(src)}
         src={src}
         alt=""
         fill
-        sizes="100vw"
-        priority
+        sizes="(min-width: 1180px) 100vw, 1px"
+        loading="lazy"
         className="public-margin-backdrop object-cover"
       />
     </div>

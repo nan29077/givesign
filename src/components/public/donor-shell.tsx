@@ -5,6 +5,8 @@ import { OrgLogo } from '@/components/brand/org-logo';
 import { PublicMarginMascots } from '@/components/brand/mascot-decorations';
 import { donorLogoutAction } from '@/app/actions/donor-member';
 import type { DonorViewer } from '@/server/services/donor-members';
+import { readBusinessInfo } from '@/lib/business-info';
+import { BusinessFooterLines } from '@/components/layout/business-footer';
 
 /**
  * 기관 후원페이지 공통 틀 (/donate/[code] 와 그 아래 회원 화면).
@@ -83,6 +85,8 @@ export function DonorShell({
               <Link href="/support" className="hover:underline">고객센터</Link>
             </nav>
             <p className="mt-3 text-[11.5px] text-ink-400">© {new Date().getFullYear()} {org.displayName} · 기브싸인 후원 페이지</p>
+            {/* 후원 결제를 처리하는 운영 주체(기브싸인) 표시. 설정된 항목만 보인다. */}
+            <BusinessFooterLines info={readBusinessInfo()} className="mt-1.5 text-[11px] leading-relaxed text-ink-400" />
           </footer>
         </div>
 

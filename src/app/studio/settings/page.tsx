@@ -6,7 +6,7 @@ import { ExternalLink, Info } from 'lucide-react';
 import {
   Badge, Card, CardTitle, DataRow, Field, Input, LinkButton, Notice, SectionTitle, Select, Textarea, cx,
 } from '@/components/ui';
-import { DEFAULT_BANNERS, defaultBannerFor } from '@/lib/banners';
+import { DEFAULT_BANNERS, defaultBannerFor, isPresetBanner, upgradeLegacyBanner } from '@/lib/banners';
 import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm, InlineActionForm } from '@/components/studio/action-form';
 import { ImageUploadField } from '@/components/studio/image-upload-field';
@@ -168,7 +168,7 @@ export default async function StudioSettingsPage({
   const moGuideDefaultPreview = tplSelectAmount(moGuideArgs).text;
 
   const customBanner =
-    merchant.bannerUrl && !DEFAULT_BANNERS.includes(merchant.bannerUrl as (typeof DEFAULT_BANNERS)[number])
+    merchant.bannerUrl && !isPresetBanner(merchant.bannerUrl)
       ? merchant.bannerUrl
       : '';
 
@@ -618,7 +618,7 @@ export default async function StudioSettingsPage({
                           type="radio"
                           name="bannerPreset"
                           value={b}
-                          defaultChecked={merchant.bannerUrl === b}
+                          defaultChecked={merchant.bannerUrl ? upgradeLegacyBanner(merchant.bannerUrl) === b : false}
                           className="peer sr-only"
                         />
                         {/* eslint-disable-next-line @next/next/no-img-element */}

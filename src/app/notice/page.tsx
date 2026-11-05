@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/public/page-header';
 import { Card, CardTitle, EmptyState, Badge, LinkButton } from '@/components/ui';
 import { formatKst } from '@/lib/datetime';
 import { prisma } from '@/server/db';
+import { currentServiceMode, testModeNotice } from '@/server/services/service-mode';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export default async function NoticePage() {
   });
 
   return (
-    <PublicShell aside={<NoticeAside />}>
+    <PublicShell aside={<NoticeAside testNotice={testModeNotice(currentServiceMode())} />}>
       <PageHeader
         eyebrow="공지사항"
         title="서비스 안내"
@@ -55,16 +56,18 @@ export default async function NoticePage() {
   );
 }
 
-function NoticeAside() {
+function NoticeAside({ testNotice }: { testNotice: string | null }) {
   return (
     <div className="sticky top-24 space-y-3">
-      <Card>
-        <CardTitle>운영 상태</CardTitle>
-        <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
-          기브싸인은 현재 준비 단계로, 실제 결제와 문자 발송은 비활성화되어 있습니다. 화면에 보이는 결제·문자 관련
-          동작은 모의(mock) 처리입니다.
-        </p>
-      </Card>
+      {/* 결제·문자가 실제로 처리되지 않는 환경에서만 알린다(점검 F H-2 와 같은 기준). */}
+      {testNotice ? (
+        <Card>
+          <CardTitle>운영 상태</CardTitle>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
+            {testNotice} 화면에 보이는 해당 동작은 모의(mock) 처리입니다.
+          </p>
+        </Card>
+      ) : null}
       <Card>
         <CardTitle>바로가기</CardTitle>
         <div className="mt-3 space-y-2">

@@ -12,7 +12,10 @@ import { ProfileAvatar } from '@/components/profile/generated-avatar';
  * 코드(GIV-8K2M)뿐 아니라 사회복지기관 이름·서비스명으로도 찾을 수 있다.
  * 검색 버튼은 결과 목록만 열고, 사용자가 결과를 선택했을 때만 결제 페이지로 이동한다.
  */
-export function MerchantCodeForm({ autoFocus = false }: { autoFocus?: boolean }) {
+/**
+ * target: 결과를 고르면 이동할 곳. charge = /c/[code](기본), donate = /donate/[code](정기후원·봉사 버튼이 있는 후원페이지).
+ */
+export function MerchantCodeForm({ autoFocus = false, target = 'charge' }: { autoFocus?: boolean; target?: 'charge' | 'donate' }) {
   const router = useRouter();
   const [value, setValue] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
@@ -89,7 +92,7 @@ export function MerchantCodeForm({ autoFocus = false }: { autoFocus?: boolean })
                 type="button"
                 role="option"
                 aria-selected="false"
-                onClick={() => router.push(`/c/${m.code}`)}
+                onClick={() => router.push(target === 'donate' ? `/donate/${m.code}` : `/c/${m.code}`)}
                 className="group flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-all hover:bg-brand-50 focus:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-300"
               >
                 <ProfileAvatar

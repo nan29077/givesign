@@ -35,7 +35,7 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
     return (
       <Shell>
         <Card>
-          <p className="flex items-center gap-2 text-[16px] font-extrabold text-ink-900"><CircleX size={20} strokeWidth={1.7} className="text-danger-500" /> 문서를 열 수 없습니다</p>
+          <h1 className="flex items-center gap-2 text-[16px] font-extrabold text-ink-900"><CircleX size={20} strokeWidth={1.7} className="text-danger-500" /> 문서를 열 수 없습니다</h1>
           <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
           <div className="mt-3"><Notice tone="warning">기브싸인은 문자로 보낸 링크 외의 경로로 계좌·카드 정보나 비밀번호를 묻지 않습니다.</Notice></div>
         </Card>

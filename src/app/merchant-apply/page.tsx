@@ -7,12 +7,13 @@ import { Card, CardTitle, Notice, LinkButton, Badge } from '@/components/ui';
 import { getSessionUser } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { merchantStatusLabel } from '@/lib/labels';
+import { currentServiceMode, testModeNotice } from '@/server/services/service-mode';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: '사회복지기관 가입 신청',
-  description: '문자후원 수신번호를 배정받고 내 서비스에 후원을 연결하려면 사회복지기관 가입을 신청하세요.',
+  title: '기관 도입 신청',
+  description: '후원 문자 수신번호를 배정받고 기관 후원페이지를 열려면 기관 도입을 신청하세요.',
 };
 
 export default async function MerchantApplyPage() {
@@ -28,8 +29,8 @@ export default async function MerchantApplyPage() {
     <PublicShell aside={<ApplyAside />}>
       <PageHeader
         eyebrow="사회복지기관"
-        title="사회복지기관 가입 신청"
-        description="신청 후 관리자 심사를 거쳐 승인되면 전용 결제 수신번호가 배정됩니다."
+        title="기관 도입 신청"
+        description="신청 후 관리자 심사를 거쳐 승인되면 전용 후원 문자 수신번호가 배정됩니다."
       />
 
       {existing ? (
@@ -40,9 +41,9 @@ export default async function MerchantApplyPage() {
           </div>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
             {existing.status === 'PENDING'
-              ? '관리자 심사가 진행 중입니다. 승인되면 MO 결제 수신번호가 배정되고 후원 페이지가 공개됩니다.'
+              ? '관리자 심사가 진행 중입니다. 승인되면 후원 문자 수신번호(MO)가 배정되고 후원 페이지가 공개됩니다.'
               : existing.status === 'APPROVED'
-                ? '승인이 완료되었습니다. 사회복지기관 콘솔에서 후원 설정과 정산을 설정하세요.'
+                ? '승인이 완료되었습니다. 기관 콘솔에서 후원 설정과 정산을 설정하세요.'
                 : '신청 상태에 대한 자세한 안내가 필요하면 고객센터로 문의해 주세요.'}
           </p>
           <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
@@ -51,7 +52,7 @@ export default async function MerchantApplyPage() {
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2">
             <LinkButton href="/studio" variant="primary" size="md" className="w-full">
-              사회복지기관 콘솔
+              기관 콘솔
             </LinkButton>
             <LinkButton href="/support" variant="secondary" size="md" className="w-full">
               고객센터 문의
@@ -61,12 +62,16 @@ export default async function MerchantApplyPage() {
       ) : (
         <>
           <div className="mb-4">
-            <Notice tone="warning" title="MO 결제 수신번호는 승인 후 배정됩니다">
+            <Notice tone="warning" title="후원 문자 수신번호(MO)는 승인 후 배정됩니다">
               신청 즉시 문자후원이 시작되지 않습니다. 관리자 승인 후 전용 번호(또는 대표번호 + 키워드)가 배정되며, 그
               전까지는 후원 페이지가 공개되지 않습니다.
             </Notice>
           </div>
-          <MerchantApplyForm loggedIn={Boolean(user)} sessionEmail={user?.email ?? null} />
+          <MerchantApplyForm
+            loggedIn={Boolean(user)}
+            sessionEmail={user?.email ?? null}
+            testNotice={testModeNotice(currentServiceMode())}
+          />
         </>
       )}
     </PublicShell>
@@ -80,9 +85,9 @@ function ApplyAside() {
         <CardTitle>승인 후 제공되는 기능</CardTitle>
         <div className="mt-3 space-y-2.5">
           {[
-            { icon: <MessageSquare size={17} strokeWidth={1.7} />, title: '전용 결제 수신번호', body: '전용 번호 또는 대표번호 + 키워드를 배정합니다.' },
-            { icon: <MonitorPlay size={17} strokeWidth={1.7} />, title: '결제 연동', body: '결제 수신번호와 후원 금액, 완료 안내 문자를 설정합니다.' },
-            { icon: <Wallet size={17} strokeWidth={1.7} />, title: '정산 관리', body: '결제 금액과 수수료, 정산 가능 금액을 확인합니다.' },
+            { icon: <MessageSquare size={17} strokeWidth={1.7} />, title: '전용 후원 문자 번호', body: '전용 번호 또는 대표번호 + 키워드를 배정합니다.' },
+            { icon: <MonitorPlay size={17} strokeWidth={1.7} />, title: '후원 설정', body: '후원 항목과 금액, 후원 완료 안내 문자를 설정합니다.' },
+            { icon: <Wallet size={17} strokeWidth={1.7} />, title: '정산 관리', body: '후원 금액과 수수료, 정산 가능 금액을 확인합니다.' },
             { icon: <ShieldCheck size={17} strokeWidth={1.7} />, title: '금칙어 · 차단', body: '부적절한 메시지와 후원자를 차단합니다.' },
           ].map((f) => (
             <div key={f.title} className="flex gap-3">

@@ -34,7 +34,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ w
       <BannerStrip position="HOME_MIDDLE" className="mt-14" />
 
       <section className="mt-14 overflow-hidden rounded-3xl bg-white shadow-sm">
-        <Image unoptimized width={1600} height={800} src="/assets/givesign/banner.png" alt="복지기관에서 도시락을 준비하는 봉사자들" className="aspect-[2/1] w-full object-cover" />
+        <Image width={1600} height={800} sizes="(min-width: 760px) 680px, 100vw" src="/assets/givesign/banner.png" alt="복지기관에서 도시락을 준비하는 봉사자들" className="aspect-[2/1] w-full object-cover" />
         <div className="p-6">
           <h2 className="text-[22px] font-black leading-snug tracking-[-0.03em]">후원하는 분은<br />문자 한 통이면 됩니다</h2>
           <ol className="mt-5 space-y-3">
@@ -56,7 +56,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ w
         <p className="mt-3 text-[14px] leading-7 text-ink-700">캠페인 하나를 만들면 콘텐츠·문자 키워드·후원페이지가 함께 준비됩니다. 기관 콘솔에서 바로 확인할 수 있습니다.</p>
         <div className="mt-5 flex flex-wrap gap-3">
           <LinkButton href="/login">기관 로그인</LinkButton>
-          <LinkButton href="/merchant-apply" variant="secondary">도입 신청</LinkButton>
+          <LinkButton href="/merchant-apply" variant="secondary">기관 도입 신청</LinkButton>
         </div>
         <p className="mt-4 text-[12.5px] text-ink-500">후원자라면 <Link href="/my" className="font-bold text-brand-700 underline underline-offset-2">마이페이지</Link>에서 후원 내역·약정서·영수증을 볼 수 있습니다.</p>
       </Card>

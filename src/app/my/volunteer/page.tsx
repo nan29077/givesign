@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { featureVolunteerEnabled } from '@/lib/env';
 import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components/my/payer';
 import { prisma } from '@/server/db';
 import { Badge, Card, EmptyState } from '@/components/ui';
@@ -11,6 +13,8 @@ export const dynamic = 'force-dynamic';
 
 /** 내 자원봉사 — 신청 상태 · 배정 안내 · 활동 기록 */
 export default async function MyVolunteerPage() {
+  // 자원봉사 기능을 끈 운영에서는 탭(MyNav)과 함께 목록도 닫는다.
+  if (!featureVolunteerEnabled()) notFound();
   const { payerId } = await requirePayerContext('/my/volunteer');
   if (!payerId) return <EmptyState title={NO_PAYER_TITLE} description={NO_PAYER_DESC} />;
   const [apps, acts] = await Promise.all([

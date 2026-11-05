@@ -82,7 +82,7 @@ export default async function SecureLinkPage({ params }: { params: Promise<{ tok
   return (
     <LinkShell>
       <Card>
-        <CardTitle>지원하지 않는 링크입니다</CardTitle>
+        <h1 className="text-[15px] font-bold text-ink-900">지원하지 않는 링크입니다</h1>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-500">
           이 링크의 용도는 현재 화면에서 처리할 수 없습니다. 고객센터로 문의해 주세요.
         </p>
@@ -99,7 +99,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
       <Card>
         <div className="flex items-center gap-2 text-warning-500">
           <Hourglass size={20} strokeWidth={1.7} />
-          <p className="text-[16px] font-extrabold text-ink-900">확인 시간이 지났습니다</p>
+          <h1 className="text-[16px] font-extrabold text-ink-900">확인 시간이 지났습니다</h1>
         </div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
           확인 시간이 지나 결제가 자동 취소되었습니다. 결제는 진행되지 않았습니다.
@@ -118,7 +118,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
       <Card>
         <div className="flex items-center gap-2 text-ink-500">
           <Clock size={20} strokeWidth={1.7} />
-          <p className="text-[16px] font-extrabold text-ink-900">이미 처리된 링크입니다</p>
+          <h1 className="text-[16px] font-extrabold text-ink-900">이미 처리된 링크입니다</h1>
         </div>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
           이 링크는 1회만 사용할 수 있으며 이미 사용되었습니다. 처리 결과는 문자로 안내되었습니다.
@@ -136,7 +136,7 @@ function InvalidLink({ reason }: { reason: 'NOT_FOUND' | 'EXPIRED' | 'USED' }) {
     <Card>
       <div className="flex items-center gap-2 text-danger-500">
         <CircleX size={20} strokeWidth={1.7} />
-        <p className="text-[16px] font-extrabold text-ink-900">유효하지 않은 링크입니다</p>
+        <h1 className="text-[16px] font-extrabold text-ink-900">유효하지 않은 링크입니다</h1>
       </div>
       <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
         주소가 잘못되었거나 더 이상 사용할 수 없는 링크입니다. 결제는 진행되지 않았습니다.
@@ -157,7 +157,7 @@ async function RegisterScreen({ token }: { token: string }) {
   if (!loaded.ok) {
     return (
       <Card>
-        <CardTitle>등록을 진행할 수 없습니다</CardTitle>
+        <h1 className="text-[15px] font-bold text-ink-900">등록을 진행할 수 없습니다</h1>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
       </Card>
     );
@@ -326,7 +326,7 @@ async function SelectAmountScreen({ token }: { token: string }) {
   if (!loaded.ok) {
     return (
       <Card>
-        <CardTitle>진행할 수 없습니다</CardTitle>
+        <h1 className="text-[15px] font-bold text-ink-900">진행할 수 없습니다</h1>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-500">{loaded.reason}</p>
       </Card>
     );
@@ -347,7 +347,7 @@ async function SelectAmountScreen({ token }: { token: string }) {
         <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-700">
           <Wallet size={17} strokeWidth={1.7} />
         </span>
-        <CardTitle>{ctx.merchantName} 결제</CardTitle>
+        <h1 className="text-[15px] font-bold text-ink-900">{ctx.merchantName} 후원</h1>
       </div>
       <SelectAmountPanel
         token={token}
@@ -405,7 +405,7 @@ async function ConfirmScreen({ token }: { token: string }) {
   if (!loaded.ok) {
     return (
       <Card>
-        <CardTitle>확인을 진행할 수 없습니다</CardTitle>
+        <h1 className="text-[15px] font-bold text-ink-900">확인을 진행할 수 없습니다</h1>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
       </Card>
     );

@@ -9,5 +9,5 @@ export const GivesignMark = GiveSignMark;
 export function Logo({ compact = false }: { compact?: boolean; onDark?: boolean }) {
   if (compact) return <GiveSignMark size={32} />;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/assets/givesign/brand/logo-hope-transparent-v7.png" width={124} height={40} className="h-[40px] w-[124px] object-contain" alt="기브싸인 GiveSign" />;
+  return <img src="/assets/givesign/brand/logo-hope-transparent-v7.png" width={124} height={40} className="h-[40px] w-[124px] object-contain" alt="기브싸인 GIVESIGN" />;
 }
