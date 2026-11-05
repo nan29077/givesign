@@ -18,5 +18,6 @@ export const ADMIN_BAZAAR_TABS = [
   { href: '/admin/bazaar/lives', label: '편성·셀러' },
   { href: '/admin/bazaar/sales', label: '판매 결과' },
   { href: '/admin/in-kind-settlements', label: '정산·대사' },
+  { href: '/admin/in-kind-receipts', label: '영수증 정정' },
   { href: '/admin/bazaar/settings', label: '설정' },
 ];

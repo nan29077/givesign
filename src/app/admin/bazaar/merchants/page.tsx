@@ -37,8 +37,8 @@ export default async function AdminBazaarMerchants() {
                 <Td>
                   <div className="flex flex-col gap-2">
                     {r.status !== 'APPROVED' ? <ActionForm action={decideParticipationAction} submitLabel="승인" compact><input type="hidden" name="merchantId" value={r.merchantId} /><input type="hidden" name="decision" value="APPROVED" /></ActionForm> : null}
-                    {r.status === 'APPLIED' ? <ActionForm action={decideParticipationAction} submitLabel="반려" variant="secondary" compact><input type="hidden" name="merchantId" value={r.merchantId} /><input type="hidden" name="decision" value="REJECTED" /><AdminInput name="note" placeholder="반려 사유" /></ActionForm> : null}
-                    {r.status === 'APPROVED' ? <ActionForm action={decideParticipationAction} submitLabel="정지" variant="danger" compact confirm="이 기관의 바자회 참여를 정지할까요? 새 매칭에서 빠집니다."><input type="hidden" name="merchantId" value={r.merchantId} /><input type="hidden" name="decision" value="SUSPENDED" /><AdminInput name="note" placeholder="정지 사유" /></ActionForm> : null}
+                    {r.status === 'APPLIED' ? <ActionForm action={decideParticipationAction} submitLabel="반려" variant="secondary" compact confirm="참여 신청을 반려할까요?"><input type="hidden" name="merchantId" value={r.merchantId} /><input type="hidden" name="decision" value="REJECTED" /><AdminInput name="note" placeholder="반려 사유" /></ActionForm> : null}
+                    {r.status === 'APPROVED' ? <ActionForm action={decideParticipationAction} submitLabel="정지" variant="danger" compact confirm="이 기관의 바자회 참여를 정지할까요? 새 매칭에서 빠지고, 응답 대기 중인 매칭 제안은 철회됩니다. 진행 중인 건의 가액 확정·검수 확정·편성 승인도 멈춥니다."><input type="hidden" name="merchantId" value={r.merchantId} /><input type="hidden" name="decision" value="SUSPENDED" /><AdminInput name="note" placeholder="정지 사유" /></ActionForm> : null}
                   </div>
                 </Td>
               </tr>

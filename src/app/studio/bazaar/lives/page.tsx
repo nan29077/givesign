@@ -12,7 +12,8 @@ import { formatKst } from '@/lib/datetime';
 export const dynamic = 'force-dynamic';
 
 export default async function StudioBazaarLives() {
-  const { merchant } = await studioBazaarContext();
+  const { merchant, participation } = await studioBazaarContext();
+  const canAct = participation?.status === 'APPROVED';
   const lives = await prisma.bazaarLive.findMany({ where: { merchantId: merchant.merchantId }, include: { seller: { select: { name: true } } }, orderBy: { scheduledAt: 'desc' } });
   const ids = [...new Set(lives.flatMap((l) => (l.productIds as string[]) ?? []))];
   const products = await prisma.bazaarProduct.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, trackingCode: true } });
@@ -31,13 +32,13 @@ export default async function StudioBazaarLives() {
                 <p className="text-[14.5px] font-extrabold text-ink-900">{l.title}</p>
                 <p className="mt-1 text-[12.5px] text-ink-500">{formatKst(l.scheduledAt, false)} · 셀러 {l.seller.name}{l.note ? ` · ${l.note}` : ''}</p>
                 <ul className="mt-2 text-[12.5px] text-ink-700">{((l.productIds as string[]) ?? []).map((pid) => <li key={pid}>· {pname.get(pid) ?? pid}</li>)}</ul>
-                <div className="mt-3 flex flex-wrap items-start gap-3">
-                  <ActionForm action={decideLiveAction} submitLabel="승인" compact><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="decision" value="APPROVE" /></ActionForm>
+                {canAct ? <div className="mt-3 flex flex-wrap items-start gap-3">
+                  <ActionForm action={decideLiveAction} submitLabel="승인" compact confirm="이 편성을 승인할까요? 승인하면 셀러브릭스 방송이 확정됩니다."><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="decision" value="APPROVE" /></ActionForm>
                   <ActionForm action={decideLiveAction} submitLabel="반려" variant="secondary" compact>
                     <input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="decision" value="REJECT" />
                     <Field label="반려 사유"><Input name="note" maxLength={200} className="h-9 text-[13px]" /></Field>
                   </ActionForm>
-                </div>
+                </div> : <p className="mt-3 text-[12.5px] text-warning-500">참여 승인 상태가 아니어서 편성을 승인할 수 없습니다.</p>}
               </li>
             ))}
           </ul>

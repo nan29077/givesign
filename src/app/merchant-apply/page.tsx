@@ -33,7 +33,15 @@ export default async function MerchantApplyPage() {
         description="신청 후 관리자 심사를 거쳐 승인되면 전용 후원 문자 수신번호가 배정됩니다."
       />
 
-      {existing ? (
+      {user?.role === 'GIVER' ? (
+        <Card>
+          <CardTitle>현물 기부 회원 계정으로 로그인되어 있습니다</CardTitle>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-500">
+            현물 기부 회원 계정은 기관으로 바꿀 수 없습니다. 바꾸면 진행 중인 기부의 약정·발송·영수증 화면을 쓸 수 없게 됩니다.
+            로그아웃한 뒤 기관용 이메일로 새 계정을 만들어 신청해 주세요.
+          </p>
+        </Card>
+      ) : existing ? (
         <Card>
           <div className="flex items-center gap-2">
             <CardTitle>이미 신청한 계정입니다</CardTitle>

@@ -99,9 +99,9 @@ export default async function AdminBazaarLives({ searchParams }: { searchParams:
                 <Td>
                   {l.status === 'PROPOSED' || l.status === 'APPROVED' ? (
                     <div className="flex flex-col gap-1.5">
-                      <ActionForm action={liveStatusAction} submitLabel="주소 저장" variant="ghost" compact><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="status" value="URL" /><AdminInput name="broadcastUrl" defaultValue={l.broadcastUrl ?? ''} placeholder="https://" /></ActionForm>
+                      <ActionForm action={liveStatusAction} submitLabel="주소 저장" variant="ghost" compact confirm="방송 주소를 바꿀까요? 공개 화면의 방송 링크가 바로 바뀝니다(변경 기록이 남습니다)."><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="status" value="URL" /><AdminInput name="broadcastUrl" defaultValue={l.broadcastUrl ?? ''} placeholder="https://" /></ActionForm>
                       <div className="flex gap-2">
-                        <ActionForm action={liveStatusAction} submitLabel="방송 완료" compact><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="status" value="DONE" /></ActionForm>
+                        <ActionForm action={liveStatusAction} submitLabel="방송 완료" compact confirm="방송 완료로 표시할까요? 되돌릴 수 없습니다."><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="status" value="DONE" /></ActionForm>
                         <ActionForm action={liveStatusAction} submitLabel="취소" variant="ghost" compact confirm="편성을 취소할까요?"><input type="hidden" name="liveId" value={l.id} /><input type="hidden" name="status" value="CANCELED" /></ActionForm>
                       </div>
                     </div>

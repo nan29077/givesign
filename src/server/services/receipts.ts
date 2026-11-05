@@ -600,6 +600,11 @@ export const HOMETAX_CSV_COLUMNS = [
   '발급일자',
 ] as const;
 
+/** 법인·사업자 현물 기부 구역의 열(개인 명세와 섞지 않는다) */
+export const HOMETAX_CORPORATE_COLUMNS = [
+  '일련번호', '발급번호', '기부자상호', '사업자등록번호', '대표자', '주소', '기부금코드', '기부유형', '기부일', '기부금액', '품목수', '기부내용', '발급일자',
+] as const;
+
 function csvCell(v: string | number | bigint | null | undefined): string {
   const s = v == null ? '' : String(v);
   // 엑셀 수식 주입(=, +, -, @) 방지와 따옴표 이스케이프
@@ -660,31 +665,40 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
     );
   }
   // 현물 기부금영수증(라이브 바자회). 바자회 스위치를 꺼도 계속 포함한다(법정 서류, 2026-11-05 결정).
-  // 기업 기부자는 사업자등록번호를, 개인은 발급 당시 주민번호 암호문을 쓴다.
+  // 개인 기부자는 발급 당시 주민번호 암호문으로 위 개인 명세에 이어 붙인다.
+  // 기업(법인·개인사업자) 기부자는 개인용 '주민등록번호' 열에 사업자번호를 넣지 않고, 파일 끝 별도 구역(머리줄 따로)에 둔다.
+  // 법인 현물 기부의 제출 방식은 세무 확인 전이다(2026-11-06 점검 '결정 필요') — 개인 명세 변환에 섞이지 않게 분리만 한다.
   const inKind = await prisma.inKindReceipt.findMany({
     where: { merchantId, taxYear, status: 'ISSUED' },
     orderBy: { seq: 'asc' },
   });
+  const corporate: string[] = [];
+  let corpRows = 0;
   for (const r of inKind) {
-    const donor = (r.donorSnapshot ?? {}) as { name?: string; address?: string | null; businessNo?: string | null; hometaxOptIn?: boolean };
-    let idNo: string;
+    const donor = (r.donorSnapshot ?? {}) as { name?: string; address?: string | null; businessNo?: string | null; representativeName?: string | null; hometaxOptIn?: boolean };
+    const items = (r.items as unknown as Array<{ name?: string; quantity?: number }> | null) ?? [];
+    const content = `현물(${items[0]?.name ?? '물품'}${items.length > 1 ? ` 외 ${items.length - 1}건` : ''})`;
     if (r.donorType === 'CORPORATE') {
       if (!donor.businessNo) {
         skipped.push(r.receiptNo);
         continue;
       }
-      idNo = donor.businessNo;
-    } else {
-      if (donor.hometaxOptIn === false || !r.residentNoEnc) {
-        skipped.push(r.receiptNo);
-        continue;
-      }
-      idNo = decrypt(r.residentNoEnc);
+      corpRows += 1;
+      total += r.totalAmount;
+      corporate.push(
+        [corpRows, r.receiptNo, donor.name ?? '', donor.businessNo, donor.representativeName ?? '', donor.address ?? '', r.donationCode, DONATION_CODES[r.donationCode] ?? '', kstYmd(r.donatedAt), r.totalAmount.toString(), items.length, content, kstYmd(r.issuedAt)]
+          .map(csvCell)
+          .join(','),
+      );
+      continue;
     }
+    if (donor.hometaxOptIn === false || !r.residentNoEnc) {
+      skipped.push(r.receiptNo);
+      continue;
+    }
+    const idNo = decrypt(r.residentNoEnc);
     rows += 1;
     total += r.totalAmount;
-    const items = (r.items as unknown as Array<{ name?: string }> | null) ?? [];
-    const content = `현물(${items[0]?.name ?? '물품'}${items.length > 1 ? ` 외 ${items.length - 1}건` : ''})`;
     lines.push(
       [
         rows,
@@ -704,6 +718,13 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
         .map(csvCell)
         .join(','),
     );
+  }
+  if (corporate.length) {
+    lines.push('');
+    lines.push(csvCell('[법인·사업자 현물 기부 — 개인 명세와 별도. 제출 방식은 세무 확인 후 처리]'));
+    lines.push(HOMETAX_CORPORATE_COLUMNS.join(','));
+    lines.push(...corporate);
+    rows += corpRows;
   }
 
   const content = lines.join('\r\n') + '\r\n';

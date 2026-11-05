@@ -9,7 +9,7 @@ import { DonationTimeline } from '@/components/bazaar/donation-timeline';
 import { LabelBadge } from '@/components/bazaar/status-badge';
 import { prisma } from '@/server/db';
 import { adminBazaarContext } from '@/server/admin-bazaar-context';
-import { eligibleMerchants, receiptAmountOf } from '@/server/services/bazaar';
+import { eligibleMerchants, receiptAmountOf, receiptCorrectionNeeded } from '@/server/services/bazaar';
 import { getBazaarConfig } from '@/server/services/bazaar-settings';
 import {
   cancelDonationAction,
@@ -31,6 +31,7 @@ import {
   matchStatusLabel,
   productStatusLabel,
   unsoldActionLabel,
+  valuationKindLabel,
   type DonationStatus,
   type DonorType,
 } from '@/lib/bazaar';
@@ -39,6 +40,7 @@ import { formatKst, kstDateKey } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 const actorLabel: Record<string, string> = { DONOR: '기부자', MERCHANT: '기관', ADMIN: '운영자', SYSTEM: '시스템' };
+const fileKindLabel: Record<string, string> = { PHOTO: '물품 사진', EVIDENCE: '가액 근거', INSPECTION: '검수 사진' };
 
 export default async function AdminBazaarDonationDetail({ params }: { params: Promise<{ id: string }> }) {
   const admin = await adminBazaarContext();
@@ -60,7 +62,8 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
   });
   if (!d) notFound();
   const status = d.status as DonationStatus;
-  const [eligible, cfg] = await Promise.all([eligibleMerchants(), getBazaarConfig()]);
+  const [eligible, cfg, correction] = await Promise.all([eligibleMerchants(), getBazaarConfig(), receiptCorrectionNeeded(d.id)]);
+  const canOperate = ['SUPER_ADMIN', 'OPERATION', 'FINANCE'].includes(String(admin.adminPermission));
   const rejected = new Set(d.matches.filter((m) => m.status === 'REJECTED').map((m) => m.merchantId));
   const mNames = new Map((await prisma.merchantProfile.findMany({ where: { id: { in: d.matches.map((m) => m.merchantId) } }, select: { id: true, displayName: true } })).map((m) => [m.id, m.displayName]));
   const superAdmin = admin.adminPermission === 'SUPER_ADMIN';
@@ -128,7 +131,7 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
         </Card>
       ) : null}
 
-      {status === 'PLEDGED' || (status === 'INSPECTED' && !d.inbound?.merchantConfirmedAt) ? (
+      {canOperate && (status === 'PLEDGED' || (status === 'INSPECTED' && !d.inbound?.merchantConfirmedAt)) ? (
         <Card className="mt-4">
           <CardTitle>{d.inbound ? '입고·검수 수정' : '입고·검수 등록'}</CardTitle>
           <p className="mt-1 text-[12.5px] text-ink-500">합격 수량 × 확정 단가로 영수증이 발급됩니다. 기관이 검수를 확정하기 전까지 고칠 수 있습니다. 불합격이면 기부 건이 반송·폐기로 끝납니다.</p>
@@ -167,6 +170,11 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
       {d.receipts.length ? (
         <Card className="mt-4">
           <CardTitle>현물 기부금영수증</CardTitle>
+          {correction ? (
+            <div className="mt-2"><Notice tone="warning" title="영수증 정정 필요">
+              기부자에게 돌려준 수량이 있어 발급 금액 {formatWon(correction.issued)} 이 실제 기부 {formatWon(correction.expected)} 보다 많습니다. 영수증 {correction.receiptNo} 를 무효 처리한 뒤 재발급하면 반환 수량을 뺀 금액으로 발급됩니다. 정정 전에는 종결할 수 없습니다.
+            </Notice></div>
+          ) : null}
           <ul className="mt-2 space-y-3">
             {d.receipts.map((r) => (
               <li key={r.id} className="rounded-xl border border-ink-200 p-3 text-[13px]">
@@ -178,7 +186,7 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
             ))}
           </ul>
           {superAdmin && !d.receipts.some((r) => r.status === 'ISSUED') && ['RECEIPTED', 'ON_SALE', 'SALE_ENDED', 'CLOSED'].includes(status) ? (
-            <div className="mt-3"><ActionForm action={reissueReceiptAction} submitLabel="현재 확정값으로 재발급" variant="secondary"><input type="hidden" name="donationId" value={d.id} /></ActionForm></div>
+            <div className="mt-3"><ActionForm action={reissueReceiptAction} submitLabel="현재 확정값으로 재발급" variant="secondary" confirm="확정 단가 × (합격 수량 - 반환 수량)으로 새 번호의 영수증을 발급합니다. 계속할까요?"><input type="hidden" name="donationId" value={d.id} /></ActionForm></div>
           ) : null}
         </Card>
       ) : null}
@@ -186,16 +194,16 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
       {d.products.length ? (
         <Card className="mt-4">
           <CardTitle>판매 상품</CardTitle>
-          <ul className="mt-2 space-y-1 text-[13px]">{d.products.map((p) => <li key={p.id}><span className="font-mono">{p.trackingCode}</span> {p.name} · {formatWon(p.salePrice)} × {p.quantity} <LabelBadge map={productStatusLabel} value={p.status} /></li>)}</ul>
+          <ul className="mt-2 space-y-1 text-[13px]">{d.products.map((p) => <li key={p.id}><span className="font-mono">{p.trackingCode}</span> {p.name} · {formatWon(p.salePrice)} × {p.quantity} <LabelBadge map={productStatusLabel} value={p.status} />{p.returnedQty ? <span className="ml-1 text-[12px] text-warning-500">기부자 반환 {p.returnedQty}개</span> : null}</li>)}</ul>
           <p className="mt-2 text-[12.5px]"><Link href="/admin/bazaar/products" className="font-bold text-brand-700 underline">판매 상품에서 가격·등록 처리</Link></p>
-          {status === 'SALE_ENDED' ? <div className="mt-3"><ActionForm action={closeDonationAction} submitLabel="기부 건 종결" variant="secondary"><input type="hidden" name="donationId" value={d.id} /></ActionForm></div> : null}
+          {status === 'SALE_ENDED' ? <div className="mt-3"><ActionForm action={closeDonationAction} submitLabel="기부 건 종결" variant="secondary" confirm="기부 건을 종결할까요? 종결한 건은 다시 열 수 없습니다."><input type="hidden" name="donationId" value={d.id} /></ActionForm></div> : null}
         </Card>
       ) : null}
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Card>
           <CardTitle>가액 협의 이력</CardTitle>
-          <ul className="mt-2 space-y-1 text-[12.5px]">{d.valuations.map((v) => <li key={v.id}>{formatKst(v.createdAt, false)} · {actorLabel[v.actorType]} {v.kind} · {formatWon(v.total)}{v.note ? ` — ${v.note}` : ''}</li>)}</ul>
+          <ul className="mt-2 space-y-1 text-[12.5px]">{d.valuations.map((v) => <li key={v.id}>{formatKst(v.createdAt, false)} · {actorLabel[v.actorType] ?? '시스템'} {valuationKindLabel[v.kind] ?? '기록'} · {formatWon(v.total)}{v.note ? ` — ${v.note}` : ''}</li>)}</ul>
           <CardTitle className="mt-4">매칭 이력</CardTitle>
           <ul className="mt-2 space-y-1 text-[12.5px]">{d.matches.map((m) => <li key={m.id}>{formatKst(m.proposedAt, false)} · {mNames.get(m.merchantId)} <LabelBadge map={matchStatusLabel} value={m.status} />{m.reason ? ` — ${m.reason}` : ''}</li>)}</ul>
         </Card>
@@ -203,7 +211,7 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
           <CardTitle>상태 이력</CardTitle>
           <ul className="mt-2 space-y-1 text-[12.5px]">{d.logs.map((l) => <li key={l.id}>{formatKst(l.createdAt, false)} · {actorLabel[l.actorType]} · {donationStatusLabel[l.toStatus as DonationStatus]?.text ?? l.toStatus}{l.note ? ` — ${l.note}` : ''}</li>)}</ul>
           <CardTitle className="mt-4">파일</CardTitle>
-          <ul className="mt-2 space-y-1">{d.files.map((f) => <li key={f.id}><a href={`/api/bazaar/files/${f.id}`} target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 text-[12.5px] text-brand-700 underline"><FileText size={16} strokeWidth={1.7} aria-hidden />{f.kind} · {f.fileName}</a></li>)}</ul>
+          <ul className="mt-2 space-y-1">{d.files.map((f) => <li key={f.id}><a href={`/api/bazaar/files/${f.id}`} target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 text-[12.5px] text-brand-700 underline"><FileText size={16} strokeWidth={1.7} aria-hidden />{fileKindLabel[f.kind] ?? '파일'} · {f.fileName}</a></li>)}</ul>
         </Card>
       </div>
 

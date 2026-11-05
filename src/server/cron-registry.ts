@@ -70,6 +70,11 @@ export const CRON_JOBS: CronDef[] = [
     intervalSec: 86_400, lockTtlSec: 1800,
     description: '연 1회 영수증 기관의 전년도 일괄 발급 준비(승인 대기함) — 승인된 건 발급',
   },
+  {
+    name: 'bazaar', path: '/api/cron/bazaar', schedule: '1시간마다(라이브 바자회 켜짐일 때만 일함)', eventBridge: 'cron(10 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 600,
+    description: '라이브 바자회 매칭 수락 기한 만료 → 기부 건을 접수 상태로 되돌림',
+  },
 ];
 
 export function cronDef(name: string): CronDef | undefined {

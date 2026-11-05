@@ -9,16 +9,15 @@ import { LabelBadge } from '@/components/bazaar/status-badge';
 import { prisma } from '@/server/db';
 import { giverPageContext } from '@/server/giver-context';
 import { getBazaarConfig } from '@/server/services/bazaar-settings';
-import { productSalesSummary } from '@/server/services/bazaar';
+import { DONOR_EVIDENCE_STATUSES, productSalesSummary } from '@/server/services/bazaar';
 import { donorCancelAction, donorValuationAction, evidenceUploadAction, pledgeAction, shippingAction } from '@/app/actions/bazaar-giver';
-import { DONOR_CANCELABLE, deliveryMethodLabel, donationStatusLabel, itemConditionLabel, productStatusLabel, unsoldActionLabel, type DonationStatus } from '@/lib/bazaar';
+import { BAZAAR_UPLOAD_MAX_FILES, DONOR_CANCELABLE, deliveryMethodLabel, donationStatusLabel, itemConditionLabel, productStatusLabel, unsoldActionLabel, valuationKindLabel, type DonationStatus } from '@/lib/bazaar';
 import { formatNumber, formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
 const actorLabel: Record<string, string> = { DONOR: '기부자', MERCHANT: '기관', ADMIN: '운영자' };
-const kindLabel: Record<string, string> = { PROPOSE: '제안', COUNTER: '역제안', CONFIRM: '확정', ACCEPT: '수락', RECALC: '재계산' };
 
 export default async function GiverDonationDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ created?: string }> }) {
   const { donor } = await giverPageContext();
@@ -41,7 +40,8 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
   const cfg = await getBazaarConfig();
   const sales = await productSalesSummary(d.products.map((p) => p.id));
   const status = d.status as DonationStatus;
-  const lastProposal = [...d.valuations].reverse().find((v) => v.kind === 'PROPOSE' || v.kind === 'COUNTER');
+  const lastProposal = [...d.valuations].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).reverse().find((v) => v.kind === 'PROPOSE' || v.kind === 'COUNTER');
+  const returned = d.products.reduce((n, p) => n + p.returnedQty, 0);
   const lastValues = (lastProposal?.itemValues ?? {}) as Record<string, string>;
   const pledgeClauses = [
     '위 물품을 기관에 무상으로 기부하며, 기관이 라이브 바자회로 판매(현금화)하는 데 동의합니다.',
@@ -90,7 +90,7 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
           <ul className="mt-3 space-y-1.5 text-[13px]">
             {d.valuations.map((v) => (
               <li key={v.id} className="rounded-lg bg-ink-50 px-3 py-2">
-                <strong>{actorLabel[v.actorType]}</strong> {kindLabel[v.kind] ?? v.kind} · 합계 {formatWon(v.total)} · {formatKst(v.createdAt, false)}
+                <strong>{actorLabel[v.actorType] ?? '시스템'}</strong> {valuationKindLabel[v.kind] ?? '기록'} · 합계 {formatWon(v.total)} · {formatKst(v.createdAt, false)}
                 {v.note ? <span className="block text-ink-500">{v.note}</span> : null}
               </li>
             ))}
@@ -98,9 +98,10 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
           {lastProposal?.actorType === 'MERCHANT' ? (
             <div className="mt-4 space-y-4">
               <Notice tone="brand">기관이 합계 {formatWon(lastProposal.total)} 을 제안했습니다. 수락하면 가액이 확정됩니다.</Notice>
-              <ActionForm action={donorValuationAction} submitLabel="기관 제안 수락">
+              <ActionForm action={donorValuationAction} submitLabel="기관 제안 수락" confirm={`합계 ${formatWon(lastProposal.total)} 으로 확정할까요? 확정한 가액은 되돌릴 수 없고 기부금영수증 금액의 기준이 됩니다.`}>
                 <input type="hidden" name="donationId" value={d.id} />
                 <input type="hidden" name="mode" value="ACCEPT" />
+                <input type="hidden" name="valuationId" value={lastProposal.id} />
               </ActionForm>
             </div>
           ) : (
@@ -130,7 +131,7 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
           <p className="mt-1 text-[13px] text-ink-500">확정 가액 {d.confirmedTotal != null ? formatWon(d.confirmedTotal) : '-'} · 기관 {d.merchant?.displayName}</p>
           <ol className="mt-3 list-decimal space-y-1 pl-5 text-[13px] leading-relaxed text-ink-700">{pledgeClauses.map((c) => <li key={c}>{c}</li>)}</ol>
           <div className="mt-4">
-            <ActionForm action={pledgeAction} submitLabel="약정에 동의합니다">
+            <ActionForm action={pledgeAction} submitLabel="약정에 동의합니다" confirm="약정에 동의하면 스스로 취소할 수 없습니다. 동의할까요?">
               <input type="hidden" name="donationId" value={d.id} />
               <Field label="약정자 이름" required><Input name="pledgeName" required maxLength={30} defaultValue={donor.contactName} /></Field>
               <Checkbox name="agree" label="위 내용을 확인했고 기부에 동의합니다." />
@@ -178,6 +179,7 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
       {d.receipts.length ? (
         <Card className="mt-4">
           <CardTitle>기부금영수증</CardTitle>
+          {returned > 0 ? <p className="mt-1 text-[12.5px] text-ink-500">판매되지 않은 {returned}개를 돌려받으셨습니다. 돌려받은 물품은 기부가 아니므로 영수증은 그 수량을 뺀 금액으로 다시 발급됩니다(이전 영수증은 무효).</p> : null}
           <ul className="mt-2 space-y-1.5">
             {d.receipts.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-3 text-[13.5px]">
@@ -221,11 +223,12 @@ export default async function GiverDonationDetail({ params, searchParams }: { pa
             ))}
           </ul>
         ) : <p className="mt-2 text-[13px] text-ink-500">올린 파일이 없습니다.</p>}
-        {['SUBMITTED', 'MATCH_PROPOSED', 'VALUATING'].includes(status) ? (
+        {DONOR_EVIDENCE_STATUSES.includes(status) ? (
           <div className="mt-3">
             <ActionForm action={evidenceUploadAction} submitLabel="근거 자료 올리기" variant="secondary">
               <input type="hidden" name="donationId" value={d.id} />
               <input type="file" name="evidence" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="text-[13px]" />
+              <p className="text-[12px] text-ink-400">이미지 또는 PDF, 한 번에 {BAZAAR_UPLOAD_MAX_FILES}개까지·한 개 5MB 이하(기부 건당 20개)</p>
             </ActionForm>
           </div>
         ) : null}

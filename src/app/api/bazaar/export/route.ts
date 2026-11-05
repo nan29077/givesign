@@ -21,6 +21,9 @@ export async function GET(req: Request) {
   const nf = () => new Response('Not Found', { status: 404 });
   if (!user || !(await isLiveBazaarEnabled())) return nf();
   const isAdmin = user.role === 'ADMIN';
+  // 개인정보·대량 반출 파일(기부자 대장·셀러브릭스 등록 정보·전 기관 대장)은 금전·쓰기 권한 화이트리스트만(점검 B-M8).
+  // 읽기 전용(READ_ONLY)·고객지원(SUPPORT)·권한 미지정 관리자는 받지 못한다. actions/admin/shared.ts MONEY_PERMISSIONS 와 같다.
+  const exportAdmin = isAdmin && ['SUPER_ADMIN', 'OPERATION', 'FINANCE'].includes(String(user.adminPermission));
   const file = (name: string, rows: Array<Array<string | number | bigint | null | undefined>>) =>
     new Response(toCsv(rows), {
       headers: {
@@ -31,9 +34,10 @@ export async function GET(req: Request) {
     });
   const today = new Date().toISOString().slice(0, 10);
 
-  if (kind === 'sellerbricks' && isAdmin) {
+  if (kind === 'sellerbricks' && exportAdmin) {
     const cfg = await getBazaarConfig();
     const status = url.searchParams.get('status') === 'all' ? undefined : 'DRAFT';
+    await writeAudit({ adminUserId: user.id, action: 'BAZAAR_SELLERBRICKS_EXPORT', targetType: 'bazaar_product', after: { status: status ?? 'all' } });
     const products = await prisma.bazaarProduct.findMany({
       where: status ? { status } : {},
       include: { merchant: { select: { displayName: true } }, item: { select: { category: true, condition: true } }, donation: { select: { brandPublic: true } } },
@@ -63,7 +67,7 @@ export async function GET(req: Request) {
     ]);
   }
 
-  if (kind === 'givers' && isAdmin) {
+  if (kind === 'givers' && exportAdmin) {
     const donors = await prisma.inKindDonor.findMany({
       include: { user: { select: { email: true, status: true } }, donations: { select: { status: true, confirmedTotal: true } }, receipts: { where: { status: 'ISSUED' }, select: { totalAmount: true } } },
       orderBy: { createdAt: 'asc' },
@@ -87,8 +91,11 @@ export async function GET(req: Request) {
   }
 
   if (kind === 'ledger') {
+    if (isAdmin && !exportAdmin) return nf();
     const merchantId = isAdmin ? url.searchParams.get('merchantId') ?? undefined : user.merchantId;
     if (!merchantId) return nf();
+    // 기관 담당자는 승인된 기관이어야 한다(정지 기관 반출 방지).
+    if (!isAdmin && user.merchantStatus !== 'APPROVED') return nf();
     const donations = await prisma.inKindDonation.findMany({
       where: { merchantId },
       include: {
@@ -135,6 +142,13 @@ export async function GET(req: Request) {
         ]);
       }
     }
+    await writeAudit({
+      ...(isAdmin ? { adminUserId: user.id } : { actorUserId: user.id }),
+      action: 'BAZAAR_LEDGER_EXPORT',
+      targetType: 'merchant_profile',
+      targetId: merchantId,
+      after: { rows: rows.length - 1 },
+    });
     return file(`현물기부대장_${today}.csv`, rows);
   }
   return nf();

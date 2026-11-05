@@ -40,6 +40,14 @@ export default async function SiteSettingsPage() {
           <DataRow label="마지막 변경" value={row ? formatKst(row.updatedAt, false) : '변경 이력 없음(기본값 꺼짐)'} />
         </div>
         <div className="mt-4"><BazaarSwitchForm enabled={enabled} canEdit={canEdit} open={{ donations, listed, unpaid: unpaid.count }} /></div>
+        <p className="mt-3 text-[12.5px] text-ink-500">
+          꺼져 있어도 처리할 수 있는 화면:
+          <Link href="/admin/in-kind-settlements" className="ml-1 font-bold text-brand-700 underline">현물 판매 정산</Link> ·
+          <Link href="/admin/in-kind-receipts" className="ml-1 font-bold text-brand-700 underline">현물 기부금영수증 정정</Link>
+        </p>
+        {unpaid.toCarry > 0 ? (
+          <p className="mt-3 text-[12.5px] text-ink-500">지급액이 0원 이하인 정산 {unpaid.toCarry}건은 확정(또는 이월) 때 다음 달로 넘어갑니다.</p>
+        ) : null}
         {unpaid.count > 0 ? (
           <div className="mt-5 rounded-xl border border-ink-200 px-4 py-3 text-[13px]">
             미지급 현물 판매 정산 <strong>{unpaid.count}건</strong>(확정 {unpaid.confirmed}건) · {formatWon(unpaid.total)}{' '}

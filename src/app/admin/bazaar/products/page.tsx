@@ -20,7 +20,8 @@ export const dynamic = 'force-dynamic';
  * 3) "등록 완료"를 누른다. 판매가 끝나면 남은 수량 처리 방법을 정해 종료한다.
  */
 export default async function AdminBazaarProducts({ searchParams }: { searchParams: Promise<{ status?: string; merchantId?: string }> }) {
-  await adminBazaarContext();
+  const admin = await adminBazaarContext();
+  const canOperate = ['SUPER_ADMIN', 'OPERATION', 'FINANCE'].includes(String(admin.adminPermission));
   const sp = await searchParams;
   const status = sp.status && Object.hasOwn(productStatusLabel, sp.status) ? sp.status : undefined;
   const [rows, cfg, merchants] = await Promise.all([
@@ -56,7 +57,7 @@ export default async function AdminBazaarProducts({ searchParams }: { searchPara
                   <Td className="font-mono text-[12px] font-bold">{p.trackingCode}{p.externalRef ? <span className="block font-normal text-ink-400">SB {p.externalRef}</span> : null}</Td>
                   <Td>{p.name}<span className="block text-[11px] text-ink-400">{p.merchant.displayName} · {p.donation.donationNo} · 영수증 단가 {formatWon(p.item.unitValue ?? 0n)}</span></Td>
                   <Td className="text-right tabular-nums">{sold} / {p.quantity}<span className="block text-[11px] text-ink-400">{formatWon((s?.gross ?? 0n) - (s?.refund ?? 0n))}</span></Td>
-                  <Td><LabelBadge map={productStatusLabel} value={p.status} />{p.remainingAction ? <span className="block text-[11px] text-ink-400">{unsoldActionLabel[p.remainingAction]}</span> : null}</Td>
+                  <Td><LabelBadge map={productStatusLabel} value={p.status} />{p.remainingAction ? <span className="block text-[11px] text-ink-400">{unsoldActionLabel[p.remainingAction]}{p.returnedQty ? ` ${p.returnedQty}개` : ''}</span> : null}</Td>
                   <Td>
                     {p.status !== 'ENDED' ? (
                       <ActionForm action={updateProductAction} submitLabel="저장" variant="secondary" compact>
@@ -65,7 +66,7 @@ export default async function AdminBazaarProducts({ searchParams }: { searchPara
                         <div className="grid grid-cols-2 gap-1">
                           <AdminField label="판매가"><AdminInput name="salePrice" inputMode="numeric" defaultValue={p.salePrice.toString()} /></AdminField>
                           <AdminField label="배송비"><AdminInput name="shippingFee" inputMode="numeric" defaultValue={p.shippingFee.toString()} /></AdminField>
-                          <AdminField label={`수량(최대 ${p.item.acceptedQty ?? 0})`}><AdminInput name="quantity" inputMode="numeric" defaultValue={String(p.quantity)} /></AdminField>
+                          <AdminField label={`수량(${s?.soldQty ?? 0}~${p.item.acceptedQty ?? 0})`}><AdminInput name="quantity" inputMode="numeric" defaultValue={String(p.quantity)} /></AdminField>
                           <AdminField label="1인 제한"><AdminInput name="perPersonLimit" inputMode="numeric" defaultValue={String(p.perPersonLimit)} /></AdminField>
                         </div>
                       </ActionForm>
@@ -79,8 +80,8 @@ export default async function AdminBazaarProducts({ searchParams }: { searchPara
                           <AdminInput name="externalRef" placeholder="셀러브릭스 상품번호(선택)" />
                         </ActionForm>
                       ) : null}
-                      {p.status !== 'ENDED' ? (
-                        <ActionForm action={endProductAction} submitLabel="판매 종료" variant="ghost" compact confirm="판매를 종료할까요? 셀러브릭스에서도 상품을 내려 주세요.">
+                      {p.status !== 'ENDED' && canOperate ? (
+                        <ActionForm action={endProductAction} submitLabel="판매 종료" variant="ghost" compact confirm="판매를 종료할까요? 되돌릴 수 없습니다. 셀러브릭스에서도 상품을 내려 주세요. 기부자에게 반환하면 현물 영수증을 반환 수량만큼 정정(무효 후 재발급)해야 합니다.">
                           <input type="hidden" name="productId" value={p.id} />
                           <AdminSelect name="remainingAction" defaultValue={p.donation.unsoldAction} aria-label="남은 수량 처리">
                             {['MERCHANT_USE', 'TRANSFER', 'RETURN', 'DISPOSE'].map((v) => <option key={v} value={v}>남은 수량: {unsoldActionLabel[v]}</option>)}

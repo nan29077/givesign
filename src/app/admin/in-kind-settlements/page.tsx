@@ -9,7 +9,7 @@ import { prisma } from '@/server/db';
 import { ADMIN_BAZAAR_TABS } from '@/server/admin-bazaar-context';
 import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 import { internalNetSales } from '@/server/services/bazaar';
-import { confirmSettlementAction, generateSettlementsAction, paySettlementAction, reconcileAction } from '@/app/actions/admin/bazaar';
+import { carryOverSettlementAction, confirmSettlementAction, generateSettlementsAction, paySettlementAction, reconcileAction } from '@/app/actions/admin/bazaar';
 import { settlementStatusLabel } from '@/lib/bazaar';
 import { formatWon } from '@/lib/money';
 import { formatKst, kstDateKey, kstMonthKey } from '@/lib/datetime';
@@ -19,7 +19,8 @@ export const dynamic = 'force-dynamic';
 /**
  * 현물 판매 정산(월 1회).
  * 라이브 바자회 스위치가 꺼져도 이 화면은 열린다 — 확정된 정산은 계속 지급한다(2026-11-05 결정).
- * 꺼져 있을 때는 바자회 메뉴·문구 없이 정산 지급만 보여 준다.
+ * 꺼져 있을 때는 바자회 메뉴·문구 없이 정산(집계·확정·이월·지급)만 보여 준다. 꺼진 동안에는 새 판매 결과가 들어오지 않으므로
+ * 집계는 이미 승인된 판매분에 대해서만 일어난다(2026-11-06 점검: 안내와 동작을 맞춤).
  */
 export default async function InKindSettlementsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   await requireAdmin();
@@ -37,7 +38,7 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
       {enabled ? <BazaarSubNav items={ADMIN_BAZAAR_TABS} current="/admin/in-kind-settlements" /> : null}
       <Card>
         <CardTitle>월 정산 집계</CardTitle>
-        <p className="mt-1 text-[12.5px] text-ink-500">해당 월 원장(승인된 판매 결과·반송비)을 기관별로 모읍니다. 이미 확정·지급된 정산은 바뀌지 않으며, 확정 뒤 들어온 판매는 다음 달로 넘어갑니다.</p>
+        <p className="mt-1 text-[12.5px] text-ink-500">해당 월 원장(승인된 판매 결과·반송비·전월 이월)을 기관별로 모읍니다. 이미 확정·지급·이월된 정산은 바뀌지 않으며, 확정 뒤 들어온 판매는 다음 달로 넘어갑니다. 지급액이 0원 이하이면 확정할 때 지급 없이 다음 달 정산으로 넘어갑니다(다음 정산에서 차감).</p>
         <div className="mt-3"><ActionForm action={generateSettlementsAction} submitLabel="집계하기"><AdminField label="정산 월"><AdminInput type="month" name="month" defaultValue={month} /></AdminField></ActionForm></div>
       </Card>
 
@@ -45,7 +46,7 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
         <CardTitle>기관 정산</CardTitle>
         {settlements.length === 0 ? <div className="mt-3"><EmptyState title="정산 내역이 없습니다" /></div> : (
           <div className="mt-3"><Table>
-            <thead><tr><Th>월</Th><Th>기관 · 계좌</Th><Th className="text-right">판매</Th><Th className="text-right">환불</Th><Th className="text-right">수수료(부가세)</Th><Th className="text-right">반송비</Th><Th className="text-right">지급액</Th><Th>지급일</Th><Th>상태·처리</Th></tr></thead>
+            <thead><tr><Th>월</Th><Th>기관 · 계좌</Th><Th className="text-right">판매</Th><Th className="text-right">환불</Th><Th className="text-right">수수료(부가세)</Th><Th className="text-right">반송비·이월</Th><Th className="text-right">지급액</Th><Th>지급일</Th><Th>상태·처리</Th></tr></thead>
             <tbody>{settlements.map((s) => (
               <tr key={s.id}>
                 <Td>{s.month}</Td>
@@ -53,14 +54,17 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
                 <Td className="text-right tabular-nums">{formatWon(s.gross)}</Td>
                 <Td className="text-right tabular-nums">{formatWon(s.refund)}</Td>
                 <Td className="text-right tabular-nums">{formatWon(s.fee)}<span className="block text-[11px] text-ink-400">{formatWon(s.feeVat)}</span></Td>
-                <Td className="text-right tabular-nums">{formatWon(s.returnCost)}</Td>
-                <Td className="text-right font-bold tabular-nums">{formatWon(s.payout)}</Td>
-                <Td className="text-[12px]">{s.paidAt ? formatKst(s.paidAt, false) : s.dueDate.toISOString().slice(0, 10)}</Td>
+                <Td className="text-right tabular-nums">{formatWon(s.returnCost)}{s.carryAmount !== 0n ? <span className="block text-[11px] text-ink-400">이월 {formatWon(s.carryAmount)}</span> : null}</Td>
+                <Td className={s.payout < 0n ? 'text-right font-bold text-danger-500 tabular-nums' : 'text-right font-bold tabular-nums'}>{formatWon(s.payout)}</Td>
+                <Td className="text-[12px]">{s.paidAt ? formatKst(s.paidAt, false) : s.status === 'CARRIED' ? (s.carriedToMonth ? `${s.carriedToMonth}로 이월` : '지급 없음') : s.dueDate.toISOString().slice(0, 10)}</Td>
                 <Td>
                   <LabelBadge map={settlementStatusLabel} value={s.status} />
                   {s.transferRef ? <span className="block text-[11px] text-ink-400">{s.transferRef}</span> : null}
-                  {s.status === 'DRAFT' ? <div className="mt-1"><ActionForm action={confirmSettlementAction} submitLabel="확정" compact confirm={`${s.merchant.displayName} ${s.month} 정산을 확정할까요? 확정 금액은 바뀌지 않습니다.`}><input type="hidden" name="settlementId" value={s.id} /></ActionForm></div> : null}
-                  {s.status === 'CONFIRMED' ? (
+                  {s.status === 'DRAFT' ? <div className="mt-1"><ActionForm action={confirmSettlementAction} submitLabel="확정" compact confirm={`${s.merchant.displayName} ${s.month} 정산을 확정할까요? 확정 금액은 바뀌지 않습니다.${s.payout <= 0n ? ' 지급액이 0원 이하라 지급 없이 다음 달로 넘어갑니다.' : ''}`}><input type="hidden" name="settlementId" value={s.id} /></ActionForm></div> : null}
+                  {s.status === 'CONFIRMED' && s.payout <= 0n ? (
+                    <div className="mt-1"><ActionForm action={carryOverSettlementAction} submitLabel="다음 달로 이월" compact confirm="지급할 금액이 없는 정산입니다. 다음 달 정산으로 넘기고 마감할까요? 되돌릴 수 없습니다."><input type="hidden" name="settlementId" value={s.id} /></ActionForm></div>
+                  ) : null}
+                  {s.status === 'CONFIRMED' && s.payout > 0n ? (
                     <div className="mt-1"><ActionForm action={paySettlementAction} submitLabel="지급 완료 기록" compact confirm="은행 이체를 마쳤나요? 지급 완료로 기록합니다.">
                       <input type="hidden" name="settlementId" value={s.id} />
                       <AdminInput type="date" name="paidAt" defaultValue={kstDateKey()} aria-label="지급일" />
@@ -91,7 +95,7 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
             </Table></div>
           ) : null}
         </Card>
-      ) : <div className="mt-5"><Notice tone="neutral">서비스가 꺼져 있어 정산 지급만 처리할 수 있습니다.</Notice></div>}
+      ) : <div className="mt-5"><Notice tone="neutral">서비스가 꺼져 있어 새 판매 결과는 받지 않습니다. 이미 승인된 판매분의 집계·확정·이월·지급은 그대로 처리할 수 있습니다.</Notice></div>}
     </>
   );
 }

@@ -201,6 +201,7 @@ export async function voidReceiptAction(_p: AdminActionState, fd: FormData) {
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_RECEIPT_VOID', targetType: 'in_kind_receipt', targetId: id, after: { reason: text(fd, 'reason') } });
     revalidateBazaar();
     revalidatePath('/studio/receipts');
+    revalidatePath('/admin/in-kind-receipts');
     return '영수증을 무효 처리했습니다. 필요하면 재발급해 주세요.';
   });
 }
@@ -213,6 +214,7 @@ export async function reissueReceiptAction(_p: AdminActionState, fd: FormData) {
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_RECEIPT_REISSUE', targetType: 'in_kind_receipt', targetId: r.id });
     revalidateBazaar();
     revalidatePath('/studio/receipts');
+    revalidatePath('/admin/in-kind-receipts');
     return `영수증 ${r.receiptNo} 를 새로 발급했습니다.`;
   });
 }
