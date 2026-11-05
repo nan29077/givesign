@@ -22,6 +22,11 @@ import {
 } from '@/server/services/pdf-form';
 import { coverOnlyNotice, parsePdfLayout, sameLayout, type PdfLayout } from '@/lib/pdf-form';
 import { isOwnMediaUrl } from '@/server/uploads';
+import { DOCUMENT_PURPOSE_LABEL, type DocumentPurpose } from '@/server/services/purpose-documents';
+import { isDocumentPurpose, purposeNeedsSignature } from '@/server/services/purpose-templates';
+import {
+  IssuedDocumentError, archiveIssuedDocument, resendIssuedDocument, restoreIssuedDocument,
+} from '@/server/services/issued-documents';
 
 /**
  * 문서 상품 — 사회복지기관 관리자 서버 액션.
@@ -110,6 +115,9 @@ interface ParsedTemplate {
   baseToken: string;
   /** 원본 위 편집 기록. null 이면 폼에 편집기가 없었다(기존 기록 유지). */
   pdfLayout: PdfLayout | null;
+  /** 자동 발송 용도(없으면 null). 폼에 용도 칸이 없었으면 undefined(기존 값 유지). */
+  purpose: DocumentPurpose | null | undefined;
+  autoSend: boolean | undefined;
 }
 
 function parseTemplateForm(
@@ -172,8 +180,20 @@ function parseTemplateForm(
     return { ok: false, message: `입력 항목은 최대 ${MAX_DOCUMENT_FIELDS}개까지 만들 수 있습니다.` };
   }
 
+  // 자동 발송 용도. 칸이 없던 폼(이전 화면)은 기존 값을 그대로 둔다.
+  let purpose: DocumentPurpose | null | undefined;
+  if (formData.has('purposePresent')) {
+    const raw = text(formData, 'purpose');
+    if (raw && !isDocumentPurpose(raw)) return { ok: false, message: '자동 발송 용도를 다시 골라 주세요.' };
+    purpose = raw ? (raw as DocumentPurpose) : null;
+  }
+  const autoSend = formData.has('autoSendPresent') ? checked(formData, 'autoSend') : undefined;
+
+  // 감사장·확인서처럼 서명 없이 열람만 하는 자동 발송 문서는 입력 항목이 없어도 된다.
+  const viewOnly = !!purpose && !purposeNeedsSignature(purpose);
+
   // 파일 서식은 후원자가 내려받아 손으로 쓴다. 화면 입력 항목이 없어도 된다.
-  if (templateType !== 'FILE' && fields.length === 0) {
+  if (templateType !== 'FILE' && fields.length === 0 && !viewOnly) {
     return {
       ok: false,
       message: '후원자가 채울 입력 항목을 1개 이상 만들어 주세요. (성명 · 연락처 등)',
@@ -199,8 +219,22 @@ function parseTemplateForm(
       baseConvertedFrom,
       baseToken: text(formData, 'baseToken'),
       pdfLayout,
+      purpose,
+      autoSend,
     },
   };
+}
+
+/** 같은 용도를 이미 다른 서식이 쥐고 있으면 안내 문구를 돌려준다(기관×용도 1개). */
+async function purposeConflict(merchantId: string, purpose: DocumentPurpose | null | undefined, selfId: string | null): Promise<string | null> {
+  if (!purpose) return null;
+  const other = await prisma.documentTemplate.findFirst({
+    where: { merchantId, purpose, archivedAt: null, ...(selfId ? { id: { not: selfId } } : {}) },
+    select: { name: true },
+  });
+  return other
+    ? `${DOCUMENT_PURPOSE_LABEL[purpose]} 자동 발송에는 이미 「${other.name}」 서식이 쓰이고 있습니다. 그 서식의 자동 발송 용도를 먼저 비워 주세요.`
+    : null;
 }
 
 /**
@@ -318,9 +352,17 @@ async function auditPdfEdit(userId: string, merchantId: string, templateId: stri
 
 function templateData(parsed: ParsedTemplate) {
   const {
-    basePdfUrl: _b, baseConvertedFrom: _c, baseToken: _t, pdfLayout: _l, templateType: _y, ...rest
+    basePdfUrl: _b, baseConvertedFrom: _c, baseToken: _t, pdfLayout: _l, templateType: _y, purpose, autoSend, ...rest
   } = parsed;
-  return rest;
+  return {
+    ...rest,
+    ...(purpose !== undefined ? { purpose } : {}),
+    ...(autoSend !== undefined ? { autoSend } : {}),
+  };
+}
+
+function isPurposeUniqueError(e: unknown) {
+  return (e as { code?: string })?.code === 'P2002';
 }
 
 export async function createDocumentTemplateAction(
@@ -331,7 +373,8 @@ export async function createDocumentTemplateAction(
     const parsed = parseTemplateForm(formData);
     if (!parsed.ok) return { ok: false, message: parsed.message };
 
-    const count = await prisma.documentTemplate.count({ where: { merchantId, archivedAt: null } });
+    // 기본 세트(시스템이 깔아 준 용도별 서식)는 상한에 넣지 않는다.
+    const count = await prisma.documentTemplate.count({ where: { merchantId, archivedAt: null, defaultSet: false } });
     if (count >= MAX_DOCUMENT_TEMPLATES) {
       return { ok: false, message: `서식은 최대 ${MAX_DOCUMENT_TEMPLATES}개까지 등록할 수 있습니다.` };
     }
@@ -343,13 +386,22 @@ export async function createDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
+    const conflict = await purposeConflict(merchantId, parsed.data.purpose, null);
+    if (conflict) return { ok: false, message: conflict };
+
     const pdf = await applyPdf(merchantId, null, parsed.data);
     if (!pdf.ok) return { ok: false, message: pdf.message };
 
-    const created = await prisma.documentTemplate.create({
-      data: { id: newId(), merchantId, templateType: parsed.data.templateType, ...templateData(parsed.data), ...pdf.data },
-      select: { id: true, name: true },
-    });
+    let created: { id: string; name: string };
+    try {
+      created = await prisma.documentTemplate.create({
+        data: { id: newId(), merchantId, templateType: parsed.data.templateType, ...templateData(parsed.data), ...pdf.data },
+        select: { id: true, name: true },
+      });
+    } catch (e) {
+      if (isPurposeUniqueError(e)) return { ok: false, message: '같은 자동 발송 용도의 서식이 방금 만들어졌습니다. 목록을 확인해 주세요.' };
+      throw e;
+    }
     await auditPdfEdit(userId, merchantId, created.id, pdf.summary);
     revalidateDocuments();
     return {
@@ -386,10 +438,18 @@ export async function updateDocumentTemplateAction(
     });
     if (dup) return { ok: false, message: '같은 이름의 서식이 이미 있습니다.' };
 
+    const conflict = await purposeConflict(merchantId, parsed.data.purpose, id);
+    if (conflict) return { ok: false, message: conflict };
+
     const pdf = await applyPdf(merchantId, current, parsed.data);
     if (!pdf.ok) return { ok: false, message: pdf.message };
 
-    await prisma.documentTemplate.update({ where: { id }, data: { ...templateData(parsed.data), ...pdf.data } });
+    try {
+      await prisma.documentTemplate.update({ where: { id }, data: { ...templateData(parsed.data), ...pdf.data } });
+    } catch (e) {
+      if (isPurposeUniqueError(e)) return { ok: false, message: '같은 자동 발송 용도의 서식이 이미 있습니다. 목록을 확인해 주세요.' };
+      throw e;
+    }
     await auditPdfEdit(userId, merchantId, id, pdf.summary);
 
     // 이미 제출된 문서는 그대로 남는다(저장 당시 값을 근거로 남겨야 한다).
@@ -442,7 +502,7 @@ export async function archiveDocumentTemplateAction(
     const id = text(formData, 'templateId');
     const current = await prisma.documentTemplate.findFirst({
       where: { id, merchantId, archivedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, purpose: true },
     });
     if (!current) return { ok: false, message: '서식을 찾을 수 없습니다.' };
 
@@ -472,9 +532,12 @@ export async function archiveDocumentTemplateAction(
       data: { archivedAt: new Date(), active: false },
     });
     revalidateDocuments();
+    const purposeNote = current.purpose && isDocumentPurpose(current.purpose)
+      ? ` ${DOCUMENT_PURPOSE_LABEL[current.purpose]} 자동 발송 서식이 없어졌으므로 다음 발송 때 기본 서식이 다시 만들어집니다. 보내지 않으려면 그 서식의 자동 발송 사용을 꺼 주세요.`
+      : '';
     return {
       ok: true,
-      message: `${current.name} 서식을 보관했습니다. 제출된 문서는 그대로 남습니다.`,
+      message: `${current.name} 서식을 보관했습니다. 제출된 문서는 그대로 남습니다.${purposeNote}`,
       redirectTo: '/studio/documents',
     };
   });
@@ -493,7 +556,12 @@ export async function restoreDocumentTemplateAction(
     if (!current) return { ok: false, message: '보관된 서식을 찾을 수 없습니다.' };
 
     // 되살린 서식은 꺼진 상태로 돌아온다. 값을 확인한 뒤 켜게 한다.
-    await prisma.documentTemplate.update({ where: { id }, data: { archivedAt: null, active: false } });
+    // 그 사이 같은 자동 발송 용도를 다른 서식이 맡았으면 이 서식의 용도는 비운다(기관×용도 1개).
+    const row = await prisma.documentTemplate.findUniqueOrThrow({ where: { id }, select: { purpose: true } });
+    const taken = row.purpose
+      ? await prisma.documentTemplate.count({ where: { merchantId, purpose: row.purpose, archivedAt: null } })
+      : 0;
+    await prisma.documentTemplate.update({ where: { id }, data: { archivedAt: null, active: false, ...(taken ? { purpose: null } : {}) } });
     revalidateDocuments(id);
     return { ok: true, message: `${current.name} 서식을 되살렸습니다. 내용을 확인한 뒤 사용을 켜 주세요.` };
   });
@@ -729,4 +797,45 @@ export async function saveDocumentPdfLayoutAction(templateId: string, layoutJson
     logger.error('[documents] 원본 편집 저장 실패', { templateId, err: err instanceof Error ? err.message : String(err) });
     return { ok: false, message: '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
   }
+}
+
+// ===========================================================================
+// 용도별 자동 발송 문서 (발급 목록)
+// ===========================================================================
+
+async function issuedAction(formData: FormData, fn: (merchantId: string, id: string) => Promise<string>): Promise<StudioActionState> {
+  return withMerchant(async (merchantId) => {
+    const id = text(formData, 'issuedId');
+    if (!id) return { ok: false, message: '문서를 찾을 수 없습니다.' };
+    try {
+      const message = await fn(merchantId, id);
+      revalidatePath('/studio/documents/issued');
+      return { ok: true, message };
+    } catch (e) {
+      if (e instanceof IssuedDocumentError) return { ok: false, message: e.message };
+      throw e;
+    }
+  });
+}
+
+/** 열람 링크 재발송(새 링크, 이전 링크 무효) */
+export async function resendIssuedDocumentAction(_prev: StudioActionState, formData: FormData): Promise<StudioActionState> {
+  return issuedAction(formData, async (merchantId, id) => {
+    const r = await resendIssuedDocument({ merchantId, id });
+    return r.ok ? '새 열람 링크를 보냈습니다. 이전 링크는 더 열리지 않습니다.' : '새 링크를 만들었지만 문자를 보내지 못했습니다. 잠시 후 다시 보내 주세요.';
+  });
+}
+
+export async function archiveIssuedDocumentAction(_prev: StudioActionState, formData: FormData): Promise<StudioActionState> {
+  return issuedAction(formData, async (merchantId, id) => {
+    await archiveIssuedDocument({ merchantId, id });
+    return '문서를 보관했습니다. 열람 링크가 더 열리지 않고, 보관함에서 되살릴 수 있습니다.';
+  });
+}
+
+export async function restoreIssuedDocumentAction(_prev: StudioActionState, formData: FormData): Promise<StudioActionState> {
+  return issuedAction(formData, async (merchantId, id) => {
+    await restoreIssuedDocument({ merchantId, id });
+    return '문서를 되살렸습니다.';
+  });
 }

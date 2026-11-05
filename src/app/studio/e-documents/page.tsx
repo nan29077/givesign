@@ -20,7 +20,7 @@ const FILTERS: Array<{ key: string; label: string; statuses?: EDocEnvelopeStatus
   { key: 'stopped', label: '거절·만료·취소', statuses: ['DECLINED', 'EXPIRED', 'CANCELLED'] },
 ];
 
-const CATEGORY_ICON = { 후원: HeartHandshake, 자원봉사: Users, 이용자: UserRoundCheck, 동의서: ShieldCheck } as const;
+const CATEGORY_ICON = { 후원: HeartHandshake, 자원봉사: Users, 이용자: UserRoundCheck, 동의서: ShieldCheck, 감사장: HeartHandshake } as const;
 
 /**
  * 기관 전자문서 센터.
@@ -43,7 +43,8 @@ export default async function EDocumentCenter({ searchParams }: { searchParams: 
     }),
   ]);
   const owned = new Set(templates.map((t) => t.presetKey).filter(Boolean));
-  const presets = WELFARE_PRESETS();
+  // 감사장은 서명을 받는 문서가 아니라 용도별 자동 발송(열람 링크)으로 보낸다 — 서명 요청 목록에서 뺀다.
+  const presets = WELFARE_PRESETS().filter((p) => p.category !== '감사장');
 
   return (
     <>

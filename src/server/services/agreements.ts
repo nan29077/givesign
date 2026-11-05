@@ -11,6 +11,8 @@ import type { AgreementKind } from '@/generated/prisma/enums';
 import { currentTermsDoc } from './terms';
 import * as tpl from './mt-templates';
 import { sendMtForPayer } from './charge-flow';
+import { mergeValuesFromContext, renderTemplateBody, resolvePurposeTemplate, templateRevision } from './purpose-templates';
+import type { DocumentPurpose, MergeContext } from './purpose-documents';
 
 /**
  * 전자 약정서·신청서.
@@ -21,7 +23,58 @@ import { sendMtForPayer } from './charge-flow';
  *  - 개인정보는 마스킹된 값만 스냅샷에 넣는다(절대 규칙 6). 원문은 후원자 프로필에만 있다.
  *  - ESIGN_ENABLED 이면 전자서명 요청을 함께 보낸다. 서명이 없어도 약정 자체는 동의 기록으로 성립한다.
  *  - 문서 발급 안내·서명 요청 실패는 약정 결과를 바꾸지 않는다(절대 규칙 3).
+ *  - 기관의 용도 서식(SUPPORT_AGREEMENT·VOLUNTEER_APPLICATION, 없으면 기본 세트)을 머지 필드로 채운 본문을
+ *    스냅샷 `form` 에 함께 고정한다(2026-11-06). 서식을 읽지 못해도 약정서는 만든다(form 없이).
+ *  - ESIGN_PROVIDER=internal 이면 서명을 전자문서 센터 봉투로 받는다(esign_request_id = 봉투 id).
  */
+
+/** 약정서 스냅샷에 고정하는 기관 서식 렌더 결과 */
+export interface AgreementForm {
+  templateId: string;
+  templateRevision: string;
+  name: string;
+  /** 머지 결과 본문(값은 마스킹 규칙을 거친 것) */
+  body: string;
+  missing: string[];
+}
+
+const KIND_PURPOSE: Record<AgreementKind, DocumentPurpose> = {
+  RECURRING_PLEDGE: 'SUPPORT_AGREEMENT',
+  VOLUNTEER_APPLICATION: 'VOLUNTEER_APPLICATION',
+};
+
+async function agreementForm(merchantId: string, kind: AgreementKind, ctx: MergeContext): Promise<AgreementForm | null> {
+  try {
+    const t = await resolvePurposeTemplate(merchantId, KIND_PURPOSE[kind]);
+    if (!t) return null;
+    const m = await prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { displayName: true, representativeName: true } });
+    const r = renderTemplateBody(t, mergeValuesFromContext(ctx, { merchantName: m.displayName, representative: m.representativeName ?? null }));
+    return { templateId: t.id, templateRevision: templateRevision(t), name: t.name, body: r.text, missing: r.missing };
+  } catch (e) {
+    logger.warn('약정서 기관 서식 렌더 실패 — 서식 본문 없이 만듭니다', { merchantId, kind, message: (e as Error).message });
+    return null;
+  }
+}
+
+/** 약정서 스냅샷 → 내부 전자서명 머지 값 */
+function contextFromSnapshot(snap: Record<string, unknown>): MergeContext {
+  const s = snap as {
+    donor?: { name: string };
+    applicant?: { name: string };
+    pledge?: { amount: string; dayOfMonth: number; campaign: string; firstChargeOn: string };
+    application?: { wish: string | null };
+  };
+  if (s.pledge) {
+    return {
+      donorName: s.donor?.name ?? null,
+      amount: BigInt(s.pledge.amount),
+      dayOfMonth: s.pledge.dayOfMonth,
+      campaignTitle: s.pledge.campaign,
+      date: s.pledge.firstChargeOn,
+    };
+  }
+  return { donorName: s.applicant?.name ?? null, activityTitle: s.application?.wish ?? null };
+}
 
 export interface AgreementMeta {
   ip?: string;
@@ -131,13 +184,21 @@ async function requestSignatureIfEnabled(docId: string) {
   });
   const adapter = getESignAdapter();
   try {
+    const snap = doc.snapshot as Record<string, unknown>;
     const res = await adapter.request({
       docNo: doc.docNo,
       title: doc.title,
       signerPhone: decrypt(doc.payer.phoneEnc),
       signerName: doc.payer.displayName ?? '후원자',
-      body: renderAgreementText(doc.snapshot as Record<string, unknown>),
+      body: renderAgreementText(snap),
       contentHash: doc.contentHash,
+      internal: {
+        merchantId: doc.merchantId,
+        payerId: doc.payerId,
+        agreementDocId: doc.id,
+        purpose: KIND_PURPOSE[doc.kind] as 'SUPPORT_AGREEMENT' | 'VOLUNTEER_APPLICATION',
+        context: contextFromSnapshot(snap),
+      },
     });
     if (!res.ok || !res.data) {
       logger.warn('전자서명 요청 실패 — 동의 기록 약정서로 유지합니다', { docNo: doc.docNo, code: res.code });
@@ -172,6 +233,14 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
     },
   });
   const terms = await currentTermsDoc('RECURRING_DEBIT');
+  const campaignLabel = r.campaign ? `${r.campaign.title} (${r.campaign.code})` : '기관 일반 후원';
+  const form = await agreementForm(r.merchantId, 'RECURRING_PLEDGE', {
+    donorName: r.payer.displayName ?? '후원자',
+    amount: r.amount,
+    dayOfMonth: r.dayOfMonth,
+    campaignTitle: r.campaign?.title ?? '기관 일반 후원',
+    date: r.nextChargeOn.toISOString().slice(0, 10),
+  });
   const snapshot = {
     kind: 'RECURRING_PLEDGE',
     issuer: await issuerSnapshot(r.merchantId),
@@ -183,7 +252,7 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
       dayOfMonth: r.dayOfMonth,
       cycle: '매월',
       firstChargeOn: r.nextChargeOn.toISOString().slice(0, 10),
-      campaign: r.campaign ? `${r.campaign.title} (${r.campaign.code})` : '기관 일반 후원',
+      campaign: campaignLabel,
       anonymous: r.anonymous,
       message: r.message,
       method: '등록된 결제수단 자동 출금',
@@ -195,6 +264,8 @@ export async function issueRecurringAgreement(recurringId: string, meta: Agreeme
       termsHash: terms ? sha256(terms.content) : null,
       consentId: r.consentId,
     },
+    // 기관 서식(후원 약정서) 본문 — 머지 필드를 채운 결과. 서식을 읽지 못하면 넣지 않는다.
+    ...(form ? { form } : {}),
   };
   const doc = await createDocument({
     kind: 'RECURRING_PLEDGE',
@@ -223,6 +294,10 @@ export async function issueVolunteerAgreement(applicationId: string, meta: Agree
   });
   const vp = a.payer.volunteerProfile;
   const terms = await currentTermsDoc('VOLUNTEER_PRIVACY');
+  const form = await agreementForm(a.merchantId, 'VOLUNTEER_APPLICATION', {
+    donorName: a.payer.displayName ?? '신청자',
+    activityTitle: a.wish ?? null,
+  });
   const snapshot = {
     kind: 'VOLUNTEER_APPLICATION',
     issuer: await issuerSnapshot(a.merchantId),
@@ -244,6 +319,7 @@ export async function issueVolunteerAgreement(applicationId: string, meta: Agree
       termsHash: terms ? sha256(terms.content) : null,
       consentId: vp?.consentId ?? null,
     },
+    ...(form ? { form } : {}),
   };
   const doc = await createDocument({
     kind: 'VOLUNTEER_APPLICATION',
@@ -324,7 +400,21 @@ export function renderAgreementText(snap: Record<string, unknown>): string {
     pledge?: { amountText: string; dayOfMonth: number; campaign: string; firstChargeOn: string; method: string };
     application?: { wish: string | null; interests: string[]; availableDays: string[]; timeSlot: string | null };
     consent: { termsTitle: string; termsVersion: string | null };
+    form?: { name: string; body: string };
   };
+  const formText = s.form?.body ? `\n\n[${s.form.name}]\n${s.form.body}` : '';
+  return renderAgreementSummary(s) + formText;
+}
+
+function renderAgreementSummary(s: {
+  kind: string;
+  issuer: { name: string; code: string };
+  donor?: { name: string; phoneMasked: string };
+  applicant?: { name: string; phoneMasked: string };
+  pledge?: { amountText: string; dayOfMonth: number; campaign: string; firstChargeOn: string; method: string };
+  application?: { wish: string | null; interests: string[]; availableDays: string[]; timeSlot: string | null };
+  consent: { termsTitle: string; termsVersion: string | null };
+}): string {
   if (s.kind === 'RECURRING_PLEDGE' && s.pledge && s.donor) {
     return [
       `${s.issuer.name} 정기후원 약정서`,

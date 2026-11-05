@@ -19,7 +19,7 @@ export const MY_TABS: MyTabDef[] = [
   { key: 'donations', href: '/my', label: '후원 내역', prefixes: ['/my', '/my/payments'] },
   { key: 'recurring', href: '/my/recurring', label: '정기후원', prefixes: ['/my/recurring', '/my/agreements'] },
   { key: 'volunteer', href: '/my/volunteer', label: '봉사', prefixes: ['/my/volunteer'] },
-  { key: 'receipts', href: '/my/receipts', label: '영수증', prefixes: ['/my/receipts'] },
+  { key: 'receipts', href: '/my/receipts', label: '영수증', prefixes: ['/my/receipts', '/my/documents'] },
   { key: 'account', href: '/my/account', label: '내 정보', prefixes: ['/my/account', '/my/limits', '/my/blocks', '/my/consents'] },
 ];
 

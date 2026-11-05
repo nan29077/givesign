@@ -11,6 +11,7 @@ import type { DocumentSubmissionStatus, DocumentTemplateType } from '@/generated
 import type { Tone } from '@/lib/labels';
 import { createHash } from 'node:crypto';
 import type { DocumentTemplate } from '@/generated/prisma/client';
+import type { DocumentPurpose } from './purpose-documents';
 
 /**
  * 문서 상품 (약정서 · 주문서 · 계약서).
@@ -189,7 +190,12 @@ export interface DocumentPreset {
   /** 서명 요청(전자문서 센터)에서 기본으로 넣는 서명자 역할. 첫 번째가 내용을 작성한다. */
   signers?: Array<{ role: 'DONOR' | 'GUARDIAN' | 'VOLUNTEER' | 'PARTICIPANT' | 'STAFF' | 'OTHER'; label: string }>;
   /** 화면 분류 */
-  category?: '후원' | '자원봉사' | '이용자' | '동의서';
+  category?: '후원' | '자원봉사' | '이용자' | '동의서' | '감사장';
+  /**
+   * 용도별 자동 발송 기본 세트에서 이 서식이 맡는 용도(purpose-documents.ts DOCUMENT_PURPOSES).
+   * 기관에 그 용도 서식이 없으면 ensureDefaultPurposeTemplates 가 이 서식을 기관 서식으로 복사한다.
+   */
+  purpose?: DocumentPurpose;
 }
 
 function f(
@@ -210,8 +216,15 @@ function f(
  */
 export const DOCUMENT_PRESETS: DocumentPreset[] = [
   {
-    key: 'VOLUNTEER_APPLICATION', category: '자원봉사', signers: [{ role: 'VOLUNTEER', label: '신청자' }], name: '자원봉사 신청서', description: '희망 활동·일정·연락처와 참여 동의를 받는 기관용 서식',
-    body: '기관의 자원봉사 활동에 참여를 신청합니다. 활동 일정과 장소, 역할은 담당자와 확인하며 안전수칙과 개인정보 보호 지침을 준수합니다. 기관은 아래 신청 정보를 활동 안내와 참여 관리 목적으로 사용합니다. 실제 수집 항목과 보유 기간은 기관의 운영 기준에 맞게 기재해 주세요.',
+    key: 'VOLUNTEER_APPLICATION', purpose: 'VOLUNTEER_APPLICATION', category: '자원봉사', signers: [{ role: 'VOLUNTEER', label: '신청자' }], name: '자원봉사 신청서', description: '희망 활동·일정·연락처와 참여 동의를 받는 기관용 서식',
+    body: [
+      '{{기관명}} 귀중',
+      '신청자: {{후원자명}}',
+      '',
+      '기관의 자원봉사 활동에 참여를 신청합니다. 활동 일정과 장소, 역할은 담당자와 확인하며 안전수칙과 개인정보 보호 지침을 준수합니다. 기관은 아래 신청 정보를 활동 안내와 참여 관리 목적으로 사용합니다. 실제 수집 항목과 보유 기간은 기관의 운영 기준에 맞게 기재해 주세요.',
+      '',
+      '신청일: {{발급일}}',
+    ].join('\n'),
     fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('activity', '희망 활동 분야', 'TEXT'), f('date', '희망 활동일', 'DATE'), f('experience', '경험과 요청 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: true,
   },
   {
@@ -225,10 +238,13 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     fields: [f('name', '신청자 성명', 'TEXT'), f('phone', '연락처', 'PHONE'), f('program', '신청 프로그램명', 'TEXT'), f('date', '희망 참여일', 'DATE', false), f('note', '문의 사항', 'LONGTEXT', false), f('agree_privacy', '기재된 개인정보 수집·이용 안내를 확인하고 동의합니다', 'CHECKBOX')], requireSignature: false,
   },
   {
-    key: 'SUPPORT_AGREEMENT', category: '후원', signers: [{ role: 'DONOR', label: '후원자' }],
+    key: 'SUPPORT_AGREEMENT', purpose: 'SUPPORT_AGREEMENT', category: '후원', signers: [{ role: 'DONOR', label: '후원자' }],
     name: '후원약정서',
     description: '정기·일시 후원 약정 내용을 확인받는 서식',
     body: [
+      '{{기관명}}(대표 {{대표자}})과 후원자 {{후원자명}} 님은 아래와 같이 후원을 약정합니다.',
+      '약정 금액: {{금액}} · 출금일: 매월 {{출금일}}일 · 지정: {{캠페인}}',
+      '',
       '제1조 (목적)',
       '이 약정서는 후원자와 사회복지기관 사이의 후원 금액·주기·기간에 관한 사항을 정하는 것을 목적으로 합니다.',
       '',
@@ -242,6 +258,8 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
       '사회복지기관은 후원금 관리와 영수증 발급 목적으로만 아래 정보를 이용하며, 목적이 끝나면 지체 없이 파기합니다.',
       '',
       '위 내용을 확인하였으며 이에 동의합니다.',
+      '',
+      '작성일: {{발급일}}',
     ].join('\n'),
     fields: [
       f('name', '성명', 'TEXT'),
@@ -367,17 +385,23 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'VOLUNTEER_CONFIRMATION', category: '자원봉사',
+    key: 'VOLUNTEER_CONFIRMATION', purpose: 'VOLUNTEER_CONFIRMATION', category: '자원봉사',
     signers: [{ role: 'VOLUNTEER', label: '봉사자' }, { role: 'STAFF', label: '기관 담당자' }],
     name: '자원봉사 활동 확인서',
     description: '활동 일시·시간·내용을 봉사자와 담당자가 함께 확인하는 서식',
     body: [
       '아래 자원봉사 활동 사실을 확인합니다.',
       '',
+      '봉사자: {{후원자명}}',
+      '활동: {{활동명}} ({{배정}})',
+      '활동일: {{활동일}} · 활동 시간: {{활동시간}} · 누적 {{누적시간}}',
+      '',
       '· 활동 시간은 실제 활동한 시간만 적습니다(이동·대기 시간 제외는 기관 기준을 따릅니다).',
       '· 이 확인서는 기관 내부 기록용이며, 1365 자원봉사포털·VMS 등 공식 실적 등록은 기관이 별도로 처리합니다.',
       '',
-      '봉사자와 기관 담당자가 각각 서명하면 확인이 끝납니다.',
+      '봉사자와 기관 담당자가 각각 서명하면 확인이 끝납니다. 자동 발송으로 보낼 때는 서명 없이 열람용 확인서로 보냅니다.',
+      '',
+      '{{발급일}}  {{기관명}} 대표 {{대표자}}',
     ].join('\n'),
     fields: [
       f('name', '봉사자 성명', 'TEXT'),
@@ -484,12 +508,15 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'RECURRING_CHANGE', category: '후원',
+    key: 'RECURRING_CHANGE', purpose: 'RECURRING_CHANGE', category: '후원',
     signers: [{ role: 'DONOR', label: '후원자' }],
     name: '정기후원 변경·해지 신청서',
     description: '정기후원 금액·출금일 변경이나 해지를 서면으로 받아 두는 서식',
     body: [
-      '본인은 아래와 같이 정기후원 변경(또는 해지)을 신청합니다.',
+      '{{기관명}} 귀중',
+      '',
+      '본인({{후원자명}})은 아래와 같이 정기후원 변경(또는 해지)을 신청합니다.',
+      '현재 약정: {{금액}} · 매월 {{출금일}}일 출금',
       '',
       '· 신청일이 속한 달의 다음 출금일부터 반영합니다. 이미 출금된 후원금은 이 신청으로 환불되지 않습니다.',
       '· 기부금영수증은 실제 출금된 금액 기준으로 발급합니다.',
@@ -505,7 +532,88 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     ],
     requireSignature: true,
   },
+  // ── 감사장 (용도별 자동 발송 기본 세트, 서명 없음) ──────────────────────────
+  // 기관이 손볼 뼈대다. 따뜻하되 과장하지 않고, 수혜자 실명·사진·사연을 넣지 않는다.
+  {
+    key: 'THANKS_LETTER', purpose: 'THANKS_LETTER', category: '감사장',
+    name: '후원 감사장',
+    description: '후원해 주신 분께 보내는 감사 편지',
+    body: [
+      '{{후원자명}} 님께',
+      '',
+      '{{날짜}}에 보내 주신 {{금액}}의 후원을 감사한 마음으로 받았습니다.',
+      '보내 주신 마음은 {{캠페인}}에 정성껏 쓰겠습니다. 쓰임은 기관 소식으로 투명하게 알려 드리겠습니다.',
+      '',
+      '함께해 주셔서 고맙습니다.',
+      '',
+      '{{발급일}}',
+      '{{기관명}} 대표 {{대표자}} 드림',
+    ].join('\n'),
+    fields: [],
+    requireSignature: false,
+  },
+  {
+    key: 'RECURRING_THANKS', purpose: 'RECURRING_THANKS', category: '감사장',
+    name: '정기후원 감사장',
+    description: '정기후원을 이어 주시는 분께 보내는 감사 편지',
+    body: [
+      '{{후원자명}} 님께',
+      '',
+      '매달 잊지 않고 보내 주신 정기후원이 {{횟수}}째가 되었습니다. 지금까지 함께해 주신 후원은 모두 {{누적금액}}입니다.',
+      '꾸준한 후원 덕분에 기관은 다음 달의 일을 미리 계획하고 준비할 수 있습니다.',
+      '',
+      '오래 곁에 있어 주셔서 진심으로 고맙습니다.',
+      '',
+      '{{발급일}}',
+      '{{기관명}} 대표 {{대표자}} 드림',
+    ].join('\n'),
+    fields: [],
+    requireSignature: false,
+  },
+  {
+    key: 'YEAR_END_THANKS', purpose: 'YEAR_END_THANKS', category: '감사장',
+    name: '연말 감사장',
+    description: '한 해 동안 함께한 후원자께 연말에 보내는 감사 편지',
+    body: [
+      '{{후원자명}} 님께',
+      '',
+      '{{귀속연도}}년 한 해 동안 보내 주신 후원은 모두 {{누적금액}}입니다.',
+      '함께해 주신 덕분에 올해도 이웃 곁을 지킬 수 있었습니다.',
+      '기부금영수증({{영수증번호}})은 연말정산에 쓰실 수 있도록 따로 발급해 드렸습니다. 이 감사장은 영수증이 아닙니다.',
+      '',
+      '새해에도 건강하시고 평안하시기를 바랍니다.',
+      '',
+      '{{발급일}}',
+      '{{기관명}} 대표 {{대표자}} 드림',
+    ].join('\n'),
+    fields: [],
+    requireSignature: false,
+  },
+  {
+    key: 'VOLUNTEER_THANKS', purpose: 'VOLUNTEER_THANKS', category: '감사장',
+    name: '자원봉사 감사장',
+    description: '자원봉사에 함께해 주신 분께 보내는 감사 편지',
+    body: [
+      '{{후원자명}} 님께',
+      '',
+      '{{활동명}}에 함께해 주셔서 고맙습니다. 지금까지 나눠 주신 시간은 모두 {{누적시간}}입니다.',
+      '내어 주신 시간과 손길이 기관의 하루를 든든하게 채워 주었습니다.',
+      '',
+      '다음 활동에서도 반갑게 뵙겠습니다.',
+      '',
+      '{{발급일}}',
+      '{{기관명}} 대표 {{대표자}} 드림',
+    ].join('\n'),
+    fields: [],
+    requireSignature: false,
+  },
 ];
+
+/** 그 용도의 기본 서식 */
+export function presetForPurpose(purpose: string | null | undefined): DocumentPreset | null {
+  if (!purpose) return null;
+  return DOCUMENT_PRESETS.find((p) => p.purpose === purpose) ?? null;
+}
 
 /** 목록에 보이는 사회복지기관용 기본 서식 */
 export const WELFARE_PRESETS = (): DocumentPreset[] => DOCUMENT_PRESETS.filter((p) => !p.hidden);

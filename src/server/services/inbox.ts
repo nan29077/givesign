@@ -160,22 +160,8 @@ export async function automationReadiness(merchantId: string): Promise<{ items: 
   };
 }
 
-/**
- * 용도별 자동 발송 서식이 기관에 있는가. 용도(purpose) 열은 2단계에서 생긴다 —
- * 열이 아직 없거나 조회가 실패하면 "기본 서식 사용" 으로 본다(권장 항목이라 자동화를 막지 않음).
- */
+/** 기관이 직접 손본(기본 세트가 아닌) 용도별 자동 발송 서식이 있는가. 없으면 기본 세트로 보낸다(권장 항목). */
 async function countPurposeTemplates(merchantId: string): Promise<{ ok: boolean }> {
-  try {
-    const col = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
-      `SELECT COUNT(*)::bigint AS n FROM information_schema.columns WHERE table_name = 'document_template' AND column_name = 'purpose'`,
-    );
-    if (Number(col[0]?.n ?? 0) === 0) return { ok: false };
-    const rows = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
-      `SELECT COUNT(*)::bigint AS n FROM document_template WHERE merchant_id = $1 AND purpose IS NOT NULL AND template_type <> 'PRESET'`,
-      merchantId,
-    );
-    return { ok: Number(rows[0]?.n ?? 0) > 0 };
-  } catch {
-    return { ok: false };
-  }
+  const n = await prisma.documentTemplate.count({ where: { merchantId, purpose: { not: null }, defaultSet: false, archivedAt: null } });
+  return { ok: n > 0 };
 }

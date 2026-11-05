@@ -6,6 +6,7 @@ import { notifyUser } from './notifications';
 import { campaignStats } from './fundraising';
 import { registerJourneyEngine } from './journeys/engine';
 import { registerReceiptBatchHandler } from './receipt-batch';
+import { handleDocumentSigned } from './issued-documents';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -13,6 +14,7 @@ import { registerReceiptBatchHandler } from './receipt-batch';
  *  - merchant-alert   : 후원·봉사 신청·목표 달성 → 기관 담당자 인앱 알림
  *  - supporter-link   : 첫 후원·봉사 신청 → 기관 명단(supporter_contact) 행을 같은 번호의 후원자에 연결
  *  - campaign-goal    : 후원 → 캠페인 모금액이 목표에 처음 닿으면 goal_reached_at 기록 + campaign.goal_reached
+ *  - purpose-document-sign : 전자문서 봉투 완료(document.signed) → 발급 문서·약정서 서명 반영 (2단계)
  *
  * 저니(3단계)는 journey 소비자로 따로 등록된다. 이 파일은 /api/cron/events 가 import 한다.
  */
@@ -149,5 +151,7 @@ export function registerDefaultConsumers() {
   // 저니(자동 안내 흐름) — 3단계
   registerJourneyEngine();
   registerReceiptBatchHandler();
+  // 2단계: 전자문서 봉투 완료 → 용도별 발급 문서·내부 전자서명 약정서 반영(완료 지점에서 이미 반영했으면 바뀌지 않는다)
+  registerConsumer({ name: 'purpose-document-sign', types: ['document.signed'], handle: handleDocumentSigned });
   logger.debug?.('기본 이벤트 소비자 등록');
 }

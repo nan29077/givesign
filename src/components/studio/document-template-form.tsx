@@ -1,4 +1,7 @@
-import { Card, CardTitle, Field, Input, Notice, Textarea } from '@/components/ui';
+import { Card, CardTitle, Field, Input, Notice, Select, Textarea } from '@/components/ui';
+import { MERGE_FIELDS } from '@/lib/merge-fields';
+import { DOCUMENT_PURPOSES, DOCUMENT_PURPOSE_LABEL, type DocumentPurpose } from '@/server/services/purpose-documents';
+import { SIGNATURE_PURPOSES } from '@/server/services/purpose-templates';
 import { ActionForm } from '@/components/studio/action-form';
 import { DocumentFieldEditor, type EditorField } from '@/components/studio/document-field-editor';
 import { DocumentFileEditorField, type ExistingPdfForm } from '@/components/studio/document-file-editor-field';
@@ -57,6 +60,8 @@ export function DocumentTemplateForm({
   presetKey,
   submitLabel,
   pdfEditor,
+  defaultPurpose,
+  takenPurposes,
 }: {
   action: Action;
   templateType: DocumentTemplateType;
@@ -71,6 +76,10 @@ export function DocumentTemplateForm({
   submitLabel: string;
   /** 파일 서식 수정 화면: 저장된 원본·편집 기록·글꼴 정보 */
   pdfEditor?: ExistingPdfForm | null;
+  /** 새로 만들 때 고를 자동 발송 용도(기본 서식의 용도가 비어 있을 때) */
+  defaultPurpose?: DocumentPurpose | null;
+  /** 이 기관에서 다른 서식이 이미 맡은 용도 → 그 서식 이름 */
+  takenPurposes?: Partial<Record<DocumentPurpose, string>>;
 }) {
   const isFile = templateType === 'FILE';
   const editorFields: EditorField[] = fields.map((f) => ({
@@ -175,6 +184,8 @@ export function DocumentTemplateForm({
         </Section>
       )}
 
+      <MergeFieldGuide isFile={isFile} />
+
       {/* ── 3. 입력 항목 ───────────────────────────────────────── */}
       <Section
         step={3}
@@ -212,6 +223,62 @@ export function DocumentTemplateForm({
           분쟁 가능성이 큰 계약에는 별도 절차를 함께 두세요.
         </Notice>
       </Section>
+
+      {/* ── 5. 자동 발송 ───────────────────────────────────────── */}
+      <Section
+        step={5}
+        title="자동 발송"
+        description="후원·약정·봉사 활동이 생기면 이 서식으로 문서를 만들어 후원자에게 보냅니다. 한 용도에는 서식 하나만 걸 수 있습니다."
+      >
+        <input type="hidden" name="purposePresent" value="1" />
+        <Field label="자동 발송 용도" hint="비워 두면 자동 발송에 쓰지 않습니다. 약정서·신청서·변경 신청서는 전자서명 요청으로, 나머지는 열람 링크로 보냅니다.">
+          <Select name="purpose" defaultValue={template?.purpose ?? defaultPurpose ?? ''}>
+            <option value="">자동 발송에 쓰지 않음</option>
+            {DOCUMENT_PURPOSES.map((p) => {
+              const owner = takenPurposes?.[p];
+              const mine = template?.purpose === p;
+              return (
+                <option key={p} value={p} disabled={!!owner && !mine}>
+                  {DOCUMENT_PURPOSE_LABEL[p]}
+                  {SIGNATURE_PURPOSES.includes(p) ? ' (서명 요청)' : ' (열람 링크)'}
+                  {owner && !mine ? ` — 「${owner}」 사용 중` : ''}
+                </option>
+              );
+            })}
+          </Select>
+        </Field>
+        <input type="hidden" name="autoSendPresent" value="1" />
+        <label className="flex items-center gap-2 text-[13px] font-semibold text-ink-800">
+          <input type="checkbox" name="autoSend" defaultChecked={template ? template.autoSend : true} className="h-4 w-4" />
+          자동 발송 사용
+          <span className="font-normal text-ink-400">(끄면 이 용도의 문서를 보내지 않습니다. 서식은 그대로 남습니다)</span>
+        </label>
+        <Notice tone="neutral" title="정보성 안내만 보냅니다">
+          감사장·확인서는 후원·활동에 대한 안내 문서입니다. 후원을 권유하는 광고 문구나 결제 링크를 본문에 넣지 마세요.
+          수혜자 실명·사진도 넣지 않습니다.
+        </Notice>
+      </Section>
     </ActionForm>
+  );
+}
+
+/** 사용할 수 있는 머지 필드 목록 */
+function MergeFieldGuide({ isFile }: { isFile: boolean }) {
+  return (
+    <Card>
+      <CardTitle>사용할 수 있는 머지 필드</CardTitle>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-ink-500">
+        본문{isFile ? '이나 원본 위에 새로 쓰는 글자' : ''}에 아래 이름을 중괄호 두 개로 감싸 넣으면 문서를 보낼 때 값으로 바뀝니다.
+        값이 없으면 빈칸으로 둡니다. 저장한 뒤 서식 화면의 미리보기에서 예시 값으로 확인하세요.
+      </p>
+      <ul className="mt-2.5 grid gap-1.5 sm:grid-cols-2">
+        {MERGE_FIELDS.map((f) => (
+          <li key={f.key} className="flex items-baseline gap-2 rounded-lg bg-ink-50 px-2.5 py-1.5 text-[12px]">
+            <code className="shrink-0 font-mono font-bold text-brand-800">{`{{${f.key}}}`}</code>
+            <span className="min-w-0 truncate text-ink-500">{f.label} · {f.hint}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }

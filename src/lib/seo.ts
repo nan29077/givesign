@@ -16,6 +16,7 @@ export const ROBOTS_DISALLOW = [
   '/receipt/',
   '/sign/',
   '/doc/',
+  '/l/',
   '/c/',
   '/login',
   '/signup',

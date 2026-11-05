@@ -82,8 +82,20 @@ export type IssuePurposeDocumentResult =
   | { ok: true; issuedId: string; link: string | null; already?: boolean; signature: boolean }
   | { ok: false; reason: string; blocked?: 'DISABLED' | 'NO_TEMPLATE' | 'EDOC_BALANCE' | 'WITHDRAWN' | 'NOT_READY' };
 
-/** 2단계에서 구현된다. 그 전까지는 아무것도 보내지 않는다(꾸며 내지 않는다). */
+/**
+ * 용도별 문서 발송(2단계 구현: issued-documents.ts). 이 파일은 계약만 두고 구현은 늦게 불러온다
+ * (구현이 전자문서·문자 모듈을 가져오므로, 이 파일을 import 하는 쪽이 순환 참조에 걸리지 않게).
+ *
+ *  - 서명 불필요 용도: link = 열람 링크(/l/[토큰]). 안내 문자를 보냈으면 이 링크다.
+ *  - 서명 필요 용도: link = null(서명 링크는 전자문서 센터가 본인 번호로 보낸다), signature = true, issuedId = 발급 대장 id.
+ *  - already: true 면 link 는 null 이다(토큰 원문은 저장하지 않는다).
+ */
 export async function issuePurposeDocument(input: IssuePurposeDocumentInput): Promise<IssuePurposeDocumentResult> {
-  void input;
-  return { ok: false, reason: '용도별 문서 발송이 아직 준비되지 않았습니다.', blocked: 'NOT_READY' };
+  const { issuePurposeDocumentImpl } = await import('./issued-documents');
+  return issuePurposeDocumentImpl(input);
+}
+
+/** 약정서·신청서(agreement_document) 한 판의 서명 요청 발송 키. 내부 전자서명과 저니가 같은 키를 쓰면 한 번만 보낸다. */
+export function agreementSignDedupeKey(agreementDocId: string): string {
+  return `agreement:${agreementDocId}`;
 }
