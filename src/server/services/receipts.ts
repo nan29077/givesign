@@ -407,7 +407,8 @@ export async function issueReceipt(input: IssueReceiptInput) {
         subjectType: 'donation_receipt',
         subjectId: created.id,
         payerId: payer.id,
-        payload: { taxYear: input.taxYear, totalAmount: total, chargeCount: charges.length, issuedBy: input.issuedBy },
+        // receiptNo 는 연말 감사장 머지 필드(영수증번호)에 쓴다. receiptCycle 은 연말 감사장 시작 조건(YEARLY 만)이다.
+        payload: { taxYear: input.taxYear, totalAmount: total, chargeCount: charges.length, issuedBy: input.issuedBy, receiptNo, receiptCycle: merchant.receiptCycle },
       },
       tx,
     );
@@ -442,11 +443,31 @@ function publicReason(e: unknown): string {
   return '처리 중 오류가 발생했습니다.';
 }
 
-/** 기관의 연도별 일괄 발급. 준비된(정보 등록된) 후원자만 발급하고 나머지는 건너뛴 이유를 돌려준다. */
-export async function issueReceiptsBulk(merchantId: string, taxYear: number, issuedBy: string) {
-  const candidates = await receiptCandidates(merchantId, taxYear);
-  const result = { issued: 0, skipped: 0, failed: 0, details: [] as Array<{ payerId: string; status: 'ISSUED' | 'SKIPPED' | 'FAILED'; reason?: string; receiptNo?: string }> };
-  for (const c of candidates) {
+/**
+ * 기관의 연도별 일괄 발급. 준비된(정보 등록된) 후원자만 발급하고 나머지는 건너뛴 이유를 돌려준다.
+ *
+ * opts.deadline 이 있으면 그 시각까지만 발급하고 `remaining` 에 남은 후원자 수를 돌려준다(승인 배치가 나눠 실행).
+ * opts.skipPayers 는 이전 실행에서 이미 처리(발급·건너뜀·실패)한 후원자 — 다시 시도하지 않는다.
+ * 발급은 결제 건을 receipt_id:null 조건부로 묶으므로 중간에 끊겨 다시 돌려도 같은 건이 두 번 묶이지 않는다.
+ */
+export async function issueReceiptsBulk(
+  merchantId: string,
+  taxYear: number,
+  issuedBy: string,
+  opts: { deadline?: Date; skipPayers?: ReadonlySet<string>; now?: () => Date } = {},
+) {
+  const all = await receiptCandidates(merchantId, taxYear);
+  const candidates = opts.skipPayers ? all.filter((c) => !opts.skipPayers!.has(c.payerId)) : all;
+  const clock = opts.now ?? (() => new Date());
+  const result = {
+    issued: 0, skipped: 0, failed: 0, remaining: 0,
+    details: [] as Array<{ payerId: string; status: 'ISSUED' | 'SKIPPED' | 'FAILED'; reason?: string; receiptNo?: string }>,
+  };
+  for (const [i, c] of candidates.entries()) {
+    if (opts.deadline && clock() >= opts.deadline) {
+      result.remaining = candidates.length - i;
+      break;
+    }
     if (c.withdrawn) {
       result.skipped += 1;
       result.details.push({ payerId: c.payerId, status: 'SKIPPED', reason: '발급 불가(탈퇴)' });

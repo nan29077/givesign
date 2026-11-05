@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { registerConsumer, type StoredDomainEvent } from '../events';
 import { registerApprovalHandler, requestApproval, cancelApproval, ApprovalError, type ApprovalRow } from '../approvals';
 import { JOURNEYS, journeyDef, defaultParams } from './definitions';
+import { PAID_STATUSES } from '@/components/studio/shared';
 import type { JourneyContext, JourneyDef, ParamValue, StepDef, StepEnv, StepOutcome } from './types';
 
 /**
@@ -125,7 +126,7 @@ export async function startJourneysForEvent(ev: StoredDomainEvent): Promise<stri
   for (const def of defs) {
     const setting = await journeySetting(ev.merchantId, def.key);
     if (!setting?.enabled) continue;
-    if (def.accept && !def.accept(ev)) continue;
+    if (def.accept && !def.accept(ev, setting.params)) continue;
     const triggerKey = `${def.key}:${ev.id}`;
     const r = await prisma.journeyRun.createMany({
       data: [
@@ -188,12 +189,59 @@ async function sendGuard(run: RunRow, now: Date): Promise<StepOutcome | null> {
   if (!payer || payer.onboardingStatus === 'WITHDRAWN') return { type: 'stop', detail: '탈퇴한 후원자' };
   if (blocked || link?.payerBlockedAt) return { type: 'stop', detail: '차단 관계' };
   if (link?.noticeOptOutAt) return { type: 'stop', detail: '후원자가 이 기관 안내 수신을 끔' };
+  // 결제에서 시작한 실행: 보내기 직전 결제가 아직 성공 상태인지 본다(승인 대기·야간 보류 중 환불 — 점검 A-M3).
+  const ctx = (run.context ?? {}) as JourneyContext;
+  if (ctx.chargeId) {
+    const c = await prisma.charge.findUnique({ where: { id: ctx.chargeId }, select: { status: true } });
+    if (!c || !(PAID_STATUSES as readonly string[]).includes(c.status)) return { type: 'stop', detail: '환불·취소된 후원' };
+  }
   if (isQuietHour(now)) return { type: 'retry', until: nextMorning(now), detail: '야간 발송 보류' };
   const sent = await prisma.journeyStepLog.count({
     where: { merchantId: run.merchantId, payerId: run.payerId, sent: true, at: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
   });
   if (sent >= JOURNEY_WEEKLY_SEND_CAP) return { type: 'retry', until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
   return null;
+}
+
+/** 발송 단계 중복 키. 같은 실행의 같은 단계는 한 번만 보낸다(겹친 실행·재시작 — 점검 A-3). */
+export function journeySendKey(runId: string, stepKey: string) {
+  return `journey:${runId}:${stepKey}`;
+}
+
+type Reservation = { type: 'reserved'; id: string } | { type: 'already' } | StepOutcome;
+
+/**
+ * 발송 예약. 후원자 단위 잠금 아래에서 7일 상한을 다시 세고, 통과하면 발송 중복 키로 SENDING 행(sent=true)을 만든다.
+ *  - 같은 키가 이미 있으면 앞선 실행이 보냈거나 보내는 중이다 → 다시 보내지 않는다.
+ *  - 예약 행이 상한 계산에 바로 들어가므로 동시에 도는 다른 실행이 상한을 넘기지 못한다(점검 A 낮음).
+ *  - 상한 기준은 지금처럼 (기관, 후원자)다. 전체 기준으로 바꿀지는 운영 결정 사항이다(보고서 '코드 밖 확인').
+ */
+async function reserveSend(run: RunRow, step: StepDef, now: Date): Promise<Reservation> {
+  const key = journeySendKey(run.id, step.key);
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journey-send:${run.merchantId}:${run.payerId ?? '-'}`}))`;
+      const existing = await tx.journeyStepLog.findUnique({ where: { dedupeKey: key }, select: { id: true } });
+      if (existing) return { type: 'already' as const };
+      const sent = await tx.journeyStepLog.count({
+        where: { merchantId: run.merchantId, payerId: run.payerId, sent: true, at: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
+      });
+      if (sent >= JOURNEY_WEEKLY_SEND_CAP) {
+        return { type: 'retry' as const, until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
+      }
+      const row = await tx.journeyStepLog.create({
+        data: {
+          id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step.key, outcome: 'SENDING', sent: true, dedupeKey: key,
+          merchantId: run.merchantId, payerId: run.payerId,
+        },
+        select: { id: true },
+      });
+      return { type: 'reserved' as const, id: row.id };
+    });
+  } catch (e) {
+    if ((e as { code?: string })?.code === 'P2002') return { type: 'already' };
+    throw e;
+  }
 }
 
 async function log(run: RunRow, stepIndex: number, step: StepDef | null, outcome: string, detail?: string, sent = false) {
@@ -208,7 +256,9 @@ async function log(run: RunRow, stepIndex: number, step: StepDef | null, outcome
 /** 한 실행을 가능한 데까지 진행한다. 다른 실행이 잡고 있으면 아무것도 하지 않는다. */
 export async function advanceRun(runId: string, now = new Date()): Promise<{ status: string } | null> {
   const owner = `${now.getTime()}:${generateToken(6)}`;
-  const leaseCut = new Date(now.getTime() - JOURNEY_LEASE_MS);
+  // 선점 시각은 잡는 순간의 시각이다(호출한 배치의 시작 시각이 아니다 — 점검 A-3). now 는 단계 판단(야간·기한)에만 쓴다.
+  const claimAt = new Date(Math.max(Date.now(), now.getTime()));
+  const leaseCut = new Date(claimAt.getTime() - JOURNEY_LEASE_MS);
   const claim = await prisma.journeyRun.updateMany({
     where: {
       id: runId,
@@ -218,7 +268,7 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
         { status: 'RUNNING', lockedAt: { lt: leaseCut } },
       ],
     },
-    data: { status: 'RUNNING', lockedAt: now, lockedBy: owner },
+    data: { status: 'RUNNING', lockedAt: claimAt, lockedBy: owner },
   });
   if (claim.count === 0) return null;
 
@@ -243,12 +293,13 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
     if (!step) return finish('DONE', { finishedAt: now });
     const ctx = (run.context ?? {}) as JourneyContext;
     const env: StepEnv = {
-      run: { id: run.id, merchantId: run.merchantId, payerId: run.payerId, journeyKey: run.journeyKey, triggerKey: run.triggerKey, startedAt: run.startedAt, context: ctx },
+      run: { id: run.id, merchantId: run.merchantId, payerId: run.payerId, journeyKey: run.journeyKey, triggerKey: run.triggerKey, startedAt: run.startedAt, context: ctx, subjectType: run.subjectType },
       params: setting.params,
       merchant,
       now,
     };
     let outcome: StepOutcome;
+    let reservedId: string | null = null;
     try {
       // 1) 반려된 단계는 건너뛴다
       if (ctx.rejected?.[step.key]) outcome = { type: 'skip', detail: '담당자가 반려함' };
@@ -276,6 +327,33 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
             });
             await log(run, idx, step, 'AWAITING_APPROVAL', '승인 대기함에 올림');
             return finish('AWAITING_APPROVAL');
+          } else if (step.sends) {
+            // 발송 예약(중복 키 + 상한) 뒤에 보낸다.
+            const r = await reserveSend(run, step, now);
+            if (r.type === 'already') {
+              // 문자 단계: 앞선 실행이 이미 보냈다(또는 보내다 멈췄다 — 두 번 보내는 것보다 안전하다).
+              // 문서 단계: 발급 자체가 dedupeKey 로 한 번이라 다시 불러 결과만 맞춘다.
+              outcome = step.kind === 'document' ? await step.run(env) : { type: 'skip', detail: '이미 보낸 단계' };
+              if (outcome.type === 'done') outcome = { ...outcome, sent: false };
+            } else if (r.type !== 'reserved') outcome = r;
+            else {
+              reservedId = r.id;
+              try {
+                outcome = await step.run(env);
+              } catch (e) {
+                // 보냈는지 모르는 예외 — 예약을 남겨 두어 다시 보내지 않는다(월간 안내와 같은 기준).
+                await prisma.journeyStepLog.update({ where: { id: r.id }, data: { outcome: 'FAILED', detail: (e as Error).message.slice(0, 300) } }).catch(() => undefined);
+                reservedId = null;
+                throw e;
+              }
+              if (outcome.type === 'done' && outcome.sent !== false) {
+                await prisma.journeyStepLog.update({ where: { id: r.id }, data: { outcome: 'DONE', detail: outcome.detail?.slice(0, 300) ?? null } });
+              } else {
+                // 보내지 않았다(실패·건너뜀·이미 보낸 문서) → 예약을 지워 상한·중복 키에서 뺀다.
+                await prisma.journeyStepLog.delete({ where: { id: r.id } }).catch(() => undefined);
+                reservedId = null;
+              }
+            }
           } else outcome = await step.run(env);
         }
       }
@@ -291,8 +369,13 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
     switch (outcome.type) {
       case 'done':
       case 'skip': {
-        await log(run, idx, step, outcome.type === 'done' ? 'DONE' : 'SKIPPED', outcome.detail, outcome.type === 'done' && Boolean(outcome.sent));
-        run = await prisma.journeyRun.update({ where: { id: runId }, data: { stepIndex: idx + 1, attempts: 0, lastError: null } });
+        // 예약 행이 이미 DONE·sent 로 남았으면 다시 쓰지 않는다(상한에 두 번 세지 않게).
+        if (!reservedId) await log(run, idx, step, outcome.type === 'done' ? 'DONE' : 'SKIPPED', outcome.detail, outcome.type === 'done' && Boolean(outcome.sent));
+        // 보류 횟수는 단계마다 센다 — 다음 단계로 넘어가면 0 부터(점검 A 낮음).
+        run = await prisma.journeyRun.update({
+          where: { id: runId },
+          data: { stepIndex: idx + 1, attempts: 0, lastError: null, ...(ctx.deferrals ? { context: { ...ctx, deferrals: 0 } as Prisma.InputJsonValue } : {}) },
+        });
         continue;
       }
       case 'stop': {
@@ -301,11 +384,12 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
       }
       case 'wait': {
         await log(run, idx, step, 'WAIT', outcome.detail);
+        const resetCtx = ctx.deferrals ? { context: { ...ctx, deferrals: 0 } as Prisma.InputJsonValue } : {};
         if (outcome.until <= now) {
-          run = await prisma.journeyRun.update({ where: { id: runId }, data: { stepIndex: idx + 1 } });
+          run = await prisma.journeyRun.update({ where: { id: runId }, data: { stepIndex: idx + 1, ...resetCtx } });
           continue;
         }
-        return finish('WAITING', { stepIndex: idx + 1, dueAt: outcome.until });
+        return finish('WAITING', { stepIndex: idx + 1, dueAt: outcome.until, ...resetCtx });
       }
       case 'retry': {
         const deferrals = (ctx.deferrals ?? 0) + 1;
@@ -323,8 +407,14 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
 }
 
 /** 기한이 된 실행을 진행한다(/api/cron/events). */
-export async function advanceDueJourneyRuns(opts: { limit?: number; now?: Date } = {}) {
-  const now = opts.now ?? new Date();
+/** 한 번의 advanceDueJourneyRuns 가 실행을 잡는 시간 상한(선점 유지 시간보다 짧다 — 점검 A-3). */
+export const JOURNEY_BATCH_BUDGET_MS = 90_000;
+
+export async function advanceDueJourneyRuns(opts: { limit?: number; now?: Date; budgetMs?: number } = {}) {
+  const startedReal = Date.now();
+  const base = opts.now ?? new Date();
+  const budget = opts.budgetMs ?? JOURNEY_BATCH_BUDGET_MS;
+  const now = base;
   const leaseCut = new Date(now.getTime() - JOURNEY_LEASE_MS);
   const due = await prisma.journeyRun.findMany({
     where: {
@@ -340,7 +430,10 @@ export async function advanceDueJourneyRuns(opts: { limit?: number; now?: Date }
   });
   const result = { picked: due.length, done: 0, waiting: 0, approval: 0, stopped: 0, failed: 0 };
   for (const r of due) {
-    const out = await advanceRun(r.id, now).catch((e) => {
+    if (Date.now() - startedReal >= budget) break;
+    // 단계 판단 시각도 실제 흐른 만큼 앞으로 간다(야간 경계·기한 판단이 배치 시작 시각에 묶이지 않게).
+    const at = new Date(base.getTime() + (Date.now() - startedReal));
+    const out = await advanceRun(r.id, at).catch((e) => {
       logger.error('저니 실행 진행 실패', { runId: r.id, message: (e as Error).message });
       return null;
     });
@@ -363,8 +456,13 @@ async function onDecision(req: ApprovalRow, decision: 'APPROVE' | 'REJECT') {
   const stepKey = String(req.payload.stepKey ?? '');
   const run = await prisma.journeyRun.findFirst({ where: { id: runId, merchantId: req.merchantId } });
   if (!run) throw new ApprovalError('자동 안내 실행을 찾을 수 없습니다.');
-  if (run.status !== 'AWAITING_APPROVAL') throw new ApprovalError('이미 처리되었거나 취소된 안내입니다.');
   const ctx = (run.context ?? {}) as JourneyContext;
+  if (run.status !== 'AWAITING_APPROVAL') {
+    // 같은 결정이 이미 반영됐으면(앞선 처리가 끝났는데 승인 요청 기록만 실패해 되돌아온 경우) 성공으로 본다.
+    const already = decision === 'APPROVE' ? ctx.approved?.[stepKey] : ctx.rejected?.[stepKey];
+    if (already) return decision === 'APPROVE' ? '이미 승인해 진행 중인 안내입니다.' : undefined;
+    throw new ApprovalError('이미 처리되었거나 취소된 안내입니다.');
+  }
   const next: JourneyContext =
     decision === 'APPROVE'
       ? { ...ctx, approved: { ...(ctx.approved ?? {}), [stepKey]: true } }
@@ -390,6 +488,31 @@ async function onDecision(req: ApprovalRow, decision: 'APPROVE' | 'REJECT') {
   if (last?.outcome === 'DONE') return `승인하고 보냈습니다. (${last.detail ?? ''})`;
   if (last?.outcome === 'BLOCKED') return `승인했습니다. ${last.detail ?? '보류'} — 가능해지면 보냅니다.`;
   return `승인했습니다. ${last?.detail ?? ''}`.trim();
+}
+
+/**
+ * 결제가 환불되면 그 결제에서 시작한 진행 중 실행(대기·승인 대기)을 멈춘다(점검 A-M3).
+ * 발송 직전 재확인(sendGuard)과 겹치는 이중 보호다. charge.refunded 소비자('journey-refund')가 부른다.
+ */
+export async function cancelRunsForRefundedCharge(ev: StoredDomainEvent) {
+  if (ev.subjectType !== 'charge') return 'SKIPPED' as const;
+  const runs = await prisma.journeyRun.findMany({
+    where: { merchantId: ev.merchantId, subjectType: 'charge', subjectId: ev.subjectId, status: { in: ['WAITING', 'AWAITING_APPROVAL'] } },
+    select: { id: true, journeyKey: true, stepIndex: true, payerId: true },
+  });
+  if (runs.length === 0) return 'SKIPPED' as const;
+  for (const run of runs) {
+    const r = await prisma.journeyRun.updateMany({
+      where: { id: run.id, status: { in: ['WAITING', 'AWAITING_APPROVAL'] } },
+      data: { status: 'CANCELED', finishedAt: new Date(), lockedAt: null, lockedBy: null, lastError: '후원 환불' },
+    });
+    if (r.count === 0) continue;
+    const step = journeyDef(run.journeyKey)?.steps[run.stepIndex];
+    if (step) await cancelApproval(`journey:${run.id}:${step.key}`, '후원 환불로 취소');
+    await prisma.journeyStepLog.create({
+      data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: '후원이 환불되어 멈춤', merchantId: ev.merchantId, payerId: run.payerId },
+    });
+  }
 }
 
 /** 실행 취소(담당자): 대기·승인 대기 중인 실행을 멈춘다. */
@@ -424,6 +547,7 @@ export function registerJourneyEngine() {
       }
     },
   });
+  registerConsumer({ name: 'journey-refund', types: ['charge.refunded'], handle: cancelRunsForRefundedCharge });
   registerApprovalHandler('JOURNEY_STEP', {
     onApprove: (req) => onDecision(req, 'APPROVE'),
     onReject: async (req) => {

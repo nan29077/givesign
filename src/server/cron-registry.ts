@@ -32,8 +32,9 @@ export const CRON_JOBS: CronDef[] = [
   },
   {
     name: 'events', path: '/api/cron/events', schedule: '1분마다', eventBridge: 'rate(1 minute)',
-    intervalSec: 60, lockTtlSec: 240,
-    description: '도메인 이벤트 처리 — 기관 알림·명단 연결·목표 달성·저니 단계 실행',
+    // 잠금 TTL = 이벤트·저니 선점 유지(5분). 단계별 시간 상한(이벤트 60초 + 저니 90초 + 승인 실행 60초) 합이 이보다 짧다(점검 A-3).
+    intervalSec: 60, lockTtlSec: 300,
+    description: '도메인 이벤트 처리 — 기관 알림·명단 연결·목표 달성·저니 단계 실행, 승인된 일괄 발급 실행·멈춘 승인 복구',
   },
   {
     name: 'webhooks', path: '/api/cron/webhooks', schedule: '1분마다', eventBridge: 'rate(1 minute)',
@@ -63,7 +64,7 @@ export const CRON_JOBS: CronDef[] = [
   {
     name: 'edoc', path: '/api/cron/edoc', schedule: '매일 03:00', eventBridge: 'cron(0 18 * * ? *)',
     intervalSec: 86_400, lockTtlSec: 600,
-    description: '전자문서 정액 만료·서명 요청 만료·미사용 글꼴 정리',
+    description: '전자문서 정액 만료·서명 요청 만료·끝난 봉투 결과 대사·미사용 글꼴 정리',
   },
   {
     name: 'monthly-notice', path: '/api/cron/monthly-notice', schedule: '매월 1일 10:00', eventBridge: 'cron(0 1 1 * ? *)',

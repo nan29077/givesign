@@ -18,6 +18,7 @@ import {
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import { purposeStatus } from '@/server/services/purpose-templates';
+import { MANUAL_ONLY_PURPOSES } from '@/server/services/purpose-documents';
 
 export const dynamic = 'force-dynamic';
 
@@ -164,7 +165,10 @@ export default async function StudioDocumentsPage({
               {purposes.map((p) => (
                 <tr key={p.purpose}>
                   <Td className="text-[12.5px] font-bold text-ink-800">{p.label}</Td>
-                  <Td className="text-[12px] text-ink-500">{p.signature ? '전자서명 요청(이용요금 1건)' : '열람 링크 문자'}</Td>
+                  <Td className="text-[12px] text-ink-500">
+                    {p.signature ? '전자서명 요청(이용요금 1건)' : '열람 링크 문자'}
+                    {MANUAL_ONLY_PURPOSES.includes(p.purpose) ? <span className="block text-ink-400">자동 발송 없음 — 전자문서 센터에서 직접 보냅니다</span> : null}
+                  </Td>
                   <Td>
                     {p.template ? (
                       <Link href={`/studio/documents/${p.template.id}`} className="text-[12.5px] font-bold text-brand-700 hover:underline">

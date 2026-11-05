@@ -27,7 +27,7 @@ import { newId } from '@/lib/id';
 import { readMockOutbox } from '@/server/adapters/mt';
 import { processDomainEvents, emitDomainEvent } from '@/server/services/events';
 import { registerDefaultConsumers } from '@/server/services/event-consumers';
-import { decideApproval } from '@/server/services/approvals';
+import { decideApproval, runQueuedApprovals } from '@/server/services/approvals';
 import { upsertReceiptProfile } from '@/server/services/receipts';
 import { runAnnualReceiptPrep } from '@/server/services/receipt-batch';
 import {
@@ -285,7 +285,9 @@ describe('[3] 정기후원·봉사·연말 저니', () => {
   it('영수증 발급 → 연말 감사장은 한 사람에게 한 해 한 번', async () => {
     const payer = await ensurePayer();
     for (const id of ['RC1', 'RC2']) {
-      await emitDomainEvent({ merchantId: fx.merchantId, type: 'receipt.issued', subjectType: 'donation_receipt', subjectId: id, payerId: payer.id, payload: { taxYear: 2026, totalAmount: 50000n, chargeCount: 2 } });
+      // 지난해 귀속(끝난 해)만 연말 감사장 대상이다(2026-11-06 점검 A-4).
+      const lastYear = Number(new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 4)) - 1;
+      await emitDomainEvent({ merchantId: fx.merchantId, type: 'receipt.issued', subjectType: 'donation_receipt', subjectId: id, payerId: payer.id, payload: { taxYear: lastYear, totalAmount: 50000n, chargeCount: 2, receiptCycle: 'YEARLY' } });
     }
     await processDomainEvents();
     expect(issued.filter((i) => i.purpose === 'YEAR_END_THANKS')).toHaveLength(1);
@@ -315,8 +317,14 @@ describe('[4] 연간 영수증 준비(승인 후 발급)', () => {
     const req = await prisma.approvalRequest.findFirstOrThrow({ where: { kind: 'RECEIPT_BATCH' } });
     expect(req.title).toContain(`${year}년 기부금영수증 1건`);
     const out = await decideApproval({ merchantId: fx.merchantId, id: req.id, decision: 'APPROVE', userId: fx.merchantUserId });
-    expect(out.ok && out.message).toContain('1건 발급');
+    // 승인은 기록만 하고(QUEUED) 배치가 발급한다(2026-11-06 점검 A-1).
+    expect(out.ok && out.message).toContain('차례로 발급');
+    expect(await prisma.donationReceipt.count({ where: { merchantId: fx.merchantId, taxYear: year } })).toBe(0);
+    await runQueuedApprovals();
     expect(await prisma.donationReceipt.count({ where: { merchantId: fx.merchantId, taxYear: year } })).toBe(1);
+    const after = await prisma.approvalRequest.findUniqueOrThrow({ where: { id: req.id } });
+    expect(after.status).toBe('APPROVED');
+    expect(after.result).toContain('1건 발급');
   });
 
   it('1~2월이 아니면 아무것도 하지 않는다', async () => {

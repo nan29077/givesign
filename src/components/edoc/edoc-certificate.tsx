@@ -11,6 +11,8 @@ export interface CertificateData {
   title: string;
   envelopeId: string;
   snapshot: EDocSnapshot;
+  /** 서식 PDF 를 여는 주소(비공개 PDF 는 권한 경로 — snapshotPdfHref). 없으면 스냅샷 pdfUrl */
+  pdfHref?: string | null;
   values: Record<string, string>;
   status: string;
   sentAt: Date;
@@ -36,16 +38,16 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
 
       {d.snapshot.body ? <div className="mt-5 whitespace-pre-wrap text-[13.5px] leading-[1.85] text-ink-800">{d.snapshot.body}</div> : null}
 
-      {d.snapshot.pdfUrl ? (
+      {(d.pdfHref ?? d.snapshot.pdfUrl) ? (
         <section className="mt-5 rounded-xl border border-ink-200 p-3 text-[13px]">
           <p className="flex items-center gap-1.5 font-bold text-ink-700"><FileText size={16} strokeWidth={1.7} /> 서명한 서식 파일 · {d.snapshot.fileName ?? d.snapshot.name}</p>
           <p className="mt-1 text-[12px] leading-relaxed text-ink-500">
-            보낼 때 고정한 서식 PDF 입니다.{' '}
-            <a href={`${d.snapshot.pdfUrl}?name=${encodeURIComponent(`${d.snapshot.name}.pdf`)}`} className="font-bold text-brand-700 underline print:no-underline">
+            보낼 때 고정한 서식 PDF 입니다{d.snapshot.pdfHash ? <> (SHA-256 <span className="font-mono">{d.snapshot.pdfHash.slice(0, 16)}…</span>)</> : null}.{' '}
+            <a href={d.snapshot.pdfObject ? d.pdfHref! : `${d.pdfHref ?? d.snapshot.pdfUrl}?name=${encodeURIComponent(`${d.snapshot.name}.pdf`)}`} className="font-bold text-brand-700 underline print:no-underline">
               서식 PDF 내려받기
             </a>
           </p>
-          <p className="mt-0.5 hidden break-all font-mono text-[10.5px] text-ink-400 print:block">{d.snapshot.pdfUrl}</p>
+          {!d.snapshot.pdfObject ? <p className="mt-0.5 hidden break-all font-mono text-[10.5px] text-ink-400 print:block">{d.snapshot.pdfUrl}</p> : null}
         </section>
       ) : null}
 

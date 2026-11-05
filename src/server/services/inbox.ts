@@ -3,7 +3,7 @@ import { prisma } from '@/server/db';
 import { env, featureContentEnabled, featureVolunteerEnabled } from '@/lib/env';
 import { doneeVerified, issuerReadiness } from './receipts';
 import { walletOverview } from './edoc-billing';
-import { APPROVAL_KIND_LABEL, type ApprovalKind } from './approvals';
+import { APPROVAL_KIND_LABEL, APPROVAL_STALE_PROCESSING_MS, type ApprovalKind } from './approvals';
 import { getStudioPendingCounts } from './studio-pending';
 
 /**
@@ -27,15 +27,23 @@ export interface InboxItem {
   href: string;
   /** 대기함 안에서 바로 승인·반려할 수 있는 승인 요청 id */
   approvalId?: string;
+  /** 실행에 실패해 다시 실행할 수 있는 승인 요청 id */
+  retryApprovalId?: string;
   error?: string | null;
 }
 
 export async function inboxItems(merchantId: string) {
-  const [approvals, contents, volunteers, documents, reports, envelopes, refunds, failedRuns, failedPublishes] = await Promise.all([
+  const [approvals, inFlight, contents, volunteers, documents, reports, envelopes, refunds, failedRuns, failedPublishes] = await Promise.all([
     prisma.approvalRequest.findMany({
       where: { merchantId, status: 'PENDING', OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
       orderBy: { createdAt: 'asc' },
       take: 200,
+    }),
+    // 승인 뒤 처리 중·실행 대기·실행 실패(점검 A-1: 대기함에서 사라지지 않게)
+    prisma.approvalRequest.findMany({
+      where: { merchantId, status: { in: ['PROCESSING', 'QUEUED', 'FAILED'] } },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
     }),
     featureContentEnabled()
       ? prisma.contentItem.findMany({ where: { merchantId, status: 'REVIEW' }, orderBy: { createdAt: 'asc' }, take: 50, select: { id: true, title: true, kind: true, createdAt: true, error: true } })
@@ -75,7 +83,26 @@ export async function inboxItems(merchantId: string) {
     ...reports.map((r) => ({ key: `report:${r.id}`, kind: 'REPORT', kindLabel: '신고', title: '처리할 신고', at: r.createdAt, href: '/studio/reports' })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
 
+  const stale = Date.now() - APPROVAL_STALE_PROCESSING_MS;
+  const approvalHref = (kind: string) => (kind === 'RECEIPT_BATCH' ? '/studio/receipts' : '/studio/journeys');
   const waiting: InboxItem[] = [
+    ...inFlight
+      .filter((a) => a.status !== 'FAILED')
+      .map((a) => ({
+        key: `approval-run:${a.id}`,
+        kind: a.kind,
+        kindLabel:
+          a.status === 'QUEUED'
+            ? `${APPROVAL_KIND_LABEL[a.kind as ApprovalKind] ?? '승인 요청'} · 승인됨(처리 중)`
+            : a.updatedAt.getTime() < stale
+              ? `${APPROVAL_KIND_LABEL[a.kind as ApprovalKind] ?? '승인 요청'} · 처리 멈춤(곧 승인 대기로 되돌림)`
+              : `${APPROVAL_KIND_LABEL[a.kind as ApprovalKind] ?? '승인 요청'} · 처리 중`,
+        title: a.title,
+        summary: a.result ?? a.summary,
+        at: a.updatedAt,
+        href: approvalHref(a.kind),
+        error: a.error,
+      })),
     ...envelopes.map((e) => ({
       key: `edoc:${e.id}`, kind: 'EDOC_SIGNING', kindLabel: '서명 대기(후원자 차례)', title: e.title, summary: e.expiresAt ? `기한 ${e.expiresAt.toISOString().slice(0, 10)}` : null, at: e.createdAt, href: `/studio/e-documents/${e.id}`,
     })),
@@ -85,6 +112,19 @@ export async function inboxItems(merchantId: string) {
   ];
 
   const blocked: InboxItem[] = [
+    ...inFlight
+      .filter((a) => a.status === 'FAILED')
+      .map((a) => ({
+        key: `approval-failed:${a.id}`,
+        kind: 'APPROVAL_FAILED',
+        kindLabel: `${APPROVAL_KIND_LABEL[a.kind as ApprovalKind] ?? '승인 요청'} · 실행 실패`,
+        title: a.title,
+        summary: a.result,
+        at: a.updatedAt,
+        href: approvalHref(a.kind),
+        retryApprovalId: a.id,
+        error: a.error,
+      })),
     ...failedRuns.map((r) => ({ key: `run:${r.id}`, kind: 'JOURNEY_FAILED', kindLabel: '자동 안내 실패', title: r.journeyKey, summary: r.lastError, at: r.finishedAt ?? new Date(), href: '/studio/journeys' })),
     ...failedPublishes.map((p) => ({ key: `publish:${p.id}`, kind: 'PUBLISH_FAILED', kindLabel: 'SNS 게시 실패', title: `${p.item.title} · ${p.platform}`, summary: p.error, at: p.updatedAt, href: `/studio/content/${p.itemId}` })),
   ];

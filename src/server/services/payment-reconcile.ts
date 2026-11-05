@@ -8,6 +8,7 @@ import { rollbackCounters } from './limits';
 import { restoreStock } from './charge-flow';
 import { sendMtForPayer, setStatus } from './charge-flow';
 import * as tpl from './mt-templates';
+import { emitChargePaid } from './charge-events';
 
 /**
  * 결과 미확인(UNKNOWN / TIMEOUT) 결제의 수동 대사.
@@ -77,6 +78,11 @@ export async function reconcileUnknownPayment(
       productId: true,
       quantity: true,
       channel: true,
+      campaignId: true,
+      source: true,
+      contentItemId: true,
+      isTest: true,
+      paymentMode: true,
       merchant: { select: { displayName: true, thanksMtMessage: true } },
     },
   });
@@ -108,6 +114,11 @@ type ChargeRow = {
   productId: string | null;
   quantity: number;
   channel: string;
+  campaignId: string | null;
+  source: string | null;
+  contentItemId: string | null;
+  isTest: boolean;
+  paymentMode: string;
   merchant: { displayName: string; thanksMtMessage: string | null };
 };
 
@@ -204,6 +215,9 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
       },
       tx,
     );
+    // 후속 자동화(기관 알림·명단 연결·목표 달성·저니)의 출발점 — 정상 결제 경로와 같은 payload·같은 트랜잭션(점검 A-2).
+    // dedupe 키가 결제 건 기준이라 정상 경로가 이미 남겼어도 한 건이다.
+    await emitChargePaid(tx, charge, approvedAt, { reconciled: true });
   });
 
   // 한도 집계는 결제 판정 시점에 이미 예약(반영)되어 있으므로 다시 더하지 않는다.

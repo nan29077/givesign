@@ -7,7 +7,7 @@ import { ActionForm } from '@/components/studio/action-form';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import { automationReadiness, inboxItems, type InboxItem } from '@/server/services/inbox';
-import { decideApprovalAction } from '@/app/actions/journeys';
+import { decideApprovalAction, retryApprovalAction } from '@/app/actions/journeys';
 
 export const dynamic = 'force-dynamic';
 
@@ -114,6 +114,11 @@ function Section({ title, items, empty, muted }: { title: string; items: InboxIt
                       <Input name="note" placeholder="반려 사유(선택)" aria-label="반려 사유" className="h-9 w-40" />
                     </ActionForm>
                   </>
+                ) : null}
+                {it.retryApprovalId ? (
+                  <ActionForm action={retryApprovalAction} submitLabel="다시 실행" size="sm" confirmMessage="실패한 부분부터 다시 실행합니다. 이미 발급된 건은 다시 발급하지 않습니다.">
+                    <input type="hidden" name="id" value={it.retryApprovalId} />
+                  </ActionForm>
                 ) : null}
                 <Link href={it.href} className="text-[12.5px] font-semibold text-brand-700 hover:underline">열기</Link>
               </div>

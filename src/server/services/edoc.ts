@@ -119,7 +119,41 @@ export interface EDocSnapshot {
    */
   pdfUrl?: string | null;
   pdfHash?: string | null;
+  /**
+   * 머지 필드를 채운(이름 등 개인정보가 든) PDF 는 공개 주소가 아니라 비공개 저장소 객체로 둔다(점검 A-M2).
+   * 서명 화면은 `/sign/[토큰]/pdf`(본인확인 쿠키), 기관 콘솔은 `/studio/e-documents/[id]/pdf` 로만 읽는다.
+   * 있으면 pdfUrl 은 null 이다.
+   */
+  pdfObject?: string | null;
   requireSignature: boolean;
+}
+
+/** 화면에서 스냅샷 PDF 를 여는 주소. 비공개 객체면 권한 경로, 아니면(서식 원본 PDF) 공개 주소. */
+export function snapshotPdfHref(snapshot: EDocSnapshot, via: { signerToken?: string; envelopeId?: string }): string | null {
+  if (snapshot.pdfObject) {
+    if (via.signerToken) return `/sign/${via.signerToken}/pdf`;
+    if (via.envelopeId) return `/studio/e-documents/${via.envelopeId}/pdf`;
+    return null;
+  }
+  return snapshot.pdfUrl ?? null;
+}
+
+/** 스냅샷 PDF 바이트(비공개 객체 또는 공개 주소). 해시가 맞지 않으면 null. */
+export async function readSnapshotPdfBytes(snapshot: EDocSnapshot): Promise<Buffer | null> {
+  let bytes: Uint8Array | null = null;
+  if (snapshot.pdfObject) {
+    const { getPrivateObject } = await import('@/server/uploads');
+    bytes = await getPrivateObject(snapshot.pdfObject);
+  } else if (snapshot.pdfUrl) {
+    const { readMediaPdf } = await import('@/server/services/pdf-form');
+    bytes = await readMediaPdf(snapshot.pdfUrl).catch(() => null);
+  }
+  if (!bytes) return null;
+  if (snapshot.pdfHash && createHash('sha256').update(bytes).digest('hex') !== snapshot.pdfHash) {
+    logger.error('전자문서 스냅샷 PDF 해시 불일치', { object: snapshot.pdfObject ?? null });
+    return null;
+  }
+  return Buffer.from(bytes);
 }
 
 /**
@@ -127,9 +161,15 @@ export interface EDocSnapshot {
  * 파일 서식이 아니거나 해시가 없는 이전 봉투면 null.
  */
 export async function checkSnapshotPdf(snapshot: EDocSnapshot): Promise<'ok' | 'mismatch' | 'missing' | null> {
-  if (!snapshot.pdfUrl || !snapshot.pdfHash) return null;
-  const { readMediaPdf } = await import('@/server/services/pdf-form');
-  const bytes = await readMediaPdf(snapshot.pdfUrl).catch(() => null);
+  if ((!snapshot.pdfUrl && !snapshot.pdfObject) || !snapshot.pdfHash) return null;
+  let bytes: Uint8Array | null;
+  if (snapshot.pdfObject) {
+    const { getPrivateObject } = await import('@/server/uploads');
+    bytes = await getPrivateObject(snapshot.pdfObject).catch(() => null);
+  } else {
+    const { readMediaPdf } = await import('@/server/services/pdf-form');
+    bytes = await readMediaPdf(snapshot.pdfUrl).catch(() => null);
+  }
   if (!bytes) return 'missing';
   return createHash('sha256').update(bytes).digest('hex') === snapshot.pdfHash ? 'ok' : 'mismatch';
 }
@@ -329,7 +369,7 @@ export interface CreateEnvelopeInput {
    */
   merge?: MergeValues;
   /** 이미 렌더한 본문·PDF 로 스냅샷을 만든다(issuePurposeDocument). 주면 merge 보다 우선한다. */
-  override?: { body?: string | null; pdfUrl?: string | null; pdfHash?: string | null };
+  override?: { body?: string | null; pdfUrl?: string | null; pdfHash?: string | null; pdfObject?: string | null };
   /** true 면 봉투만 만들고 서명 링크 문자는 보내지 않는다(기관이 재안내로 보낸다). */
   deferSend?: boolean;
 }
@@ -386,9 +426,16 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
   let body = template.body;
   let pdfUrl = template.templateType === 'FILE' ? (template.renderedPdfUrl ?? template.basePdfUrl) : null;
   let pdfHash = template.templateType === 'FILE' ? (template.renderedPdfUrl ? template.renderedPdfHash : template.basePdfHash) : null;
+  let pdfObject: string | null = null;
+  // 머지 PDF 를 여기서 새로 만들었으면 봉투가 만들어지지 않을 때 지운다(고아 파일 방지 — 점검 A-M2).
+  let createdObject: string | null = null;
   if (input.override) {
     if (input.override.body !== undefined) body = input.override.body;
-    if (input.override.pdfUrl !== undefined) {
+    if (input.override.pdfObject) {
+      pdfObject = input.override.pdfObject;
+      pdfUrl = null;
+      pdfHash = input.override.pdfHash ?? null;
+    } else if (input.override.pdfUrl !== undefined) {
       pdfUrl = input.override.pdfUrl;
       pdfHash = input.override.pdfHash ?? null;
     }
@@ -404,9 +451,13 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
       };
       if (needBody) body = renderMergeText(body, values).text;
       if (needPdf) {
-        const merged = await renderMergedTemplatePdf(input.merchantId, template, values, 'public');
+        // 서명자 이름 등이 든 PDF 는 비공개 저장소에 둔다(공개 주소·1년 캐시 금지 — 점검 A-M2). 잔액은 아래 차감에서 다시 본다.
+        await assertSendable(input.merchantId);
+        const merged = await renderMergedTemplatePdf(input.merchantId, template, values, 'private');
         if (!merged.ok) throw new EDocError(merged.message);
-        pdfUrl = merged.pdf.url;
+        pdfObject = merged.pdf.objectName;
+        if (merged.pdf.created) createdObject = merged.pdf.objectName;
+        pdfUrl = null;
         pdfHash = merged.pdf.hash;
       }
     }
@@ -422,6 +473,7 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
     fileName: template.fileName,
     pdfUrl,
     pdfHash,
+    ...(pdfObject ? { pdfObject } : {}),
     requireSignature: true,
   };
   const snapshotJson = JSON.stringify(snapshot);
@@ -480,6 +532,7 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
       return debit;
     });
   } catch (e) {
+    if (createdObject) await discardPrivateObject(createdObject);
     if ((e as { code?: string })?.code === 'P2002') return { envelopeId, duplicated: true, sent: 0, failed: 0, devTokens: [] as string[] };
     throw e;
   }
@@ -498,6 +551,27 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
   }
   if (charge.source === 'PREPAID') await maybeNotifyLowBalance(input.merchantId);
   return { envelopeId, duplicated: false, sent, failed, devTokens, charge };
+}
+
+/** 봉투가 만들어지지 않았을 때 그 봉투용으로 만든 비공개 PDF 를 지운다(실패해도 발송 결과는 그대로). */
+export async function discardPrivateObject(name: string) {
+  try {
+    const { deletePrivateObject } = await import('@/server/uploads');
+    await deletePrivateObject(name);
+  } catch (e) {
+    logger.warn('쓰이지 않은 서명용 PDF 정리 실패', { object: name, message: (e as Error).message });
+  }
+}
+
+/**
+ * 발송 1건을 차감할 수 있는지 미리 본다(무거운 PDF 렌더 전에 — 점검 A-M2). 최종 판정은 봉투 트랜잭션의 차감이다.
+ */
+export async function assertSendable(merchantId: string) {
+  const { walletOverview, EDocBillingError } = await import('./edoc-billing');
+  const o = await walletOverview(merchantId);
+  if (o.sendable <= 0) {
+    throw new EDocBillingError(`전자문서 이용 잔액이 부족합니다. 1건에 ${o.plan.perDocument.toLocaleString('ko-KR')}원이 필요합니다. 충전 또는 정액 이용을 신청해 주세요.`);
+  }
 }
 
 /** 대량 발송(서명자 1명짜리). 한 줄씩 따로 만들고, 잔액이 떨어지면 거기서 멈춘다. */
@@ -572,7 +646,7 @@ async function loadOwned(merchantId: string, envelopeId: string) {
  * 발송 취소. 진행 중인 봉투만 취소한다.
  * 아무 서명자도 문서를 열기 전(본인확인 전)이면 차감한 이용료를 되돌린다. 이미 열었다면 되돌리지 않는다.
  */
-export async function cancelEnvelope(input: { merchantId: string; envelopeId: string; actorId: string; reason: string }) {
+export async function cancelEnvelope(input: { merchantId: string; envelopeId: string; actorId: string; reason: string }): Promise<{ refunded: boolean }> {
   const reason = input.reason.trim().slice(0, 200);
   if (!reason) throw new EDocError('취소 사유를 입력해 주세요.');
   const e = await loadOwned(input.merchantId, input.envelopeId);
@@ -589,13 +663,64 @@ export async function cancelEnvelope(input: { merchantId: string; envelopeId: st
       : { refunded: false, reason: 'OPENED' };
     await appendEvent(tx, e.id, {
       type: 'CANCELLED',
-      actor: `staff:${input.actorId}`,
+      actor: actorOf(input.actorId),
       detail: { reason, refunded: refund.refunded, ...(refund.reason ? { noRefund: refund.reason } : {}) },
     });
+    await emitClosed(tx, e.id, input.merchantId, 'CANCELLED');
     return { refunded: refund.refunded };
   });
   await settleLinked(e.id);
   return result;
+}
+
+/**
+ * 봉투가 서명 없이 끝났음(거절·만료·취소)을 이벤트로 남긴다(같은 트랜잭션). 완료 지점의 바로 반영(settleLinked)이
+ * 실패해도 `document.closed` 소비자가 재시도하고, /api/cron/edoc 의 대사가 한 번 더 맞춘다(점검 A-M7).
+ */
+async function emitClosed(tx: Tx, envelopeId: string, merchantId: string, status: 'DECLINED' | 'EXPIRED' | 'CANCELLED') {
+  await emitDomainEvent(
+    { merchantId, type: 'document.closed', subjectType: 'edoc_envelope', subjectId: envelopeId, dedupeKey: `document.closed:${envelopeId}`, payload: { status } },
+    tx,
+  );
+}
+
+/**
+ * 시스템 취소(새 약정서 판이 나와 이전 판 서명 요청을 닫을 때, 후원자 탈퇴 등). 진행 중이 아니면 아무것도 하지 않는다.
+ * 환원 규칙은 기관 취소와 같다(아무도 열기 전이면 환원).
+ */
+export async function cancelEnvelopeBySystem(envelopeId: string, reason: string): Promise<{ canceled: boolean; refunded: boolean }> {
+  const e = await prisma.eDocEnvelope.findUnique({ where: { id: envelopeId }, select: { id: true, merchantId: true, status: true } });
+  if (!e || !OPEN_STATUSES.includes(e.status)) return { canceled: false, refunded: false };
+  try {
+    const r = await cancelEnvelope({ merchantId: e.merchantId, envelopeId: e.id, actorId: EDOC_SYSTEM_ACTOR, reason });
+    return { canceled: true, refunded: r.refunded };
+  } catch (err) {
+    if (err instanceof EDocError) return { canceled: false, refunded: false };
+    throw err;
+  }
+}
+
+/**
+ * 대사: 끝난 봉투(완료·거절·만료·취소)에 연결됐는데 아직 "요청됨" 인 발급 문서·약정서를 맞춘다(/api/cron/edoc — 점검 A-M7).
+ */
+export async function reconcileClosedEnvelopes(limit = 500) {
+  const terminal: EDocEnvelopeStatus[] = ['COMPLETED', 'DECLINED', 'EXPIRED', 'CANCELLED'];
+  const issued = await prisma.issuedDocument.findMany({ where: { status: 'REQUESTED', envelopeId: { not: null } }, select: { envelopeId: true }, take: limit });
+  const agreements = await prisma.agreementDocument.findMany({ where: { esignStatus: 'REQUESTED', esignRequestId: { not: null } }, select: { esignRequestId: true }, take: limit });
+  const ids = [...new Set([...issued.map((i) => i.envelopeId!), ...agreements.map((a) => a.esignRequestId!)])];
+  if (ids.length === 0) return 0;
+  const closed = await prisma.eDocEnvelope.findMany({ where: { id: { in: ids }, status: { in: terminal } }, select: { id: true } });
+  let fixed = 0;
+  for (const { id } of closed) {
+    try {
+      const { syncIssuedFromEnvelope } = await import('./issued-documents');
+      await syncIssuedFromEnvelope(id);
+      fixed += 1;
+    } catch (e) {
+      logger.error('전자문서 결과 대사 실패', { envelopeId: id, message: (e as Error).message });
+    }
+  }
+  return fixed;
 }
 
 /** 재안내. 서명 전 서명자에게 새 링크를 보낸다. 1시간 간격, 최대 5회. */
@@ -622,6 +747,8 @@ export async function expireEDocEnvelopes(now = new Date()) {
       if (r.count === 1) {
         count += 1;
         await appendEvent(tx, id, { type: 'EXPIRED', actor: 'system' });
+        const m = await tx.eDocEnvelope.findUniqueOrThrow({ where: { id }, select: { merchantId: true } });
+        await emitClosed(tx, id, m.merchantId, 'EXPIRED');
       }
     });
     await settleLinked(id);
@@ -900,6 +1027,7 @@ export async function declineAsSigner(input: { token: string; proof: string | un
     });
     if (moved.count !== 1) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
     await appendEvent(tx, s.envelopeId, { type: 'DECLINED', actor: `signer:${s.id}`, signerId: s.id, ip: input.ip, userAgent: input.userAgent, detail: { reason } });
+    await emitClosed(tx, s.envelopeId, s.envelope.merchantId, 'DECLINED');
   });
   await settleLinked(s.envelopeId);
   try {

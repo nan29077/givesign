@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
 import { payerDisplayName } from '@/lib/payer-name';
 import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, sendMtForPayer, setStatus } from './charge-flow';
-import { issueRecurringAgreement } from './agreements';
+import { issueRecurringAgreement, assertAgreementChangeAllowed, AgreementError } from './agreements';
 import { emitDomainEvent, emitDomainEventSafe } from './events';
 import { filterContent } from './content-filter';
 import { resolvePolicy } from './limits';
@@ -299,6 +299,19 @@ export async function updateRecurringDonation(
   }
   const message = patch.message !== undefined ? await cleanMessage(row.merchantId, patch.message) : undefined;
   const dayChanged = patch.dayOfMonth !== undefined && patch.dayOfMonth !== row.dayOfMonth;
+  const termsChangedEarly =
+    (patch.amount !== undefined && patch.amount !== row.amount) ||
+    dayChanged ||
+    (patch.campaignId !== undefined && patch.campaignId !== row.campaignId);
+  // 조건 변경은 약정서 새 판(서명 요청·이용요금)을 만든다 — 하루 횟수를 넘기면 바꾸기 전에 막는다(점검 A-M1).
+  if (termsChangedEarly) {
+    try {
+      await assertAgreementChangeAllowed('RECURRING_PLEDGE', row.id);
+    } catch (e) {
+      if (e instanceof AgreementError) throw new Error(e.message);
+      throw e;
+    }
+  }
   // 출금일을 바꾸면 지금 기준으로 다시 잡는다. 이미 성공한 주기로는 되돌아가지 않는다.
   const next = dayChanged ? await nextScheduleFor(row.id, patch.dayOfMonth!) : null;
   const termsChanged =
@@ -318,7 +331,7 @@ export async function updateRecurringDonation(
   });
   // 금액·출금일·지정 캠페인이 바뀌면 약정서 새 버전을 만든다(이전 버전은 보존).
   if (termsChanged) {
-    await issueRecurringAgreement(updated.id, meta ?? {}).catch((e) =>
+    await issueRecurringAgreement(updated.id, meta ?? {}, { change: true }).catch((e) =>
       logger.error('정기후원 약정서(변경) 생성 실패', { recurringId: updated.id, message: (e as Error).message }),
     );
     await emitDomainEventSafe({
@@ -522,9 +535,11 @@ function cycleDate(cycleMonth: string, day: number): string {
   return `${cycleMonth}-${String(day).padStart(2, '0')}`;
 }
 
-/** 성공 처리: 주기를 한 달 넘기고 누적을 올린다. 같은 주기를 두 번 넘기지 않도록 현재 주기일 때만 갱신한다. */
-/** 누적 성공 횟수 이정표. 저니가 누적 감사장을 보낼 때 쓴다. */
-export const RECURRING_MILESTONES = [1, 6, 12, 24, 36, 60, 120];
+/**
+ * 성공 처리: 주기를 한 달 넘기고 누적을 올린다. 같은 주기를 두 번 넘기지 않도록 현재 주기일 때만 갱신한다.
+ * 출금이 성공할 때마다 recurring.milestone(누적 횟수 포함)을 낸다. 어떤 횟수에 감사장을 보낼지는
+ * 기관 저니 설정(정기후원 누적 감사 > 누적 횟수)이 거른다 — 기관이 적은 횟수와 실제 발송이 같다(점검 A-M4).
+ */
 
 async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amount: bigint) {
   const nextCycle = nextCycleOf(cycleMonth);
@@ -542,7 +557,7 @@ async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amou
   });
   if (updated.count === 0) return;
   const after = await prisma.recurringDonation.findUnique({ where: { id: r.id }, select: { successCount: true, totalAmount: true } });
-  if (after && RECURRING_MILESTONES.includes(after.successCount)) {
+  if (after) {
     await emitDomainEventSafe({
       merchantId: r.merchantId, type: 'recurring.milestone', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
       dedupeKey: `recurring.milestone:${r.id}:${after.successCount}`,

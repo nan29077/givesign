@@ -5,7 +5,7 @@ import { requireMerchant, writeAudit } from '@/server/auth';
 import { logger } from '@/lib/logger';
 import type { StudioActionState } from '@/app/actions/studio';
 import { cancelJourneyRun, JourneyError, journeyDef, saveJourneySetting } from '@/server/services/journeys';
-import { ApprovalError, decideApproval } from '@/server/services/approvals';
+import { ApprovalError, decideApproval, retryFailedApproval } from '@/server/services/approvals';
 
 /**
  * 기관 콘솔 — 자동 안내(저니) 설정 · 승인 대기함 결정.
@@ -73,5 +73,16 @@ export async function decideApprovalAction(_p: StudioActionState, f: FormData): 
     revalidatePath('/studio/inbox');
     revalidatePath('/studio/journeys');
     return r;
+  });
+}
+
+/** 승인 대기함: 실행에 실패한(FAILED) 승인된 일을 다시 실행 대기열에 올린다(점검 A-1). */
+export async function retryApprovalAction(_p: StudioActionState, f: FormData): Promise<StudioActionState> {
+  return withMerchant(async (merchantId, userId) => {
+    const id = String(f.get('id') ?? '');
+    await retryFailedApproval(merchantId, id);
+    await writeAudit({ actorUserId: userId, action: 'APPROVAL_RETRY', targetType: 'approval_request', targetId: id, after: { merchantId } });
+    revalidatePath('/studio/inbox');
+    return { ok: true, message: '다시 실행하도록 올렸습니다. 몇 분 안에 처리됩니다.' };
   });
 }

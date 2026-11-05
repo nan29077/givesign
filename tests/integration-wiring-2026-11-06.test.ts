@@ -29,7 +29,12 @@ beforeEach(async () => {
 describe('[1] 봉사 전날 안내', () => {
   it('내일 시작 회차의 승인된 신청자에게 한 번만 일정 안내가 나간다(9시 이후)', async () => {
     const payer = await seedRegisteredPayer(fx.payerPhone);
-    const now = new Date('2026-11-06T02:00:00Z'); // 11:00 KST
+    // 내일 11:00 KST 에 배치가 돈다고 보고, 그 다음 날 10:00 KST 회차(실제 시각보다 미래 — 발송 직전 "시작 전" 재확인을 통과).
+    const kstToday = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
+    const dayAfter = (key: string, n: number) => new Date(Date.parse(`${key}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+    const runDay = dayAfter(kstToday, 1);
+    const shiftDay = dayAfter(kstToday, 2);
+    const now = new Date(`${runDay}T02:00:00Z`); // 11:00 KST
     const posting = await prisma.volunteerPosting.create({
       data: {
         id: newId(), merchantId: fx.merchantId, title: '김장 나눔 봉사', interest: '돌봄·말벗', description: '김장 담그기', place: '복지관 1층',
@@ -38,15 +43,15 @@ describe('[1] 봉사 전날 안내', () => {
     });
     const shift = await prisma.volunteerShift.create({
       data: {
-        id: newId(), postingId: posting.id, merchantId: fx.merchantId, shiftDate: new Date('2026-11-07'), startTime: '10:00', endTime: '12:00',
-        startsAt: new Date('2026-11-07T01:00:00Z'), endsAt: new Date('2026-11-07T03:00:00Z'), capacity: 5, appliedCount: 1,
+        id: newId(), postingId: posting.id, merchantId: fx.merchantId, shiftDate: new Date(shiftDay), startTime: '10:00', endTime: '12:00',
+        startsAt: new Date(`${shiftDay}T01:00:00Z`), endsAt: new Date(`${shiftDay}T03:00:00Z`), capacity: 5, appliedCount: 1,
       },
     });
     await prisma.volunteerApplication.create({
       data: { id: newId(), merchantId: fx.merchantId, payerId: payer.id, status: 'APPROVED', postingId: posting.id, shiftId: shift.id, assignment: '11/7(토) 10:00~12:00 · 복지관 1층' },
     });
 
-    expect((await emitShiftReminders(new Date('2026-11-05T22:00:00Z'))).emitted).toBe(0); // 07:00 KST — 9시 전
+    expect((await emitShiftReminders(new Date(`${kstToday}T22:00:00Z`))).emitted).toBe(0); // 다음 날 07:00 KST — 9시 전
     expect((await emitShiftReminders(now)).emitted).toBe(1);
     await emitShiftReminders(now); // 다시 불러도 이벤트는 한 건
     expect(await prisma.domainEvent.count({ where: { type: 'volunteer.shift_reminder_due' } })).toBe(1);

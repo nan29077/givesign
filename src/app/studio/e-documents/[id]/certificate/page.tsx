@@ -5,7 +5,7 @@ import { prisma } from '@/server/db';
 import { PageHeader } from '@/components/layout/console-shell';
 import { PrintButton } from '@/components/receipts/print-button';
 import { EDocCertificate } from '@/components/edoc/edoc-certificate';
-import { checkSnapshotPdf, edocEventLabel, edocRoleLabel, envelopeValues, readSnapshot, verifyEnvelopeChain } from '@/server/services/edoc';
+import { checkSnapshotPdf, edocEventLabel, edocRoleLabel, envelopeValues, readSnapshot, snapshotPdfHref, verifyEnvelopeChain } from '@/server/services/edoc';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +34,7 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
           title: e.title,
           envelopeId: e.id,
           snapshot,
+          pdfHref: snapshotPdfHref(snapshot, { envelopeId: e.id }),
           values,
           status: e.status,
           sentAt: e.sentAt,
