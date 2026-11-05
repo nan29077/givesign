@@ -8,7 +8,9 @@ import { ActionButton } from '@/components/admin/action-form';
 import { setAlimtalkStatusAction, retryEventAction } from '@/app/actions/admin/automation';
 import { CRON_JOBS } from '@/server/cron-registry';
 import { eventQueueStats } from '@/server/services/events';
-import { alimtalkIsMock } from '@/server/adapters/alimtalk';
+import { alimtalkIsMock, getAlimtalkAdapter } from '@/server/adapters/alimtalk';
+import { getMailAdapter } from '@/server/adapters/mail';
+import { platformMissingCredentials, SNS_OAUTH_FAMILY, SNS_PLATFORMS, SNS_PLATFORM_LABEL } from '@/server/adapters/sns/platforms';
 import { snsIsMock, PLATFORM_LABEL } from '@/server/adapters/sns';
 import { getContentAdapter } from '@/server/adapters/content';
 import { getESignAdapter } from '@/server/adapters/esign';
@@ -60,18 +62,31 @@ export default async function AdminAutomationPage({ searchParams }: { searchPara
     : [[], null, []] as const;
   const beatByName = new Map(heartbeats.map((h) => [h.name, h]));
   const merchants = new Map((await prisma.merchantProfile.findMany({ where: { id: { in: contentAgg.map((c) => c.merchantId) } }, select: { id: true, displayName: true } })).map((m) => [m.id, m.displayName]));
-  const providers = [
-    { name: '알림톡', enabled: env.automation.alimtalkEnabled, mock: alimtalkIsMock(), provider: env.automation.alimtalkProvider },
-    { name: 'SNS 게시', enabled: env.automation.socialPublishEnabled, mock: snsIsMock(), provider: env.automation.socialProvider },
-    { name: '전자서명', enabled: env.automation.esignEnabled, mock: getESignAdapter().info().mode === 'mock', provider: env.automation.esignProvider },
-    { name: '콘텐츠 생성', enabled: true, mock: getContentAdapter().info().mode === 'mock', provider: env.automation.contentProvider },
+  // 공급자 상태: 꺼짐 / mock / 키 없음 / 실연동 (2026-11-06 7단계 — SNS 플랫폼별·알림톡·메일)
+  type ProviderState = 'off' | 'mock' | 'nokey' | 'live';
+  const STATE_TEXT: Record<ProviderState, string> = { off: '꺼짐', mock: 'mock', nokey: '키 없음', live: '실연동' };
+  const STATE_TONE: Record<ProviderState, 'neutral' | 'warning' | 'danger' | 'success'> = { off: 'neutral', mock: 'warning', nokey: 'danger', live: 'success' };
+  const stateOf = (enabled: boolean, mode: 'mock' | 'live', missing: string[]): ProviderState => (!enabled ? 'off' : mode === 'mock' ? 'mock' : missing.length ? 'nokey' : 'live');
+  const alimtalkInfo = getAlimtalkAdapter().info();
+  const mailInfo = getMailAdapter().info();
+  const snsMock = snsIsMock();
+  const providers: Array<{ name: string; state: ProviderState; sub: string }> = [
+    { name: '알림톡', state: stateOf(env.automation.alimtalkEnabled, alimtalkIsMock() ? 'mock' : 'live', alimtalkInfo.missingCredentials), sub: `공급자 ${env.automation.alimtalkProvider}${alimtalkIsMock() && env.automation.alimtalkProvider !== 'mock' ? ' (SAFE_MODE 로 mock)' : ''}` },
+    ...SNS_PLATFORMS.filter((p) => SNS_OAUTH_FAMILY[p]).map((p) => {
+      const missing = platformMissingCredentials(p);
+      return { name: `SNS · ${SNS_PLATFORM_LABEL[p]}`, state: stateOf(env.automation.socialPublishEnabled, snsMock ? 'mock' : 'live', missing), sub: missing.length && !snsMock ? `없음 ${missing.join(', ')}` : `공급자 ${env.automation.socialProvider}` };
+    }),
+    { name: 'SNS · 네이버 블로그·카카오 채널', state: 'off', sub: '공개 게시 API 없음 — 내려받아 직접 게시' },
+    { name: '메일', state: stateOf(true, mailInfo.mode, mailInfo.missingCredentials), sub: `공급자 ${env.integrations.mail.provider}${mailInfo.missingCredentials.length ? ` · 없음 ${mailInfo.missingCredentials.join(', ')}` : ''}` },
+    { name: '전자서명', state: stateOf(env.automation.esignEnabled, getESignAdapter().info().mode, getESignAdapter().info().missingCredentials), sub: `공급자 ${env.automation.esignProvider}` },
+    { name: '콘텐츠 생성', state: stateOf(true, getContentAdapter().info().mode, getContentAdapter().info().missingCredentials), sub: `공급자 ${env.automation.contentProvider}` },
   ];
   return (
     <>
       <PageHeader title="자동화 운영" description="발굴(콘텐츠·SNS)·안내(알림톡·월간 안내)·약정서 연동 상태와 기관별 처리 현황입니다." />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {providers.map((p) => (
-          <StatTile key={p.name} label={p.name} value={!p.enabled ? '꺼짐' : p.mock ? 'mock' : '실연동'} sub={`공급자 ${p.provider}`} tone={!p.enabled ? 'neutral' : p.mock ? 'warning' : 'success'} />
+          <StatTile key={p.name} label={p.name} value={STATE_TEXT[p.state]} sub={p.sub} tone={STATE_TONE[p.state]} />
         ))}
       </div>
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
