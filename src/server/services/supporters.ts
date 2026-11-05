@@ -7,6 +7,7 @@ import { RESERVED_DETAIL, sendMtDetailed } from './charge-flow';
 import { env } from '@/lib/env';
 import { kv } from '@/server/redis';
 import * as tpl from './mt-templates';
+import { mergeTargets } from './payer-merge';
 
 /**
  * 후원자·자원봉사자 통합 관리 (구성원).
@@ -58,6 +59,8 @@ export interface SupporterRow {
   volunteer: { status: string; minutes: number; lastActivity: Date | null } | null;
   tags: string[];
   segments: Segment[];
+  /** 관리자가 이 후원자에 병합한 다른 후원자 수(번호 변경 등). 0 이면 병합 없음. 기관 화면은 "병합됨" 표시만 한다. */
+  mergedCount: number;
 }
 
 export async function listSupporters(merchantId: string, now = new Date()): Promise<SupporterRow[]> {
@@ -100,23 +103,70 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
     }),
   ]);
 
+  // 관리자 병합(번호 변경 등): 원본 후원자 행은 대상 후원자 한 줄로 합산한다(데이터는 옮기지 않는다).
+  const rawIds = new Set<string>();
+  for (const s of sums) rawIds.add(s.payerId!);
+  for (const r of recurring) rawIds.add(r.payerId);
+  for (const a of apps) rawIds.add(a.payerId);
+  for (const a of acts) rawIds.add(a.payerId);
+  for (const c of contacts) if (c.payerId) rawIds.add(c.payerId);
+  const merged = await mergeTargets([...rawIds]);
+  const canon = (id: string) => merged.get(id) ?? id;
+  const mergedCount = new Map<string, number>();
+  for (const [, t] of merged) mergedCount.set(t, (mergedCount.get(t) ?? 0) + 1);
+
   const ids = new Set<string>();
-  for (const s of sums) ids.add(s.payerId!);
-  for (const r of recurring) ids.add(r.payerId);
-  for (const a of apps) ids.add(a.payerId);
-  for (const a of acts) ids.add(a.payerId);
+  for (const s of sums) ids.add(canon(s.payerId!));
+  for (const r of recurring) ids.add(canon(r.payerId));
+  for (const a of apps) ids.add(canon(a.payerId));
+  for (const a of acts) ids.add(canon(a.payerId));
   const payers = await prisma.payerProfile.findMany({
     where: { id: { in: [...ids] } },
     select: { id: true, displayName: true, phoneMasked: true },
   });
   const pm = new Map(payers.map((p) => [p.id, p]));
-  const sumM = new Map(sums.map((s) => [s.payerId!, s]));
-  const oneM = new Map(oneTime.map((s) => [s.payerId!, s._count._all]));
-  const srcM = new Map(firstCharges.map((c) => [c.payerId!, c.source]));
-  const recM = new Map(recurring.map((r) => [r.payerId, r]));
-  const appM = new Map(apps.map((a) => [a.payerId, a]));
-  const actM = new Map(acts.map((a) => [a.payerId, a]));
-  const contactByPayer = new Map(contacts.filter((c) => c.payerId).map((c) => [c.payerId!, c]));
+  type SumRow = { _sum: { amount: bigint }; _count: { _all: number }; _max: { paidAt: Date | null } };
+  const sumM = new Map<string, SumRow>();
+  for (const s of sums) {
+    const k = canon(s.payerId!);
+    const cur = sumM.get(k);
+    const paid = s._max.paidAt ?? null;
+    if (!cur) sumM.set(k, { _sum: { amount: s._sum.amount ?? 0n }, _count: { _all: s._count._all }, _max: { paidAt: paid } });
+    else {
+      cur._sum.amount += s._sum.amount ?? 0n;
+      cur._count._all += s._count._all;
+      if (paid && (!cur._max.paidAt || paid > cur._max.paidAt)) cur._max.paidAt = paid;
+    }
+  }
+  const oneM = new Map<string, number>();
+  for (const s of oneTime) oneM.set(canon(s.payerId!), (oneM.get(canon(s.payerId!)) ?? 0) + s._count._all);
+  // firstCharges 는 receivedAt 오름차순이라 처음 넣은 값이 가장 이른 유입이다.
+  const srcM = new Map<string, string | null>();
+  for (const c of firstCharges) if (!srcM.has(canon(c.payerId!))) srcM.set(canon(c.payerId!), c.source);
+  const recM = new Map<string, (typeof recurring)[number]>();
+  for (const r of recurring) {
+    const k = canon(r.payerId);
+    if (!recM.has(k) || (r.status === 'ACTIVE' && recM.get(k)!.status !== 'ACTIVE')) recM.set(k, r);
+  }
+  const appM = new Map<string, (typeof apps)[number]>();
+  for (const a of apps) {
+    const k = canon(a.payerId);
+    if (!appM.has(k) || (a.status === 'APPROVED' && appM.get(k)!.status !== 'APPROVED')) appM.set(k, a);
+  }
+  type ActRow = { _sum: { minutes: number | null }; _max: { activityDate: Date | null } };
+  const actM = new Map<string, ActRow>();
+  for (const a of acts) {
+    const k = canon(a.payerId);
+    const cur = actM.get(k);
+    if (!cur) actM.set(k, { _sum: { minutes: a._sum.minutes ?? 0 }, _max: { activityDate: a._max.activityDate ?? null } });
+    else {
+      cur._sum.minutes = (cur._sum.minutes ?? 0) + (a._sum.minutes ?? 0);
+      const d = a._max.activityDate ?? null;
+      if (d && (!cur._max.activityDate || d > cur._max.activityDate)) cur._max.activityDate = d;
+    }
+  }
+  const contactByPayer = new Map<string, (typeof contacts)[number]>();
+  for (const c of contacts) if (c.payerId && !contactByPayer.has(canon(c.payerId))) contactByPayer.set(canon(c.payerId), c);
   const dormantBefore = addDays(now, -183).getTime();
 
   const rows: SupporterRow[] = [];
@@ -153,10 +203,11 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       volunteer: a || act ? { status: a?.status ?? 'DONE', minutes: act?._sum.minutes ?? 0, lastActivity: act?._max.activityDate ?? null } : null,
       tags: c?.tags ?? [],
       segments: segs,
+      mergedCount: mergedCount.get(id) ?? 0,
     });
   }
   for (const c of contacts) {
-    if (c.payerId && ids.has(c.payerId)) continue;
+    if (c.payerId && ids.has(canon(c.payerId))) continue;
     rows.push({
       key: `c:${c.id}`,
       payerId: c.payerId,
@@ -173,6 +224,7 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       volunteer: null,
       tags: c.tags,
       segments: ['all', 'contact_only'],
+      mergedCount: 0,
     });
   }
   return rows;

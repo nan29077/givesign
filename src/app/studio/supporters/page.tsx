@@ -100,6 +100,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
                 <Td>
                   <span className="font-semibold text-ink-900">{displayPayerName(r.name)}</span>
                   <span className="ml-2 font-mono text-[12px] text-ink-400">{r.phoneMasked}</span>
+                  {r.mergedCount ? <Badge tone="neutral" className="ml-1.5">병합됨</Badge> : null}
                   {r.tags.map((t) => <Badge key={t} className="ml-1.5">{t}</Badge>)}
                 </Td>
                 <Td><Badge tone={roleTone[r.role]}>{ROLE_LABEL[r.role]}</Badge></Td>
