@@ -11,6 +11,17 @@ import { notifySuperAdmins } from './notifications';
 import { PAID_STATUSES } from '@/components/studio/shared';
 
 /**
+ * 이체 요청에 넣을 예금주 이름.
+ *
+ * 지급대행은 예금주 대조(HOLDER_MISMATCH)를 하므로 **복호화한 원문**을 넘긴다.
+ * 마스킹 값("김*수")을 넘기면 실 연동에서 전건 실패하거나 송금 내역에 틀린 이름이 남는다.
+ * 수동 이체파일(settlement.ts buildTransferFile)과 같은 방식이다. 반환값은 로그에 남기지 않는다.
+ */
+export function payoutHolderName(account: { holderNameEnc: string }): string {
+  return decrypt(account.holderNameEnc);
+}
+
+/**
  * 자동 정산.
  *
  * 사회복지기관이 정산을 요청하지 않는다. 관리자가 정한 지급일(결제일 + N영업일)이 되면
@@ -201,7 +212,7 @@ export async function runMerchantPayout(
       merchantName: merchant.displayName,
       bankCode: account.bankCode,
       accountNo: decrypt(account.accountEnc),
-      holderName: account.holderMasked ?? merchant.displayName,
+      holderName: payoutHolderName(account),
       amount: request.payoutAmount,
       memo: `기브싸인 정산 ${dateKey}`,
     });
@@ -394,7 +405,7 @@ export async function retryPayout(
       merchantName: merchant.displayName,
       bankCode: account.bankCode,
       accountNo: decrypt(account.accountEnc),
-      holderName: account.holderMasked ?? merchant.displayName,
+      holderName: payoutHolderName(account),
       amount: request.payoutAmount,
       memo: `기브싸인 정산 재시도 ${toDateKey(now)}`,
     });
