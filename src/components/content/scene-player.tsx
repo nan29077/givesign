@@ -8,7 +8,7 @@ import { cx } from '@/components/ui';
  * 장면 미리보기 — 숏폼은 장면 길이대로 넘기고, 이미지는 한 장씩 본다.
  * 영상(mp4) 조립 공급자 연결 전에는 이 스토리보드가 미리보기다.
  */
-export function ScenePlayer({ scenes, format }: { scenes: Array<{ svg: string; durationSec: number; caption: string }>; format: 'STORY' | 'SQUARE' }) {
+export function ScenePlayer({ scenes, format }: { scenes: Array<{ svg: string; durationSec: number; caption: string }>; format: 'STORY' | 'SQUARE' | 'FEED' }) {
   const [i, setI] = React.useState(0);
   const [playing, setPlaying] = React.useState(false);
   const total = scenes.length;
@@ -22,7 +22,7 @@ export function ScenePlayer({ scenes, format }: { scenes: Array<{ svg: string; d
   const totalSec = scenes.reduce((a, s) => a + s.durationSec, 0);
   return (
     <div>
-      <div className={cx('relative mx-auto overflow-hidden rounded-2xl bg-ink-900 shadow-lg', format === 'STORY' ? 'aspect-[9/16] max-w-[300px]' : 'aspect-square max-w-[380px]')}>
+      <div className={cx('relative mx-auto overflow-hidden rounded-2xl bg-ink-900 shadow-lg', format === 'STORY' ? 'aspect-[9/16] max-w-[300px]' : format === 'FEED' ? 'aspect-[4/5] max-w-[360px]' : 'aspect-square max-w-[380px]')}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src(scenes[i]!.svg)} alt={scenes[i]!.caption} className="h-full w-full object-cover" />
         <div className="absolute inset-x-0 top-0 flex gap-1 p-2">
@@ -40,8 +40,9 @@ export function ScenePlayer({ scenes, format }: { scenes: Array<{ svg: string; d
 }
 
 /** 목록용 작은 썸네일 */
-export function SvgThumb({ svg, format, className }: { svg: string | null; format: 'STORY' | 'SQUARE'; className?: string }) {
-  if (!svg) return <div className={cx('rounded-xl bg-ink-100', format === 'STORY' ? 'aspect-[9/16]' : 'aspect-square', className)} />;
+export function SvgThumb({ svg, format, className }: { svg: string | null; format: 'STORY' | 'SQUARE' | 'FEED'; className?: string }) {
+  const aspect = format === 'STORY' ? 'aspect-[9/16]' : format === 'FEED' ? 'aspect-[4/5]' : 'aspect-square';
+  if (!svg) return <div className={cx('rounded-xl bg-ink-100', aspect, className)} />;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`} alt="" className={cx('rounded-xl object-cover', format === 'STORY' ? 'aspect-[9/16]' : 'aspect-square', className)} />;
+  return <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`} alt="" className={cx('rounded-xl object-cover', aspect, className)} />;
 }

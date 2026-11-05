@@ -2,14 +2,17 @@ import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { renderCaption, type Scene } from '@/server/services/content';
 import type { SocialPlatform } from '@/generated/prisma/enums';
+import { PLATFORMS } from '@/server/adapters/sns';
+import { FORMAT_SIZE, kindFormat } from '@/server/adapters/content';
+import { svgToPng } from '@/server/adapters/content/video';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * 콘텐츠 내려받기 (기관 전용).
- *   ?scene=N  → N번째 장면 SVG
- *   ?cover=1  → 표지 SVG
- *   ?caption=YOUTUBE|INSTAGRAM|FACEBOOK|QR → 그 플랫폼용 유입 링크가 들어간 캡션 텍스트
+ *   ?scene=N  → N번째 장면(카드) SVG — &format=png 이면 PNG (SNS 는 SVG 를 받지 않는다. sharp 필요)
+ *   ?cover=1  → 표지 SVG (&format=png)
+ *   ?caption=YOUTUBE|INSTAGRAM|FACEBOOK|TIKTOK|NAVER_BLOG|KAKAO_CHANNEL|QR → 그 플랫폼 규칙·유입 링크가 들어간 캡션 텍스트
  *   ?script=1 → 자막 대본(SRT)
  * SNS 자동 게시가 열리기 전에는 이 파일로 기관이 직접 올린다.
  */
@@ -22,8 +25,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const url = new URL(req.url);
   const scenes = (item.scenes as unknown as Scene[]) ?? [];
   const base = `givesign-${item.id.slice(-8).toLowerCase()}`;
-  const svg = (body: string, name: string) =>
-    new Response(body, {
+  const wantPng = url.searchParams.get('format') === 'png';
+  const size = FORMAT_SIZE[kindFormat(item.kind)];
+  const svg = async (body: string, name: string) => {
+    if (wantPng) {
+      const png = await svgToPng(body, size.w, size.h);
+      if (!png) return new Response('이미지 변환 도구(sharp)가 없어 PNG 로 바꿀 수 없습니다. SVG 로 내려받아 주세요.', { status: 501 });
+      return new Response(new Uint8Array(png), {
+        headers: {
+          'content-type': 'image/png',
+          'content-disposition': url.searchParams.get('inline') ? 'inline' : `attachment; filename="${name}.png"`,
+          'cache-control': 'private, no-store',
+          'x-content-type-options': 'nosniff',
+        },
+      });
+    }
+    return new Response(body, {
       headers: {
         'content-type': 'image/svg+xml; charset=utf-8',
         'content-disposition': url.searchParams.get('inline') ? 'inline' : `attachment; filename="${name}.svg"`,
@@ -32,6 +49,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         'x-content-type-options': 'nosniff',
       },
     });
+  };
 
   const sceneParam = url.searchParams.get('scene');
   if (sceneParam !== null) {
@@ -47,7 +65,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const cap = url.searchParams.get('caption');
   if (cap !== null) {
     // 파일명은 허용 목록의 값으로만 조립한다(임의 문자열·따옴표·개행이 헤더에 들어가지 않게).
-    const CAPTION_TARGETS = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'QR'] as const;
+    const CAPTION_TARGETS = [...PLATFORMS, 'QR'] as const;
     const target = CAPTION_TARGETS.find((t) => t === cap);
     if (!target) return new Response('캡션 대상이 올바르지 않습니다.', { status: 400 });
     const platform = target === 'QR' ? null : (target as SocialPlatform);

@@ -361,6 +361,45 @@ export function featureContentEnabled(): boolean {
   return process.env.FEATURE_CONTENT !== 'false';
 }
 
+/**
+ * LLM 공급자 설정. 호출할 때마다 읽는다(테스트·운영 전환 시 프로세스 재시작 없이 반영).
+ *  - LLM_PROVIDER = mock | anthropic | openai (기본 mock — 외부 호출 없음, 결정적 응답)
+ *  - LLM_MODEL    : anthropic 기본 claude-sonnet-5-5, openai 는 기본값 없음(필수)
+ *  - 키가 없으면 호출하지 않는다(missingCredentials 로 알린다).
+ */
+export function llmConfig() {
+  const provider = (str('LLM_PROVIDER', 'mock').toLowerCase()) as 'mock' | 'anthropic' | 'openai' | string;
+  const model = str('LLM_MODEL', provider === 'anthropic' ? 'claude-sonnet-5-5' : provider === 'mock' ? 'mock' : '');
+  return {
+    provider,
+    model,
+    anthropicKey: str('ANTHROPIC_API_KEY'),
+    openaiKey: str('OPENAI_API_KEY'),
+    /** 1천 토큰당 원 (입력·출력). 비우면 0 — 비용을 지어내지 않고 0 으로 남긴다. */
+    krwPer1kInput: num('LLM_KRW_PER_1K_INPUT', 0),
+    krwPer1kOutput: num('LLM_KRW_PER_1K_OUTPUT', 0),
+    timeoutMs: num('LLM_TIMEOUT_MS', 60_000),
+    /** AI 초안 기관당 분당 호출 수 */
+    draftPerMinute: num('AI_DRAFT_PER_MINUTE', 6),
+  };
+}
+
+/**
+ * 콘텐츠 대본 공급자. CONTENT_PROVIDER=llm 이면 LLM_PROVIDER 의 LLM 이 대본·플랫폼별 캡션을 쓴다.
+ * (호환: CONTENT_PROVIDER=anthropic|openai 는 llm + 그 공급자로 본다.) 그 밖의 값은 mock.
+ */
+export function contentProviderConfig(): { mode: 'mock' | 'llm'; llmProvider: string | null } {
+  const v = str('CONTENT_PROVIDER', 'mock').toLowerCase();
+  if (v === 'llm') return { mode: 'llm', llmProvider: null };
+  if (v === 'anthropic' || v === 'openai') return { mode: 'llm', llmProvider: v };
+  return { mode: 'mock', llmProvider: null };
+}
+
+/** 영상 조립(ffmpeg) 실행 파일. 비우면 영상을 만들지 않는다. */
+export function ffmpegPath(): string {
+  return str('FFMPEG_PATH');
+}
+
 /** 운영 배포 전 반드시 통과해야 하는 환경 점검 */
 export function assertProductionSafety(): string[] {
   const problems: string[] = [];
@@ -415,6 +454,10 @@ export function assertProductionSafety(): string[] {
   }
   if (env.automation.esignEnabled && env.automation.esignProvider === 'mock') {
     problems.push('ESIGN_ENABLED=true 인데 ESIGN_PROVIDER 가 mock 입니다.');
+  }
+  // 콘텐츠 대본을 LLM 으로 쓰도록 했는데 LLM 이 mock 이면 서식 문장이 'AI 대본' 처럼 보인다.
+  if (contentProviderConfig().mode === 'llm' && !contentProviderConfig().llmProvider && llmConfig().provider === 'mock') {
+    problems.push('CONTENT_PROVIDER=llm 인데 LLM_PROVIDER 가 mock 입니다.');
   }
   // 결제사(헥토)를 붙였는데 PIN 인증만 mock 으로 남아 있으면, 실제 출금이 가능한 빌키를 든 채
   // 인증 단계만 모의 화면으로 통과시키게 된다. 조합 자체를 막는다.

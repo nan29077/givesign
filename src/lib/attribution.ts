@@ -8,13 +8,16 @@
  * 값은 아래 목록으로만 정규화한다 — 임의 문자열을 그대로 저장하지 않는다.
  */
 
-export const SOURCES = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'SMS', 'WEB', 'QR', 'IMPORT'] as const;
+export const SOURCES = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'TIKTOK', 'NAVER_BLOG', 'KAKAO_CHANNEL', 'SMS', 'WEB', 'QR', 'IMPORT'] as const;
 export type Source = (typeof SOURCES)[number];
 
 export const SOURCE_LABEL: Record<Source, string> = {
   YOUTUBE: '유튜브',
   INSTAGRAM: '인스타그램',
   FACEBOOK: '페이스북',
+  TIKTOK: '틱톡',
+  NAVER_BLOG: '네이버 블로그',
+  KAKAO_CHANNEL: '카카오 채널',
   SMS: '문자',
   WEB: '웹',
   QR: 'QR',
@@ -29,6 +32,13 @@ const ALIASES: Record<string, Source> = {
   instagram: 'INSTAGRAM',
   fb: 'FACEBOOK',
   facebook: 'FACEBOOK',
+  tt: 'TIKTOK',
+  tiktok: 'TIKTOK',
+  nb: 'NAVER_BLOG',
+  naver: 'NAVER_BLOG',
+  blog: 'NAVER_BLOG',
+  kc: 'KAKAO_CHANNEL',
+  kakao: 'KAKAO_CHANNEL',
   sms: 'SMS',
   mo: 'SMS',
   web: 'WEB',
