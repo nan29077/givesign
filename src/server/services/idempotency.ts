@@ -45,7 +45,11 @@ export async function acquireIdempotency<T = unknown>(
         await prisma.idempotencyKey.delete({ where: { id: row.id } }).catch(() => undefined);
       },
     };
-  } catch {
+  } catch (error) {
+    // 유니크 위반(P2002)만 중복이다. DB 오류를 중복으로 돌려주면 "이미 생성된 결제" 로 안내되고,
+    // MO 행이 PENDING 에 남아 사업자 재전송이 영원히 중복으로 막힌다. 그 외 예외는 호출부로 던진다
+    // (MO 경로는 결제 생성 전 예외를 result=ERROR 로 남겨 재전송을 허용한다).
+    if ((error as { code?: string }).code !== 'P2002') throw error;
     const existing = await prisma.idempotencyKey.findUnique({ where: { scope_key: { scope, key } } });
     return { status: 'DUPLICATE', resourceId: existing?.resourceId ?? null };
   }

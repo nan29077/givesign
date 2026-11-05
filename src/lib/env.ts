@@ -70,6 +70,25 @@ const DEFAULT_PIN_SUCCESS_CODES = '0000,OK,SUCCESS,MOCK';
 const MOCK_ONLY_PIN_CODES = ['MOCK'];
 
 /**
+ * PIN 완료 콜백의 성공 코드 목록을 정한다.
+ *
+ * 운영 부팅 점검만으로는 스테이징(실결제사 + 실제 빌키) 검수 환경을 막지 못한다. 그래서
+ * 결제사가 mock 이 아니면 **환경과 무관하게**
+ *  - mock 전용 코드(MOCK)를 뺀다.
+ *  - 성공 코드를 명시하지 않았으면 기본값('0000,OK,SUCCESS,MOCK')을 쓰지 않고 빈 목록으로 둔다
+ *    (모든 콜백이 인증 실패가 되어 승인이 실행되지 않는다 — fail-closed).
+ */
+export function resolvePinSuccessCodes(provider: string, raw: string | undefined): string[] {
+  const explicit = raw !== undefined && raw.trim() !== '';
+  if (provider !== 'mock' && !explicit) return [];
+  const codes = (explicit ? raw! : DEFAULT_PIN_SUCCESS_CODES)
+    .split(',')
+    .map((v) => v.trim().toUpperCase())
+    .filter(Boolean);
+  return provider === 'mock' ? codes : codes.filter((c) => !MOCK_ONLY_PIN_CODES.includes(c));
+}
+
+/**
  * 헥토 PIN 인증창 발급이 아직 mock 구현인지 여부.
  *
  * `src/server/adapters/payment/hecto.ts` 의 `requestPinLink()` 는 연동규격서를 받지 못해
@@ -150,10 +169,7 @@ export const env = {
      * 이 목록에 없는 코드는 인증 실패로 처리하고 승인(출금)을 실행하지 않는다.
      * 실연동 시 결제사 규격의 성공 코드로 교체한다.
      */
-    pinSuccessCodes: str('PAYMENT_PIN_SUCCESS_CODES', DEFAULT_PIN_SUCCESS_CODES)
-      .split(',')
-      .map((v) => v.trim().toUpperCase())
-      .filter(Boolean),
+    pinSuccessCodes: resolvePinSuccessCodes(str('PAYMENT_PROVIDER', 'mock'), process.env.PAYMENT_PIN_SUCCESS_CODES),
     /**
      * PIN 완료 콜백을 보낼 수 있는 결제사 IP 허용목록 (콤마 구분).
      *
@@ -381,7 +397,11 @@ export function assertProductionSafety(): string[] {
       'PAYMENT_PIN_SUCCESS_CODES 가 설정되지 않았습니다. 운영에서는 결제사 규격의 실제 성공 코드를 지정해야 합니다.',
     );
   }
-  const mockCodes = env.payment.pinSuccessCodes.filter((c) => MOCK_ONLY_PIN_CODES.includes(c));
+  // 실결제사에서는 mock 코드가 자동으로 빠지지만(resolvePinSuccessCodes), 설정값 자체도 고치도록 알린다.
+  const mockCodes = (process.env.PAYMENT_PIN_SUCCESS_CODES ?? '')
+    .split(',')
+    .map((v) => v.trim().toUpperCase())
+    .filter((c) => MOCK_ONLY_PIN_CODES.includes(c));
   if (mockCodes.length > 0) {
     problems.push(`PAYMENT_PIN_SUCCESS_CODES 에 mock 전용 코드가 남아 있습니다: ${mockCodes.join(', ')}`);
   }

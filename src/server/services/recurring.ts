@@ -564,12 +564,23 @@ async function runOne(
     // 실패 확정: 실패 기록으로 바꾸고 그 주기의 멱등키를 풀어 재시도를 허용한다.
     await prisma.recurringRun.update({ where: { id: run.id }, data: { status: 'FAILED', reason: run.reason ?? '결제 실패 확정' } });
     await prisma.idempotencyKey.deleteMany({ where: { scope: 'charge', key: `recurring:${r.id}:${run.monthKey}` } });
+    // 이 주기의 실패라면 약정의 실패 횟수에도 반영한다(아래 (4) 의 판정 근거).
+    if (run.monthKey === cycle) {
+      await prisma.recurringDonation.update({ where: { id: r.id }, data: { failCount: { increment: 1 } } });
+      r.failCount += 1;
+    }
   }
 
   // (4) 이 주기의 실패 횟수(건너뜀은 세지 않는다). 이미 한도에 닿았으면 정지.
-  const failures = await prisma.recurringRun.count({ where: { recurringId: r.id, monthKey: cycle, status: 'FAILED' } });
+  //
+  // 재개(RESUME)·출금일 변경은 failCount 를 0 으로 되돌린다. 실행 기록(FAILED)만 세면 재개 전에 쌓인
+  // 같은 달 실패 3건이 그대로 세어져, 잔액을 채우고 재개해도 한 번도 시도하지 않고 다시 정지된다.
+  // 그래서 "이 주기의 실패 기록" 과 "마지막 초기화 이후 실패 횟수(failCount)" 중 작은 값을 쓴다.
+  const failedRuns = await prisma.recurringRun.count({ where: { recurringId: r.id, monthKey: cycle, status: 'FAILED' } });
+  const failures = Math.min(failedRuns, r.failCount);
   if (failures >= RECURRING_MAX_ATTEMPTS) {
     await prisma.recurringDonation.update({ where: { id: r.id }, data: { status: 'SUSPENDED', suspendedAt: new Date(), failCount: failures } });
+    await sendMtForPayer(r.payerId, tpl.tplRecurringSuspended({ merchantName: r.merchant.displayName, amount: r.amount }), null, r.merchantId).catch(() => undefined);
     return { status: 'FAILED', reason: '실패 한도 초과', suspended: true };
   }
 

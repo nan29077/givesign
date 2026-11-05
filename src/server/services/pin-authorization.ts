@@ -183,6 +183,27 @@ export async function completePinAuthorization(input: PinCallbackInput): Promise
   try {
     paid = await executePayment(session.chargeId);
   } catch (e) {
+    // 승인 단계(PENDING_PAYMENT)로 넘어간 뒤의 예외면 결제사에 승인 요청이 나갔을 수 있다.
+    // 세션을 되돌려 재시도를 허용하면 안 되고(다음 콜백은 어차피 INVALID_STATE), 실패로 닫아도 안 된다.
+    // 결과 미확인으로 남기고 정리 배치(escalateStalePaymentTransactions)가 대사 큐로 올린다.
+    const after = await prisma.charge
+      .findUnique({ where: { id: session.chargeId }, select: { status: true } })
+      .catch(() => null);
+    if (after && after.status !== 'PENDING_PIN') {
+      logger.error('PIN 승인 처리 중 예외(승인 단계 이후) — 결과 확인 대기로 둡니다', {
+        sessionId: session.id, chargeId: session.chargeId, status: after.status, message: (e as Error).message,
+      });
+      return {
+        ok: false,
+        code: 'PAYMENT_FAILED',
+        chargeId: session.chargeId,
+        status: after.status,
+        message:
+          after.status === 'PENDING_PAYMENT'
+            ? '결제 결과를 확인하는 중입니다. 확인되는 대로 문자로 안내드립니다.'
+            : '결제를 처리하는 중 오류가 발생했습니다. 후원 내역에서 결과를 확인해 주세요.',
+      };
+    }
     await prisma.paymentPinSession
       .updateMany({
         where: { id: session.id, status: 'COMPLETED' },

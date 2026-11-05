@@ -7,7 +7,9 @@ import { filterContent } from './content-filter';
 import { openCampaigns } from './fundraising';
 import { checkLimits } from './limits';
 import { acquireIdempotency } from './idempotency';
-import { executePayment, loadBannedWords, resolvePaymentMode, startPinAuthorization } from './charge-flow';
+import { executePayment, loadBannedWords, startPinAuthorization } from './charge-flow';
+import { failPreparedCharge } from './payment-recovery';
+import { logger } from '@/lib/logger';
 import { allowLegacyWebInstantPay } from '@/lib/env';
 import type { ChargeStatus } from '@/generated/prisma/enums';
 
@@ -147,7 +149,9 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         status: 'RECEIVED',
         statusReason: '후원 페이지 웹 후원',
         pointStatus: initialPointStatus(),
-        paymentMode: resolvePaymentMode(merchant.paymentMode),
+        // 웹 후원은 결제사 PIN 인증(또는 deprecated 즉시 결제) 경로만 탄다. MO 즉시결제(DIRECT_TRIGGER)는
+        // 웹에 없으므로 기관 설정과 무관하게 CONFIRM_LINK 로 남긴다(표시·감사 기록이 실제 흐름과 맞게).
+        paymentMode: 'CONFIRM_LINK',
         campaignId,
         anonymous: Boolean(input.anonymous),
         source: input.source ?? 'WEB',
@@ -164,7 +168,19 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
 
   // 기본 경로: 결제사 PIN 입력 링크를 문자로 보낸다. 이 시점에는 출금이 일어나지 않는다.
   if (resolveWebChargeChannel() === 'PIN') {
-    const pin = await startPinAuthorization(charge.id);
+    let pin: Awaited<ReturnType<typeof startPinAuthorization>>;
+    try {
+      pin = await startPinAuthorization(charge.id);
+    } catch (e) {
+      // 승인 요청 전 단계의 예외다. RECEIVED 고아로 남기지 않고 출금 없는 실패로 닫는다.
+      logger.error('웹 후원 PIN 인증 시작 중 예외 — 결제를 실패로 닫습니다', { chargeId: charge.id, message: (e as Error).message });
+      const failed = await failPreparedCharge(charge.id, 'PIN 인증 준비 중 오류(출금 없음)').catch(() => false);
+      pin = {
+        ok: false,
+        status: failed ? 'PAYMENT_FAILED' : 'RECEIVED',
+        message: 'PIN 인증을 준비하지 못했습니다. 결제는 진행되지 않았습니다. 잠시 후 다시 시도해 주세요.',
+      };
+    }
     return {
       ok: pin.ok,
       status: pin.status,

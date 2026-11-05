@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import { encrypt } from '@/lib/crypto';
@@ -12,7 +12,7 @@ import {
 } from '@/server/services/auto-settlement';
 import { getSettlementSummary } from '@/server/services/settlement';
 import { resolveSettlementDays, buildUpcomingPayouts } from '@/server/services/settlement-schedule';
-import { resetMockPayoutState } from '@/server/adapters/payout';
+import { resetMockPayoutState, mockPayoutAdapter } from '@/server/adapters/payout';
 import { toDateKey } from '@/lib/business-day';
 
 /**
@@ -42,6 +42,7 @@ async function account(merchantId: string, accountNo = '11122233344455', verifie
     },
     update: {
       accountEnc: encrypt(accountNo), accountTail4: accountNo.slice(-4),
+      holderNameEnc: encrypt('김가맹'), holderMasked: '김*맹',
       verified, verifiedAt: verified ? new Date() : null,
     },
   });
@@ -280,5 +281,41 @@ describe('배치와 모니터링', () => {
     expect(dash.paidToday.count).toBe(1);
     expect(dash.paidToday.amount).toBeGreaterThan(0n);
     expect(dash.failed).toHaveLength(0);
+  });
+});
+
+describe('이체 요청의 예금주 (점검 2026-11-05 H-4)', () => {
+  it('[19] 자동 지급은 마스킹 값이 아니라 복호화한 예금주 원문을 지급대행에 보낸다', async () => {
+    await account(fx.merchantId);
+    await fund(3, 30);
+    const spy = vi.spyOn(mockPayoutAdapter, 'transfer');
+    try {
+      const result = await runMerchantPayout(fx.merchantId);
+      expect(result.status).toBe('PAID');
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![0].holderName).toBe('김가맹');
+      expect(spy.mock.calls[0]![0].holderName).not.toContain('*');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('[20] 지급 실패 재시도의 재이체도 예금주 원문을 보낸다', async () => {
+    await account(fx.merchantId, '11122233340000');
+    await fund(3, 30);
+    await runMerchantPayout(fx.merchantId);
+    const req = await prisma.settlementRequest.findFirstOrThrow({ where: { merchantId: fx.merchantId } });
+    await account(fx.merchantId, '11122233344455');
+    resetMockPayoutState();
+
+    const spy = vi.spyOn(mockPayoutAdapter, 'transfer');
+    try {
+      const retry = await retryPayout(req.id);
+      expect(retry.ok).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![0].holderName).toBe('김가맹');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

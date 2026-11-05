@@ -23,7 +23,7 @@ import { DOCUMENT_LINK_TTL_DAYS, ensureDocumentSubmission, isDocumentProduct } f
 import * as tpl from './mt-templates';
 import { calculateFees, postChargeSettlement } from './settlement';
 import { notifySuperAdmins } from './notifications';
-import type { ChargeStatus, MoProcessResult, PaymentMode } from '@/generated/prisma/enums';
+import type { ChargeStatus, MoProcessResult, PaymentMode, PaymentTxStatus } from '@/generated/prisma/enums';
 import type { TemplateOutput } from './mt-templates';
 
 /** 결제 안내 문자에 담기는 메시지 최대 길이 */
@@ -82,41 +82,60 @@ async function sendMtDetailed(input: {
   // 알림톡이 실패하면 아래 문자 경로로 그대로 대체 발송한다(fallback=true 로 기록).
   let fallback = false;
   const route = input.merchantSent ? null : await resolveAlimtalkRoute(input.merchantId, template.code).catch(() => null);
+  // 발송 이력 행은 **발송 전에** 만든다(문자 경로와 같은 순서). 보낸 뒤에 만들면 생성이 실패했을 때
+  // "보냈지만 기록 없는" 건이 생기고, 예외가 호출부로 번져 월간 안내 등이 실패로 집계된다.
+  // 알림톡이 실패하면 같은 행을 문자 대체 발송(fallback=true)으로 바꿔 이어 쓴다.
+  let row: { id: string } | null = null;
   if (route) {
+    row = await prisma.mtOutboundMessage.create({
+      data: {
+        id: newId(),
+        phoneHash: hashPhone(input.phone),
+        phoneEnc: encrypt(normalizePhone(input.phone)),
+        phoneMasked: maskPhone(input.phone),
+        fromNumber: env.mt.fromNumber,
+        messageType: decideMessageType(template.text),
+        templateCode: input.templateCodeLabel ?? template.code,
+        bodyMasked: template.masked,
+        chargeId: input.chargeId ?? null,
+        merchantId: input.merchantId ?? null,
+        idempotencyKey: input.idempotencyKey ?? null,
+        merchantSent: input.merchantSent ?? false,
+        channel: 'ALIMTALK',
+      },
+    });
+    // sendAlimtalk 은 어댑터 예외도 결과 값으로 돌려준다(예외를 던지지 않는다).
     const at = await sendAlimtalk(normalizePhone(input.phone), route, template.text);
     if (at.ok) {
-      const atRow = await prisma.mtOutboundMessage.create({
-        data: {
-          id: newId(),
-          phoneHash: hashPhone(input.phone),
-          phoneEnc: encrypt(normalizePhone(input.phone)),
-          phoneMasked: maskPhone(input.phone),
-          fromNumber: env.mt.fromNumber,
-          messageType: decideMessageType(template.text),
-          templateCode: input.templateCodeLabel ?? template.code,
-          bodyMasked: template.masked,
-          chargeId: input.chargeId ?? null,
-          merchantId: input.merchantId ?? null,
-          idempotencyKey: input.idempotencyKey ?? null,
-          merchantSent: input.merchantSent ?? false,
-          channel: 'ALIMTALK',
-          status: 'SENT',
-          providerCode: `alimtalk:${at.provider}`,
-          providerMessageId: at.messageId,
-          attempts: 1,
-          sentAt: new Date(),
-        },
-      });
+      // 이미 발송됐다. 이후 기록 갱신이 실패해도 발송 결과(성공)를 바꾸지 않는다.
+      await prisma.mtOutboundMessage
+        .update({
+          where: { id: row.id },
+          data: {
+            status: 'SENT',
+            providerCode: `alimtalk:${at.provider}`,
+            providerMessageId: at.messageId,
+            attempts: { increment: 1 },
+            sentAt: new Date(),
+          },
+        })
+        .catch((e) => logger.error('알림톡 발송 이력 갱신 실패', { id: row!.id, message: (e as Error).message }));
       if (input.chargeId) {
-        await prisma.charge.update({ where: { id: input.chargeId }, data: { mtStatus: 'SENT' } });
+        await prisma.charge
+          .update({ where: { id: input.chargeId }, data: { mtStatus: 'SENT' } })
+          .catch((e) => logger.error('결제 건 문자 상태 갱신 실패', { chargeId: input.chargeId, message: (e as Error).message }));
       }
-      return { ok: true, id: atRow.id, channel: 'ALIMTALK', fallback: false };
+      return { ok: true, id: row.id, channel: 'ALIMTALK', fallback: false };
     }
     fallback = true;
     logger.warn('알림톡 발송 실패 — 문자로 대체합니다', { template: template.code, code: at.code });
+    await prisma.mtOutboundMessage.update({
+      where: { id: row.id },
+      data: { channel: 'SMS', fallback: true },
+    });
   }
 
-  const row = await prisma.mtOutboundMessage.create({
+  row ??= await prisma.mtOutboundMessage.create({
     data: {
       id: newId(),
       phoneHash: hashPhone(input.phone),
@@ -224,6 +243,45 @@ async function raiseUnknownPaymentAlert(
     // 알림 생성 실패가 결제 처리 흐름을 막으면 안 된다. 로그로만 남긴다.
     logger.error('결제 미확인 알림 생성 실패', { chargeId, message: (e as Error).message });
   }
+}
+
+/** 승인 결과를 아직 모르는(결제사에 요청이 나갔을 수 있는) 결제 거래 상태 */
+const IN_FLIGHT_TXN: PaymentTxStatus[] = ['REQUESTED', 'TIMEOUT', 'UNKNOWN'];
+/** 승인 요청 전 단계의 결제 상태. 이 상태에서 진행 중 거래가 발견되면 PENDING_PAYMENT 로 올려 대사한다. */
+const PRE_PAYMENT_STATUSES: ChargeStatus[] = ['RECEIVED', 'PENDING_PIN', 'PENDING_CONFIRM'];
+
+/**
+ * 결제 거래를 결과 미확인(UNKNOWN)으로 올리고 관리자 대사 큐에 넣는다.
+ *
+ * 돈이 빠졌을 수 있는 건이므로 실패로 닫지 않는다. 결제 건은 PENDING_PAYMENT 로 유지(사유만 기록)하고
+ * 한도 예약도 되돌리지 않는다. 어떤 기록이 실패해도 예외를 던지지 않는다 — 여기서 던지면
+ * 거래가 REQUESTED 에 남아 대사 큐에서 사라진다. 남은 건은 정리 배치(escalateStalePaymentTransactions)가 다시 올린다.
+ */
+async function markPaymentUnknown(
+  chargeId: string,
+  txn: { id: string; orderNo: string },
+  amount: bigint,
+  resultCode: string,
+  resultMessage: string | null,
+) {
+  await prisma.paymentTransaction
+    .updateMany({
+      where: { id: txn.id, status: { in: IN_FLIGHT_TXN } },
+      data: { status: 'UNKNOWN', resultCode, resultMessage: resultMessage?.slice(0, 500) ?? null },
+    })
+    .catch((e) => logger.error('결제 거래 UNKNOWN 전이 실패', { chargeId, transactionId: txn.id, message: (e as Error).message }));
+  try {
+    const cur = await prisma.charge.findUnique({ where: { id: chargeId }, select: { status: true } });
+    if (cur && PRE_PAYMENT_STATUSES.includes(cur.status)) {
+      // 수동 대사는 PENDING_PAYMENT 결제만 확정할 수 있다. 승인 단계 전 상태에 머문 건은 올려 둔다.
+      await setStatus(chargeId, 'PENDING_PAYMENT', '결제 결과 미확인 — 관리자 확인 대기');
+    } else if (cur?.status === 'PENDING_PAYMENT') {
+      await prisma.charge.update({ where: { id: chargeId }, data: { statusReason: '결제 결과 미확인 — 관리자 확인 대기' } });
+    }
+  } catch (e) {
+    logger.error('결제 건 미확인 사유 기록 실패', { chargeId, message: (e as Error).message });
+  }
+  await raiseUnknownPaymentAlert(chargeId, txn.id, txn.orderNo, amount);
 }
 
 async function setStatus(chargeId: string, to: ChargeStatus, reason?: string, actor = 'system') {
@@ -493,13 +551,17 @@ export async function handleMoInbound(inbound: MoInbound): Promise<MoHandleResul
   let moRow;
   try {
     moRow = await createOrReuseMoRow(inbound, routed, ph, dup?.id ?? null);
-  } catch {
-    // 동시 재전송 경합
+  } catch (error) {
+    // 동시 재전송 경합만 중복으로 본다(유니크 위반 P2002 + 이긴 쪽 행이 실제로 있을 때).
+    // DB 순단·암호화 실패 같은 다른 예외를 중복으로 돌려주면, "예외 = 재시도" 로 설계된
+    // EMMA 폴링 수신기가 저장되지 않은 문자를 처리 완료로 소비해 문자가 사라진다.
+    if ((error as { code?: string }).code !== 'P2002') throw error;
     const again = await prisma.moInboundMessage.findUnique({
       where: providerKey,
       select: { id: true },
     });
-    return { result: 'DUPLICATE', moMessageId: again?.id, message: '중복 수신(경합)으로 무시되었습니다.' };
+    if (!again) throw error;
+    return { result: 'DUPLICATE', moMessageId: again.id, message: '중복 수신(경합)으로 무시되었습니다.' };
   }
 
   try {
@@ -773,6 +835,8 @@ async function processMoRow(
         paymentMode: 'CONFIRM_LINK',
         pointStatus: initialPointStatus(),
         campaignId: campaignMatch.campaign?.id ?? null,
+        // 유입 경로: 문자 후원은 캠페인 키워드 매칭 여부와 무관하게 SMS 로 남긴다(CLAUDE.md 11항).
+        source: 'SMS',
       },
     });
   } catch (error) {
@@ -933,6 +997,19 @@ export async function startPinAuthorization(
 
   // 이미 발급된 세션이 있으면 새로 만들지 않는다(문자 재수신 시 링크가 늘어나는 것을 막는다).
   const existing = await prisma.paymentPinSession.findUnique({ where: { chargeId } });
+  if (existing && existing.status === 'PENDING' && existing.expiresAt.getTime() < Date.now()) {
+    // 유효시간이 지난 세션은 만료 배치를 기다리지 않고 그 자리에서 닫는다.
+    // "이미 발송된 링크가 있습니다" 로 성공을 돌려주면 쓸 수 없는 링크를 기다리게 된다.
+    // (순환 import 를 피하려고 필요할 때만 불러온다)
+    const { expirePinSessionIfStale } = await import('./pin-authorization');
+    await expirePinSessionIfStale(chargeId);
+    const after = await prisma.charge.findUnique({ where: { id: chargeId }, select: { status: true } });
+    return {
+      ok: false,
+      status: after?.status ?? 'PAYMENT_FAILED',
+      message: 'PIN 입력 시간이 지나 결제가 취소되었습니다. 결제는 진행되지 않았습니다. 사회복지기관 번호로 문자를 다시 보내 주세요.',
+    };
+  }
   if (existing) {
     return {
       ok: existing.status === 'PENDING',
@@ -1003,9 +1080,23 @@ export async function startPinAuthorization(
         expiresAt: issued.data.expiresAt,
       },
     });
-  } catch {
+  } catch (error) {
     // 동시 요청 경합: charge_id UNIQUE 에 걸린 쪽은 링크를 또 보내지 않는다.
-    const now = await prisma.paymentPinSession.findUnique({ where: { chargeId } });
+    // 유니크 위반이 아닌 오류(DB 순단 등)면 세션 없이 PENDING_PIN 에 남는 고아가 된다.
+    // 세션이 없으면 결제사 콜백도 승인으로 이어지지 않으므로(세션 조회 실패) 출금 없는 실패로 닫는다.
+    const now = await prisma.paymentPinSession.findUnique({ where: { chargeId } }).catch(() => null);
+    if (!now && (error as { code?: string }).code !== 'P2002') {
+      logger.error('PIN 인증 세션 저장 실패 — 결제를 실패로 닫습니다', {
+        chargeId,
+        message: (error as Error).message,
+      });
+      await setStatus(chargeId, 'PAYMENT_FAILED', 'PIN 인증 세션 저장 실패').catch(() => undefined);
+      return {
+        ok: false,
+        status: 'PAYMENT_FAILED',
+        message: 'PIN 인증을 준비하지 못했습니다. 결제는 진행되지 않았습니다. 잠시 후 사회복지기관 번호로 문자를 다시 보내 주세요.',
+      };
+    }
     return {
       ok: Boolean(now),
       status: 'PENDING_PIN',
@@ -1106,6 +1197,20 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
   // 뒤 요청은 앞 트랜잭션이 끝날 때까지 대기했다가, 예약이 반영된 집계를 보고 한도 판정을 받는다.
   const reservedAt = new Date();
   const decision = await prisma.$transaction(async (tx) => {
+    // 결제 트랜잭션은 거래당 1건만 "진행 중" 일 수 있다.
+    // 승인 결과를 아직 모르는 행(REQUESTED·TIMEOUT·UNKNOWN)이 있으면 한도 집계·재고는 이미 예약돼 있고,
+    // 결제사에 승인 요청이 나갔을 수도 있다. 다시 예약하거나 다시 승인을 부르지 않는다(아래에서 대사 큐로 보낸다).
+    const existing = await tx.paymentTransaction.findFirst({
+      where: { chargeId },
+      orderBy: { requestedAt: 'desc' },
+    });
+    if (existing?.status === 'APPROVED') {
+      return { limit: null, txn: existing, alreadyApproved: true, inFlight: false, stockError: null, reservedAt };
+    }
+    if (existing && IN_FLIGHT_TXN.includes(existing.status)) {
+      return { limit: null, txn: existing, alreadyApproved: false, inFlight: true, stockError: null, reservedAt: existing.requestedAt };
+    }
+
     const blockedNow = await tx.blockedPayer.findUnique({
       where: { merchantId_payerId: { merchantId: charge.merchantId, payerId: payer.id } },
     });
@@ -1118,7 +1223,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
       consumeVelocity: false,
       tx,
     });
-    if (!limit.ok) return { limit, txn: null, alreadyApproved: false, stockError: null };
+    if (!limit.ok) return { limit, txn: null, alreadyApproved: false, inFlight: false, stockError: null, reservedAt };
 
     // 실물 상품은 여기서 재고를 잡는다(예약).
     //
@@ -1144,19 +1249,11 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
         });
         return null;
       });
-      if (stockError) return { limit, txn: null, alreadyApproved: false, stockError };
+      if (stockError) return { limit, txn: null, alreadyApproved: false, inFlight: false, stockError, reservedAt };
     }
 
-    // 결제 트랜잭션은 거래당 1건만 생성한다(주문번호를 멱등키로 재사용).
-    const existing = await tx.paymentTransaction.findFirst({
-      where: { chargeId },
-      orderBy: { requestedAt: 'desc' },
-    });
-    if (existing?.status === 'APPROVED') return { limit, txn: existing, alreadyApproved: true };
-
-    const row =
-      existing ??
-      (await tx.paymentTransaction.create({
+    // 이전 거래가 실패·취소로 끝났으면(예약도 이미 되돌렸다) 새 주문번호로 새 행을 만든다.
+    const row = await tx.paymentTransaction.create({
         data: {
           id: newId(),
           chargeId,
@@ -1171,13 +1268,13 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
           // 그러면 A월에 잡은 한도를 B월에서 빼게 된다.
           requestedAt: reservedAt,
         },
-      }));
+      });
 
     // 승인 결과를 기다리지 않고 집계를 먼저 잡아둔다(예약).
     // 잠금 밖에서 승인 후에 반영하면, 그사이 들어온 같은 후원자의 요청이
     // 이 건이 빠진 집계를 읽고 함께 통과해 한도를 넘긴다. 실패하면 아래에서 되돌린다.
     await commitCounters(payer.id, charge.merchantId, charge.amount, reservedAt, tx);
-    return { limit, txn: row, alreadyApproved: false, stockError: null };
+    return { limit, txn: row, alreadyApproved: false, inFlight: false, stockError: null, reservedAt };
   }, {
     // 기본값(5초)에 기대지 않고 명시한다.
     // 이 트랜잭션은 후원자 행을 FOR UPDATE 로 잠그므로, 같은 후원자가 연속으로 누르면
@@ -1203,7 +1300,23 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
   // 여기서 일반 실패 문자를 함께 보내면 한 번의 실패에 문자가 두 통 나간다.
   const recurringCharge = charge.channel === 'RECURRING';
 
-  const limitNow = decision.limit;
+  if (decision.alreadyApproved) {
+    return { ok: true, status: 'PAYMENT_SUCCESS', message: '이미 승인된 결제입니다.' };
+  }
+
+  // 결과를 모르는 진행 중 거래로 재진입했다. 승인을 다시 부르면 이중 출금 위험이 있고,
+  // 실패로 닫으면 출금된 돈이 정산되지 않는다. 결과 미확인(UNKNOWN)으로 대사 큐에 올린다.
+  if (decision.inFlight) {
+    const t = decision.txn!;
+    await markPaymentUnknown(chargeId, t, charge.amount, 'REENTRY_IN_FLIGHT', '진행 중인 결제로 다시 요청됨 — 결제사 원장과 대사가 필요합니다.');
+    return {
+      ok: false,
+      status: 'PENDING_PAYMENT',
+      message: '결제 결과를 확인하는 중입니다. 확인되는 대로 문자로 안내드립니다.',
+    };
+  }
+
+  const limitNow = decision.limit!;
   if (!limitNow.ok) {
     await setStatus(chargeId, 'LIMIT_BLOCKED', `${limitNow.code}: ${limitNow.message}`);
     await prisma.riskDetection.create({
@@ -1228,9 +1341,6 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     return { ok: false, status: 'LIMIT_BLOCKED', message: limitNow.message ?? '이용 한도를 초과했습니다.' };
   }
 
-  if (decision.alreadyApproved) {
-    return { ok: true, status: 'PAYMENT_SUCCESS', message: '이미 승인된 결제입니다.' };
-  }
   const txn = decision.txn!;
 
   // 여기부터 결제대행 호출 직전까지의 구간.
@@ -1265,61 +1375,103 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
   let approved: { providerTid: string; approvedAt: Date } | null = null;
   let failure: { code?: string; message?: string } | null = null;
 
-  try {
-    const res = await adapter.approve({
-      orderNo: txn.orderNo,
-      amount: charge.amount,
-      billKey: decryptBillKey(token.billKeyEnc),
-      productName: `${charge.merchant.displayName} 문자후원`,
-      buyerName: charge.displayName,
-    });
-    await prisma.paymentAttempt.create({
-      data: {
-        id: newId(), transactionId: txn.id, attemptNo, operation: 'APPROVE',
-        responseMasked: { ok: res.ok, code: res.code ?? null, message: res.message ?? null } as object,
-        latencyMs: Date.now() - started,
-        errorCode: res.ok ? null : res.code ?? null,
-        errorMessage: res.ok ? null : res.message ?? null,
-      },
-    });
-    if (res.ok && res.data) approved = { providerTid: res.data.providerTid, approvedAt: res.data.approvedAt };
-    else failure = { code: res.code, message: res.message };
-  } catch (e) {
-    // 타임아웃/네트워크 오류: 반드시 거래결과조회로 최종 상태를 확정한다.
-    const isTimeout = e instanceof MockPaymentTimeout || /timeout|ETIMEDOUT|ECONNRESET/i.test((e as Error).message);
-    await prisma.paymentAttempt.create({
-      data: {
-        id: newId(), transactionId: txn.id, attemptNo, operation: 'APPROVE',
-        latencyMs: Date.now() - started, errorCode: isTimeout ? 'TIMEOUT' : 'ERROR',
-        errorMessage: (e as Error).message,
-      },
-    });
-    attemptNo += 1;
-    await prisma.paymentTransaction.update({ where: { id: txn.id }, data: { status: 'TIMEOUT' } });
+  // 이 구간의 기록(시도 이력 등)은 실패해도 예외를 밖으로 내보내지 않는다.
+  // 승인 요청이 이미 나간 뒤라, 여기서 throw 하면 거래가 REQUESTED 로 남아 대사 큐에도 잡히지 않는다.
+  const safeWrite = async (what: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e) {
+      logger.error(`결제 기록 실패(${what}) — 결과 판정은 계속합니다`, { chargeId, transactionId: txn.id, message: (e as Error).message });
+    }
+  };
 
-    // 거래결과조회 자체가 실패해도 예외를 밖으로 내보내지 않는다.
-    // 여기서 throw 하면 결제가 PENDING_PAYMENT 로 영구히 멈춰 아무도 복구할 수 없다.
-    // 조회 불가 = "결과 미확인(UNKNOWN)" 으로 확정하고 관리자 확인 큐로 보낸다.
+  /** 거래결과조회로 최종 상태를 확정한다. 조회 불가·알 수 없는 상태는 UNKNOWN(대사)이다. */
+  type Settled = { approved: { providerTid: string; approvedAt: Date } | null; failure: { code?: string; message?: string } | null };
+  const settleByInquiry = async (): Promise<Settled> => {
     let inq: Awaited<ReturnType<typeof adapter.inquire>> | null = null;
     try {
       inq = await adapter.inquire(txn.orderNo);
     } catch (inqErr) {
       logger.error('거래결과조회 실패', { chargeId, orderNo: txn.orderNo, message: (inqErr as Error).message });
     }
-    await prisma.paymentAttempt.create({
-      data: {
-        id: newId(), transactionId: txn.id, attemptNo, operation: 'INQUIRE',
-        responseMasked: { status: inq?.data?.status ?? 'UNKNOWN' } as object,
-        errorCode: inq ? null : 'INQUIRE_ERROR',
-      },
-    });
+    const inquiryAttempt = attemptNo;
+    attemptNo += 1;
+    await safeWrite('조회 이력', () =>
+      prisma.paymentAttempt.create({
+        data: {
+          id: newId(), transactionId: txn.id, attemptNo: inquiryAttempt, operation: 'INQUIRE',
+          responseMasked: { status: inq?.data?.status ?? 'UNKNOWN' } as object,
+          errorCode: inq ? null : 'INQUIRE_ERROR',
+        },
+      }),
+    );
     if (inq?.ok && inq.data?.status === 'APPROVED') {
-      approved = { providerTid: inq.data.providerTid ?? txn.orderNo, approvedAt: new Date() };
-    } else if (inq?.ok && inq.data?.status === 'FAILED') {
-      failure = { code: 'TIMEOUT_FAILED', message: '결제가 완료되지 않았습니다.' };
-    } else {
-      failure = { code: 'UNKNOWN', message: '결제 결과를 확인할 수 없습니다. 관리자 확인이 필요합니다.' };
+      return { approved: { providerTid: inq.data.providerTid ?? txn.orderNo, approvedAt: new Date() }, failure: null };
     }
+    if (inq?.ok && inq.data?.status === 'FAILED') {
+      return { approved: null, failure: { code: 'TIMEOUT_FAILED', message: '결제가 완료되지 않았습니다.' } };
+    }
+    return { approved: null, failure: { code: 'UNKNOWN', message: '결제 결과를 확인할 수 없습니다. 관리자 확인이 필요합니다.' } };
+  };
+
+  let res: Awaited<ReturnType<typeof adapter.approve>> | null = null;
+  let thrown: unknown = null;
+  try {
+    res = await adapter.approve({
+      orderNo: txn.orderNo,
+      amount: charge.amount,
+      billKey: decryptBillKey(token.billKeyEnc),
+      productName: `${charge.merchant.displayName} 문자후원`,
+      buyerName: charge.displayName,
+    });
+  } catch (e) {
+    thrown = e;
+  }
+
+  if (res) {
+    const r = res;
+    const approveAttempt = attemptNo;
+    attemptNo += 1;
+    await safeWrite('승인 이력', () =>
+      prisma.paymentAttempt.create({
+        data: {
+          id: newId(), transactionId: txn.id, attemptNo: approveAttempt, operation: 'APPROVE',
+          responseMasked: { ok: r.ok, code: r.code ?? null, message: r.message ?? null } as object,
+          latencyMs: Date.now() - started,
+          errorCode: r.ok ? null : r.code ?? null,
+          errorMessage: r.ok ? null : r.message ?? null,
+        },
+      }),
+    );
+    if (r.ok && r.data) approved = { providerTid: r.data.providerTid, approvedAt: r.data.approvedAt };
+    else if (r.code === 'UNKNOWN') {
+      // 결제사 응답이 5xx·해석 불가(결과 불확실)다. 바로 사람 손으로 넘기지 않고 예외 경로처럼 한 번 조회한다.
+      await safeWrite('거래 상태(TIMEOUT)', () =>
+        prisma.paymentTransaction.update({ where: { id: txn.id }, data: { status: 'TIMEOUT' } }),
+      );
+      ({ approved, failure } = await settleByInquiry());
+    } else failure = { code: r.code, message: r.message };
+  } else {
+    // 타임아웃/네트워크 오류: 반드시 거래결과조회로 최종 상태를 확정한다.
+    const e = thrown as Error;
+    const isTimeout = e instanceof MockPaymentTimeout || /timeout|ETIMEDOUT|ECONNRESET/i.test(e?.message ?? '');
+    const approveAttempt = attemptNo;
+    attemptNo += 1;
+    await safeWrite('승인 예외 이력', () =>
+      prisma.paymentAttempt.create({
+        data: {
+          id: newId(), transactionId: txn.id, attemptNo: approveAttempt, operation: 'APPROVE',
+          latencyMs: Date.now() - started, errorCode: isTimeout ? 'TIMEOUT' : 'ERROR',
+          errorMessage: e?.message ?? String(thrown),
+        },
+      }),
+    );
+    await safeWrite('거래 상태(TIMEOUT)', () =>
+      prisma.paymentTransaction.update({ where: { id: txn.id }, data: { status: 'TIMEOUT' } }),
+    );
+    // 거래결과조회 자체가 실패해도 예외를 밖으로 내보내지 않는다(settleByInquiry 안에서 흡수).
+    // 조회 불가 = "결과 미확인(UNKNOWN)" 으로 확정하고 관리자 확인 큐로 보낸다.
+    ({ approved, failure } = await settleByInquiry());
   }
 
   const phone = charge.payer.phoneMasked;
@@ -1332,16 +1484,9 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     // (4) 관리자 '확인 필요' 큐(status IN UNKNOWN,TIMEOUT)가 영구히 비어 대사 자체가 불가능해진다.
     // 따라서 UNKNOWN 은 UNKNOWN 그대로 남기고 사람이 판단하도록 넘긴다.
     if (failure?.code === 'UNKNOWN') {
-      await prisma.paymentTransaction.update({
-        where: { id: txn.id },
-        data: { status: 'UNKNOWN', resultCode: 'UNKNOWN', resultMessage: failure.message ?? null },
-      });
-      // 결제 상태는 PENDING_PAYMENT 로 유지한다(실패 아님). 사유만 남긴다.
-      await prisma.charge.update({
-        where: { id: chargeId },
-        data: { statusReason: '결제 결과 미확인 — 관리자 확인 대기' },
-      });
-      await raiseUnknownPaymentAlert(chargeId, txn.id, txn.orderNo, charge.amount);
+      // 결제 상태는 PENDING_PAYMENT 로 유지한다(실패 아님). 거래만 UNKNOWN 으로 올려 대사 큐에 넣는다.
+      // 이 기록들이 실패해도 예외를 던지지 않는다 — 남은 REQUESTED·TIMEOUT 은 정리 배치가 UNKNOWN 으로 올린다.
+      await markPaymentUnknown(chargeId, txn, charge.amount, 'UNKNOWN', failure.message ?? null);
       // 실패 카운터를 올리지 않는다. 실패 문자도 보내지 않는다(이중청구 오해 방지).
       // 예약해 둔 한도 집계도 되돌리지 않는다. 실제로 출금되었을 수 있으므로
       // 되돌렸다가 다시 결제가 통과하면 그날 한도를 넘겨 이중으로 빠져나간다.
@@ -1697,4 +1842,4 @@ function normalizeTextForReserved(v: string) {
   return normalizeText(v ?? '');
 }
 
-export { sendMt, sendMtDetailed, sendMtForPayer, setStatus };
+export { sendMt, sendMtDetailed, sendMtForPayer, setStatus, markPaymentUnknown, IN_FLIGHT_TXN };

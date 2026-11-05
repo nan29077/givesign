@@ -233,7 +233,9 @@ export async function emitMerchantEvent(
             eventId,
             eventType: type,
             payload,
-            nextAttemptAt: new Date(),
+            // 즉시 전송(아래 deliverOnce)이 이 건을 쥐고 있는 동안 크론 재전송이 같은 건을 집어 가지 않도록
+            // 리스 시간만큼 뒤로 둔다. 즉시 전송이 끝나기 전에 프로세스가 죽으면 리스가 지난 뒤 크론이 보낸다.
+            nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS),
           },
         }),
       ),

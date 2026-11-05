@@ -1,5 +1,6 @@
 import { env, isLocal } from '@/lib/env';
 import { safeEqual } from '@/lib/crypto';
+import { isValidMoNumber } from '@/lib/mo-number';
 import type { AdapterInfo } from '../types';
 import { verifyMoRequest, type MoAdapter, type MoInbound } from './index';
 
@@ -16,7 +17,8 @@ import { verifyMoRequest, type MoAdapter, type MoInbound } from './index';
  * 안전 원칙
  *  - 서명/IP 검증은 공용 verifyMoRequest 를 그대로 쓴다 (운영에서 fail-closed).
  *  - 필수값이 하나라도 없으면 파싱을 실패시킨다. 임의 기본값으로 결제를 만들지 않는다.
- *  - 수신번호는 050 형식만 허용한다. 형식이 다르면 라우팅 사고이므로 즉시 거절한다.
+ *  - 수신번호는 050 형식 또는 신규 MO 번호 체계(1588-XXXX-XXXX, 숫자 12자리 — isValidMoNumber)만 허용한다.
+ *    MTONET 이 1588 번호를 담당하는지는 계약 정보가 없어 둘 다 받는다. 형식이 다르면 라우팅 사고이므로 즉시 거절한다.
  */
 
 /** 규격서 수령 시 이 표만 맞추면 된다. 앞에 있는 이름부터 우선 사용한다. */
@@ -133,8 +135,8 @@ export const mtonetMoAdapter: MoAdapter = {
     }
 
     const receivedNumber = digitsOnly(to!);
-    if (!/^050\d{7,10}$/.test(receivedNumber)) {
-      throw new Error(`MTONET MO 수신번호 형식 오류(050 번호가 아님): ${receivedNumber}`);
+    if (!isMtonetReceivedNumber(receivedNumber)) {
+      throw new Error(`MTONET MO 수신번호 형식 오류(050 또는 1588-XXXX-XXXX 번호가 아님): ${receivedNumber}`);
     }
 
     const fromNumber = digitsOnly(from!);
@@ -157,3 +159,8 @@ export const mtonetMoAdapter: MoAdapter = {
     };
   },
 };
+
+/** MTONET 이 넘기는 수신번호로 받을 수 있는 형식인가 — 050 번호 또는 신규 MO 번호(1588 + 8자리). */
+export function isMtonetReceivedNumber(digits: string): boolean {
+  return /^050\d{7,10}$/.test(digits) || isValidMoNumber(digits);
+}

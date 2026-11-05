@@ -10,6 +10,7 @@ import {
   hectoEncrypt,
   hectoDecrypt,
   hectoPaymentAdapter,
+  mapHectoInquiryStatus,
   HECTO_SPEC,
 } from '@/server/adapters/payment/hecto';
 import { AdapterNotConfiguredError } from '@/server/adapters/types';
@@ -61,9 +62,13 @@ describe('MTONET MO 어댑터 - 파싱', () => {
     }
   });
 
-  it('050 이 아닌 수신번호는 거절한다 (라우팅 사고 방지)', () => {
+  it('050·1588-XXXX-XXXX 가 아닌 수신번호는 거절한다 (라우팅 사고 방지)', () => {
     expect(() => mtonetMoAdapter.parse({ ...validPayload, callee: '15881234' })).toThrow(/050/);
     expect(() => mtonetMoAdapter.parse({ ...validPayload, callee: '01012345678' })).toThrow(/050/);
+  });
+
+  it('신규 MO 번호 체계(1588-XXXX-XXXX)도 받는다 (점검 2026-11-05)', () => {
+    expect(mtonetMoAdapter.parse({ ...validPayload, callee: '1588-1234-1234' }).receivedNumber).toBe('158812341234');
   });
 
   it('발신번호 형식이 이상하면 거절한다', () => {
@@ -214,5 +219,18 @@ describe('헥토 어댑터 - 설정 누락 시 fail-closed', () => {
     await expect(
       hectoPaymentAdapter.cancel({ orderNo: 'ORD-1', providerTid: 'T', amount: 3000n }),
     ).rejects.toBeInstanceOf(AdapterNotConfiguredError);
+  });
+});
+
+describe('헥토 거래결과조회 상태 매핑 (점검 2026-11-05)', () => {
+  it('명시적 상태만 승인·취소·실패로 보고, 빈 값·모르는 값은 PENDING(대사)으로 둔다', () => {
+    expect(mapHectoInquiryStatus('TS02')).toBe('APPROVED');
+    expect(mapHectoInquiryStatus('TS03')).toBe('CANCELED');
+    expect(mapHectoInquiryStatus('TS01')).toBe('PENDING');
+    expect(mapHectoInquiryStatus('FAILED')).toBe('FAILED');
+    expect(mapHectoInquiryStatus('')).toBe('PENDING');
+    expect(mapHectoInquiryStatus(undefined)).toBe('PENDING');
+    expect(mapHectoInquiryStatus(null)).toBe('PENDING');
+    expect(mapHectoInquiryStatus('ZZ99')).toBe('PENDING');
   });
 });
