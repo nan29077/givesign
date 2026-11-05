@@ -22,9 +22,13 @@ export default async function StudioRecurringPage() {
     orderBy: [{ status: 'asc' }, { nextChargeOn: 'asc' }],
     take: 500,
   });
-  const active = rows.filter((r) => r.status === 'ACTIVE');
-  const monthly = active.reduce((s, r) => s + r.amount, 0n);
-  const suspended = rows.filter((r) => r.status === 'SUSPENDED').length;
+  // 통계는 목록 상한(500건)과 따로 DB 에서 합산한다. 약정이 많은 기관에서 수치가 줄어 보이지 않게.
+  const [activeAgg, suspended, totalAgg] = await Promise.all([
+    prisma.recurringDonation.aggregate({ where: { merchantId, status: 'ACTIVE' }, _count: { _all: true }, _sum: { amount: true } }),
+    prisma.recurringDonation.count({ where: { merchantId, status: 'SUSPENDED' } }),
+    prisma.recurringDonation.aggregate({ where: { merchantId }, _sum: { totalAmount: true }, _count: { _all: true } }),
+  ]);
+  const monthly = activeAgg._sum.amount ?? 0n;
   const recentRuns = await prisma.recurringRun.findMany({
     where: { recurring: { merchantId } },
     orderBy: { ranAt: 'desc' },
@@ -49,12 +53,17 @@ export default async function StudioRecurringPage() {
       ) : null}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="진행 중 약정" value={`${formatNumber(active.length)}건`} tone="brand" />
+        <StatTile label="진행 중 약정" value={`${formatNumber(activeAgg._count._all)}건`} tone="brand" />
         <StatTile label="월 예상 후원액" value={formatWon(monthly)} sub="진행 중 약정 합계" />
         <StatTile label="출금 실패로 정지" value={`${formatNumber(suspended)}건`} tone={suspended ? 'danger' : 'neutral'} />
-        <StatTile label="누적 정기후원액" value={formatWon(rows.reduce((s, r) => s + r.totalAmount, 0n))} />
+        <StatTile label="누적 정기후원액" value={formatWon(totalAgg._sum.totalAmount ?? 0n)} />
       </div>
 
+      {totalAgg._count._all > rows.length ? (
+        <p className="mb-2 text-[12px] text-ink-500">
+          약정 {formatNumber(totalAgg._count._all)}건 중 {formatNumber(rows.length)}건을 표시합니다. 위 통계는 전체 기준입니다.
+        </p>
+      ) : null}
       {rows.length === 0 ? (
         <EmptyState title="아직 정기후원 약정이 없습니다" description="후원페이지의 '매월 후원하기' 로 후원자가 약정을 등록할 수 있습니다." />
       ) : (

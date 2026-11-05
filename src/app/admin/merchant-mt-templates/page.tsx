@@ -29,12 +29,12 @@ export default async function AdminMerchantMtTemplatesPage() {
 
   const [pending, recent] = await Promise.all([
     prisma.merchantMtTemplate.findMany({
-      where: { status: 'PENDING' },
+      where: { status: 'PENDING', archivedAt: null },
       orderBy: { createdAt: 'asc' },
       include: { merchant: { select: { displayName: true, code: true } } },
     }),
     prisma.merchantMtTemplate.findMany({
-      where: { status: { in: ['APPROVED', 'REJECTED'] } },
+      where: { status: { in: ['APPROVED', 'REJECTED'] }, archivedAt: null },
       orderBy: { updatedAt: 'desc' },
       take: 20,
       include: { merchant: { select: { displayName: true, code: true } } },

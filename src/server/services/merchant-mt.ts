@@ -239,7 +239,7 @@ export async function upsertMerchantTemplate(input: {
     where: { merchantId_code: { merchantId: input.merchantId, code } },
   });
   if (!existing) {
-    const count = await prisma.merchantMtTemplate.count({ where: { merchantId: input.merchantId } });
+    const count = await prisma.merchantMtTemplate.count({ where: { merchantId: input.merchantId, archivedAt: null } });
     if (count >= MERCHANT_MT_TEMPLATE_MAX) {
       return { ok: false, message: `템플릿은 ${MERCHANT_MT_TEMPLATE_MAX}개까지 등록할 수 있습니다.` };
     }
@@ -259,8 +259,16 @@ export async function upsertMerchantTemplate(input: {
     reviewedBy: null,
   };
 
+  if (existing?.archivedAt) {
+    // 보관한 템플릿을 같은 코드로 다시 저장하면 되살린다. 상한은 사용 중인 것만 센다.
+    const count = await prisma.merchantMtTemplate.count({ where: { merchantId: input.merchantId, archivedAt: null } });
+    if (count >= MERCHANT_MT_TEMPLATE_MAX) {
+      return { ok: false, message: `템플릿은 ${MERCHANT_MT_TEMPLATE_MAX}개까지 등록할 수 있습니다.` };
+    }
+  }
+
   const template = existing
-    ? await prisma.merchantMtTemplate.update({ where: { id: existing.id }, data })
+    ? await prisma.merchantMtTemplate.update({ where: { id: existing.id }, data: { ...data, archivedAt: null } })
     : await prisma.merchantMtTemplate.create({
         data: { id: newId(), merchantId: input.merchantId, code, ...data },
       });
@@ -427,7 +435,8 @@ export async function sendMerchantMt(input: {
   const template = await prisma.merchantMtTemplate.findUnique({
     where: { merchantId_code: { merchantId: input.merchantId, code: input.templateCode } },
   });
-  if (!template) {
+  // 삭제(보관)한 템플릿으로는 보내지 않는다.
+  if (!template || template.archivedAt) {
     return { ok: false, code: 'TEMPLATE_NOT_FOUND', message: '등록되지 않은 템플릿 코드입니다.' };
   }
   if (template.status !== 'APPROVED') {

@@ -157,9 +157,12 @@ export function JsonView({ value, maxLength = 1200 }: { value: unknown; maxLengt
 export function MerchantOptions({
   merchants,
   allLabel = '전체',
+  truncated = false,
 }: {
   merchants: Array<{ id: string; displayName: string; code: string }>;
   allLabel?: string;
+  /** 목록이 상한(merchantSelectOptions)에서 잘렸으면 안내 줄을 붙인다. */
+  truncated?: boolean;
 }) {
   return (
     <>
@@ -169,6 +172,11 @@ export function MerchantOptions({
           {c.displayName} ({c.code})
         </option>
       ))}
+      {truncated ? (
+        <option value="" disabled>
+          이름순 상위 기관만 표시합니다. 없으면 기관 상세 화면에서 이동해 주세요.
+        </option>
+      ) : null}
     </>
   );
 }

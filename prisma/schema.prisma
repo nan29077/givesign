@@ -805,6 +805,8 @@ model ChargeProduct {
   /// 찾아 갱신하므로, 같은 sku 가 두 건이면 어느 쪽이 갱신될지 알 수 없고 동시 호출에서
   /// 중복이 생긴다. sku 가 없는 상품(null)은 제약을 받지 않는다(Postgres 는 null 을 중복으로 보지 않는다).
   @@unique([merchantId, sku])
+  /// 사용 중(archived_at IS NULL) 항목끼리 이름이 겹치지 않는다 — 부분 유니크 인덱스
+  /// charge_product_merchant_name_live_key 는 마이그레이션 SQL 로만 둔다(Prisma 가 부분 인덱스를 표현하지 못함).
   @@map("charge_product")
 }
 
@@ -1205,6 +1207,7 @@ model PaymentRegistration {
 
   @@index([payerId])
   @@index([status])
+  @@index([merchantId])
   @@map("payment_registration")
 }
 
@@ -1520,6 +1523,9 @@ model ChargeLimitPolicy {
   merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
 
   @@index([scope, active])
+  /// resolvePolicy 는 scope·대상·effectiveFrom 으로 고른다.
+  @@index([scope, merchantId, effectiveFrom])
+  @@index([payerId])
   @@map("charge_limit_policy")
 }
 
@@ -1560,6 +1566,9 @@ model RiskDetection {
 
   @@index([level, resolved])
   @@index([createdAt])
+  @@index([merchantId])
+  @@index([payerId])
+  @@index([chargeId])
   @@map("risk_detection")
 }
 
@@ -1570,6 +1579,8 @@ model BannedWord {
   scope      PolicyScope   @default(GLOBAL)
   merchantId String?       @map("merchant_id")
   active     Boolean       @default(true)
+  /// 삭제 대신 보관. 같은 단어를 다시 등록하면 되살아난다.
+  archivedAt DateTime?     @map("archived_at") @db.Timestamptz(3)
   createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
 
   merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
@@ -1577,6 +1588,7 @@ model BannedWord {
   // 유니크는 부분 인덱스(banned_word_global_uniq / banned_word_creator_uniq)로 DB 레벨에서 강제한다
   @@index([word])
   @@index([scope, active])
+  @@index([merchantId])
   @@map("banned_word")
 }
 
@@ -1604,6 +1616,8 @@ model FeePolicy {
   merchant MerchantProfile? @relation(fields: [merchantId], references: [id])
 
   @@index([scope, active])
+  /// resolveFeePolicy 는 scope·merchantId·effectiveFrom 으로 고른다.
+  @@index([scope, merchantId, effectiveFrom])
   @@map("fee_policy")
 }
 
@@ -1797,6 +1811,7 @@ model SupportInquiry {
   @@index([status, lastMessageAt])
   @@index([userId])
   @@index([category])
+  @@index([merchantId])
   @@map("support_inquiry")
 }
 
@@ -1841,6 +1856,7 @@ model Report {
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([status, createdAt])
+  @@index([merchantId])
   @@map("report")
 }
 
@@ -2026,6 +2042,8 @@ model PublicHoliday {
   name      String
   kind      HolidayKind @default(STATUTORY)
   active    Boolean     @default(true)
+  /// 삭제 대신 보관(active=false 와 함께). 같은 날짜를 다시 등록하면 되살아난다.
+  archivedAt DateTime?  @map("archived_at") @db.Timestamptz(3)
   memo      String?
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2159,6 +2177,8 @@ enum MerchantMtTemplateStatus {
 model MerchantMtTemplate {
   id          String                   @id
   merchantId  String                   @map("merchant_id")
+  /// 삭제 대신 보관. 같은 코드로 다시 저장하면 되살아난다(이미 나간 문자 이력이 코드를 가리킨다).
+  archivedAt  DateTime?                @map("archived_at") @db.Timestamptz(3)
   /// 사회복지기관이 정하는 코드. 발송 API 에서 이 값으로 템플릿을 고른다.
   code        String
   name        String
@@ -2216,6 +2236,8 @@ model MerchantWebhook {
   events      String    @default("")
   description String?
   active      Boolean   @default(true)
+  /// 해제(보관) 시각. 하드 삭제하면 전송 이력이 cascade 로 사라져 전달 증적이 없어진다.
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
   /// 마지막 전송의 응답 코드. 연동이 살아 있는지 한눈에 보기 위한 값이다.
   lastStatus  Int?      @map("last_status")
   lastAt      DateTime? @map("last_at") @db.Timestamptz(3)
@@ -2611,6 +2633,7 @@ model DonorSession {
 
   @@index([memberId])
   @@index([expiresAt])
+  @@index([merchantId])
   @@map("donor_session")
 }
 

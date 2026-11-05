@@ -26,7 +26,8 @@ export default async function StudioModerationPage() {
 
   const [myWords, globalWords, blocked, blockHistory] = await Promise.all([
     prisma.bannedWord.findMany({
-      where: { merchantId, scope: 'MERCHANT' },
+      // 삭제(보관)한 단어는 숨긴다. 같은 단어를 다시 등록하면 되살아난다.
+      where: { merchantId, scope: 'MERCHANT', archivedAt: null },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.bannedWord.findMany({

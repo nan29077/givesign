@@ -27,7 +27,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (testDenied) return testDenied;
 
   const { id } = await ctx.params;
-  const hook = await prisma.merchantWebhook.findFirst({ where: { id, merchantId: auth.merchantId } });
+  const hook = await prisma.merchantWebhook.findFirst({ where: { id, merchantId: auth.merchantId, archivedAt: null } });
   if (!hook) {
     await logPartnerCall({ req, merchantId: auth.merchantId, keyId: auth.keyId, status: 404, errorCode: 'NOT_FOUND' });
     return jsonError(404, 'NOT_FOUND', '해당 수신 URL 을 찾을 수 없습니다.');

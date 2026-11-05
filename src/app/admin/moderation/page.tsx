@@ -61,7 +61,8 @@ export default async function AdminModerationPage({
     }),
     prisma.report.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.bannedWord.findMany({
-      where: { scope: 'GLOBAL' },
+      // 삭제(보관)한 단어는 숨긴다. 같은 단어를 다시 등록하면 되살아난다.
+      where: { scope: 'GLOBAL', archivedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 200,
       select: { id: true, word: true, action: true, active: true, createdAt: true },

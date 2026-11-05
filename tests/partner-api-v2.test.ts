@@ -69,6 +69,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('웹훅 — 등록', () => {
@@ -202,7 +203,16 @@ describe('웹훅 — 전송', () => {
       params: Promise.resolve({ id }),
     });
     expect(del.status).toBe(200);
-    expect(await prisma.merchantWebhook.count()).toBe(0);
+    // 하드 삭제가 아니라 보관: 행과 전송 이력(전달 증적)이 남고, 목록·발행 대상에서는 빠진다.
+    const row = await prisma.merchantWebhook.findUnique({ where: { id } });
+    expect(row?.archivedAt).not.toBeNull();
+    expect(row?.active).toBe(false);
+    expect(await prisma.webhookDelivery.count({ where: { webhookId: id } })).toBeGreaterThan(0);
+    const after = await (await hookList(get('/api/partner/v1/webhooks'))).json();
+    expect(after.items.some((w: { id: string }) => w.id === id)).toBe(false);
+    expect(
+      (await prisma.adminAuditLog.findMany({ where: { targetId: id } })).map((a) => a.action).sort(),
+    ).toEqual(['WEBHOOK_ARCHIVE', 'WEBHOOK_REGISTER']);
   });
 });
 
@@ -213,6 +223,8 @@ describe('상품 동기화', () => {
   }
 
   it('[10] 상품을 등록하고 목록에서 볼 수 있다', async () => {
+    // 실물 상품은 FEATURE_GOODS 가 켜진 경우에만 받는다(꺼짐 거절은 audit-2026-11-05-console 에서 검증).
+    vi.stubEnv('FEATURE_GOODS', 'true');
     const r = await create({ name: '머그컵', amount: 15000, kind: 'PHYSICAL', sku: 'MUG-1', stock: 10 });
     expect(r.status).toBe(200);
     expect(r.body.product.name).toBe('머그컵');

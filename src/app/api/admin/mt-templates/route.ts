@@ -1,3 +1,4 @@
+import { isSameOrigin } from '@/server/request-guard';
 import { prisma } from '@/server/db';
 import { requireAdmin, writeAudit } from '@/server/auth';
 import { newId } from '@/lib/id';
@@ -62,6 +63,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // 다른 관리자 API(withholding 등)와 같게 동일 출처만 받는다. req.json() 은 Content-Type 을 보지 않아
+  // text/plain 폼으로 만든 교차 사이트 요청도 파싱되기 때문이다.
+  if (!isSameOrigin(req)) return json({ ok: false, message: '허용되지 않은 요청입니다.' }, 403);
   const admin = await requireAdmin().catch(() => null);
   if (!admin) return json({ ok: false, message: '관리자 로그인이 필요합니다.' }, 401);
   if (!WRITE_PERMISSIONS.has(String(admin.adminPermission))) {

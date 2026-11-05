@@ -57,19 +57,20 @@ export function ActionForm({
       <Button type="submit" variant={variant} size={compact ? 'sm' : 'md'} disabled={pending || disabled}>
         {pending ? pendingLabel : submitLabel}
       </Button>
-      {state.message ? (
-        compact ? (
-          <span
-            className={cx(
-              'block max-w-[220px] text-[11px] leading-tight',
-              state.ok ? 'text-success-500' : 'text-danger-500',
-            )}
-          >
-            {state.message}
-          </span>
-        ) : (
-          <Notice tone={state.ok ? 'success' : 'danger'}>{state.message}</Notice>
-        )
+      {compact ? (
+        // 결과 문구가 나중에 끼워져도 스크린리더가 읽도록 live region 을 늘 그려 둔다.
+        <span
+          role="status"
+          aria-live="polite"
+          className={cx(
+            'block max-w-[220px] text-[11px] leading-tight',
+            state.ok ? 'text-success-500' : 'text-danger-500',
+          )}
+        >
+          {state.message ?? ''}
+        </span>
+      ) : state.message ? (
+        <Notice tone={state.ok ? 'success' : 'danger'}>{state.message}</Notice>
       ) : null}
     </form>
   );
@@ -113,10 +114,13 @@ export function SelectActionForm({
   confirm,
   hint,
   disabled,
+  label,
 }: {
   action: AdminServerAction;
   values: Record<string, string>;
   name: string;
+  /** 선택 상자의 접근성 이름. 표 안에서 쓰여 눈에 보이는 레이블이 없으므로 필요하다. */
+  label?: string;
   options: Array<{ value: string; label: string; disabled?: boolean }>;
   defaultValue?: string;
   submitLabel?: string;
@@ -144,6 +148,7 @@ export function SelectActionForm({
       <div className="flex items-center gap-1.5">
         <select
           name={name}
+          aria-label={label ?? `${submitLabel}할 값 선택`}
           defaultValue={defaultValue}
           disabled={disabled}
           className="h-9 rounded-lg border border-ink-200 bg-white px-2 text-[13px] text-ink-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50 disabled:text-ink-400"
@@ -159,11 +164,13 @@ export function SelectActionForm({
         </Button>
       </div>
       {hint ? <span className="text-[11px] leading-tight text-ink-400">{hint}</span> : null}
-      {state.message ? (
-        <span className={cx('text-[11px] leading-tight', state.ok ? 'text-success-500' : 'text-danger-500')}>
-          {state.message}
-        </span>
-      ) : null}
+      <span
+        role="status"
+        aria-live="polite"
+        className={cx('text-[11px] leading-tight', state.ok ? 'text-success-500' : 'text-danger-500')}
+      >
+        {state.message ?? ''}
+      </span>
     </form>
   );
 }

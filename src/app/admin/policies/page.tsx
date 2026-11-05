@@ -6,6 +6,7 @@ import { ActionButton, ActionForm } from '@/components/admin/action-form';
 import { saveLimitPolicy, toggleLimitPolicy } from '@/app/actions/admin/policy';
 import { canManageMoney } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
+import { merchantSelectOptions } from '@/server/services/admin-options';
 import { requireAdmin } from '@/server/auth';
 import { FALLBACK_POLICY } from '@/server/services/limits';
 import { formatWon, formatNumber } from '@/lib/money';
@@ -103,7 +104,7 @@ export default async function AdminPoliciesPage() {
   // 서버 액션과 같은 기준으로 화면의 변경 컨트롤을 잠근다(눌러야 알게 되는 죽은 버튼 방지).
   const canEdit = canManageMoney(me.adminPermission);
 
-  const [policies, merchants] = await Promise.all([
+  const [policies, { merchants, truncated: merchantsTruncated }] = await Promise.all([
     prisma.chargeLimitPolicy.findMany({
       orderBy: [{ active: 'desc' }, { scope: 'asc' }, { effectiveFrom: 'desc' }],
       take: 50,
@@ -117,11 +118,8 @@ export default async function AdminPoliciesPage() {
         merchant: { select: { id: true, displayName: true, code: true } },
       },
     }),
-    prisma.merchantProfile.findMany({
-      where: { status: 'APPROVED' },
-      orderBy: { displayName: 'asc' },
-      select: { id: true, displayName: true, code: true },
-    }),
+    // 선택 상자용 기관은 상한까지만(기관이 수천이면 화면이 느려진다).
+    merchantSelectOptions(),
   ]);
 
   // 적용 여부는 active 플래그가 아니라 시행 기간으로 판단한다(resolvePolicy 와 같은 기준).
@@ -179,7 +177,7 @@ export default async function AdminPoliciesPage() {
               </AdminField>
               <AdminField label="사회복지기관" hint="MERCHANT 범위일 때만 사용">
                 <AdminSelect name="merchantId" defaultValue="">
-                  <MerchantOptions merchants={merchants} allLabel="선택 안 함" />
+                  <MerchantOptions merchants={merchants} allLabel="선택 안 함" truncated={merchantsTruncated} />
                 </AdminSelect>
               </AdminField>
               <AdminField label="후원자 ID" hint="PAYER 범위일 때만 사용. 후원자 상세 화면의 ID">

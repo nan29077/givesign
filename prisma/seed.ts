@@ -5,17 +5,21 @@ import { PrismaClient } from '../src/generated/prisma/client';
 import { newId } from '../src/lib/id';
 import { encrypt, phoneHash, maskPhone, maskSecret } from '../src/lib/crypto';
 import { SEED_VERSION, SEED_VERSION_KEY } from './seed-version.mjs';
-import { SEED_TERMS, TERMS_VERSION, TERMS_EFFECTIVE_FROM } from './terms-content';
+import { seedBaseData } from './seed-base';
+import { resolveSeedTier, seedAccountPassword, LOCAL_SEED_PASSWORD } from './seed-env';
 import { DOCUMENT_PRESETS, fieldsToStorage } from '../src/server/services/documents';
 
-// 운영 환경 가드: 시드는 테스트 계정(admin@givesign.kr 등)과 샘플 데이터를 만들므로
-// 운영 DB 에서는 절대 실행하지 않는다. (APP_ENV 별칭 규칙은 src/lib/env.ts 와 동일하게 prod/production 을 본다)
-const appEnv = (process.env.APP_ENV ?? '').trim().toLowerCase();
-const isProd = appEnv === 'prod' || appEnv === 'production' || process.env.NODE_ENV === 'production';
-if (isProd) {
-  console.log('[seed] 운영 환경에서는 관리자 시드 계정을 생성하지 않습니다.');
-  process.exit(0);
+// 실행 환경 판정(prisma/seed-env.ts).
+//  - prod    : 기준 데이터(약관·전역 정책·금칙어·필수 설정)만, 없는 것만 넣는다. 계정·샘플은 만들지 않는다.
+//  - staging : 기준 데이터 + 샘플. 샘플 계정 비밀번호는 SEED_ADMIN_PASSWORD 필수.
+//  - local   : 기준 데이터 + 샘플(공개 기본 비밀번호).
+const tier = resolveSeedTier();
+const seedPassword = tier === 'prod' ? null : seedAccountPassword(tier);
+if (seedPassword && !seedPassword.ok) {
+  console.error(`[seed] ${seedPassword.message}`);
+  process.exit(1);
 }
+const SAMPLE_PASSWORD = seedPassword && seedPassword.ok ? seedPassword.password : '';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -23,63 +27,13 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log('기브싸인 시드 데이터 생성 시작');
 
-  // ---------------------------------------------------------------- 시스템 설정
-  const settings: Array<[string, unknown, string]> = [
-    ['payment.mode', 'CONFIRM_LINK', '전역 기본 결제 모드. DIRECT_TRIGGER 는 금융사 서면승인 후에만 허용'],
-    ['payment.confirmTtlSec', 300, '결제 확인 링크 유효시간(초). 헥토 10분 제한보다 짧게 유지'],
-    ['charge.defaultAmount', 3000, '문자 1건당 기본 결제 금액'],
-    ['service.name', '기브싸인', '서비스명'],
-  ];
-  for (const [key, value, memo] of settings) {
-    await prisma.systemSetting.upsert({
-      where: { key },
-      create: { key, value: value as object, memo },
-      update: { value: value as object, memo },
-    });
-  }
-
-  // ---------------------------------------------------------------- 약관
-  // 약관 본문은 prisma/terms-content.ts 에 둔다(시드 파일이 길어지면 다른 시드가 묻힌다).
-  for (const t of SEED_TERMS) {
-    await prisma.termsVersion.upsert({
-      where: { type_version: { type: t.type, version: TERMS_VERSION } },
-      create: {
-        id: newId(),
-        type: t.type,
-        version: TERMS_VERSION,
-        title: t.title,
-        content: t.content,
-        required: t.required,
-        effectiveFrom: TERMS_EFFECTIVE_FROM,
-      },
-      // 시드를 다시 돌리면 문안이 최신으로 맞춰지도록 갱신한다.
-      update: { title: t.title, content: t.content, required: t.required },
-    });
-    // 이전 버전은 그대로 둔다. 현행본은 시행일 기준으로 고르고(terms.ts) 유형당 1건만 노출되므로 중복되지 않으며,
-    // 이전 버전에 걸린 동의 기록이 "개정 전 동의"로 남아 있어야 재동의(staleRequiredConsents)가 동작한다.
-  }
-
-  // ---------------------------------------------------------------- 정책
-  const existingPolicy = await prisma.chargeLimitPolicy.findFirst({ where: { scope: 'GLOBAL' } });
-  if (!existingPolicy) {
-    await prisma.chargeLimitPolicy.create({ data: { id: newId(), scope: 'GLOBAL' } });
-  }
-
-  const existingFee = await prisma.feePolicy.findFirst({ where: { scope: 'GLOBAL' } });
-  if (!existingFee) {
-    await prisma.feePolicy.create({
-      data: { id: newId(), scope: 'GLOBAL', pgFeeRate: '0.018', platformFeeRate: '0.15', smsCost: 20 },
-    });
-  }
-
-  // ---------------------------------------------------------------- 금칙어
-  const words: Array<[string, 'BLOCK' | 'MASK']> = [
-    ['도박', 'BLOCK'], ['불법', 'BLOCK'], ['사기', 'MASK'],
-    ['씨발', 'MASK'], ['개새끼', 'MASK'], ['죽여', 'BLOCK'],
-  ];
-  for (const [word, action] of words) {
-    const exists = await prisma.bannedWord.findFirst({ where: { word, merchantId: null } });
-    if (!exists) await prisma.bannedWord.create({ data: { id: newId(), word, action, scope: 'GLOBAL' } });
+  // ---------------------------------------------------------------- 기준 데이터
+  // 시스템 설정 · 약관 · 전역 한도/수수료 정책 · 전역 금칙어 (prisma/seed-base.ts)
+  const base = await seedBaseData(prisma, { overwrite: tier !== 'prod' });
+  if (tier === 'prod') {
+    console.log(`[seed] 운영 환경: 기준 데이터만 확인했습니다. 새로 만든 항목 ${base.created.length}건${base.created.length ? ` (${base.created.join(', ')})` : ''}`);
+    console.log('[seed] 운영 환경에서는 관리자·기관·후원자 시드 계정과 샘플 거래를 만들지 않습니다.');
+    return;
   }
 
   // ---------------------------------------------------------------- 관리자
@@ -87,7 +41,7 @@ async function main() {
     where: { email: 'admin@givesign.kr' },
     create: {
       id: newId(), email: 'admin@givesign.kr', name: '기브싸인 관리자',
-      role: 'ADMIN', passwordHash: await bcrypt.hash('givesign1234!', 10),
+      role: 'ADMIN', passwordHash: await bcrypt.hash(SAMPLE_PASSWORD, 10),
     },
     update: { role: 'ADMIN' },
   });
@@ -108,7 +62,7 @@ async function main() {
       where: { email: c.email },
       create: {
         id: newId(), email: c.email, name: c.name, role: 'MERCHANT',
-        passwordHash: await bcrypt.hash('givesign1234!', 10),
+        passwordHash: await bcrypt.hash(SAMPLE_PASSWORD, 10),
       },
       update: { role: 'MERCHANT' },
     });
@@ -270,7 +224,7 @@ async function main() {
     where: { email: 'payer@givesign.kr' },
     create: {
       id: newId(), email: 'payer@givesign.kr', name: '테스트후원자',
-      role: 'PAYER', passwordHash: await bcrypt.hash('givesign1234!', 10),
+      role: 'PAYER', passwordHash: await bcrypt.hash(SAMPLE_PASSWORD, 10),
     },
     update: { role: 'PAYER' },
   });
@@ -532,11 +486,13 @@ async function main() {
     update: { value: SEED_VERSION },
   });
 
+  // 공개 기본 비밀번호일 때만 화면에 적는다(스테이징 비밀번호는 로그에 남기지 않는다).
+  const shown = SAMPLE_PASSWORD === LOCAL_SEED_PASSWORD ? SAMPLE_PASSWORD : '(SEED_ADMIN_PASSWORD)';
   console.log('시드 완료');
-  console.log('  관리자     : admin@givesign.kr / givesign1234!');
-  console.log('  사회복지기관 : merchant1@givesign.kr / givesign1234! (코드 GIV-8K2M, MO 1588-1234-1234)');
-  console.log('  사회복지기관 : merchant2@givesign.kr / givesign1234! (코드 GIV-3QP7, MO 1588-1234-5678 + 키워드 GIV3QP7)');
-  console.log('  후원자     : payer@givesign.kr / givesign1234! (010-1234-5678, 계좌 등록·계정 연결 완료)');
+  console.log(`  관리자     : admin@givesign.kr / ${shown}`);
+  console.log(`  사회복지기관 : merchant1@givesign.kr / ${shown} (코드 GIV-8K2M, MO 1588-1234-1234)`);
+  console.log(`  사회복지기관 : merchant2@givesign.kr / ${shown} (코드 GIV-3QP7, MO 1588-1234-5678 + 키워드 GIV3QP7)`);
+  console.log(`  후원자     : payer@givesign.kr / ${shown} (010-1234-5678, 계좌 등록·계정 연결 완료)`);
 }
 
 main()

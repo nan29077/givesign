@@ -6,6 +6,7 @@ import { ActionButton, ActionForm } from '@/components/admin/action-form';
 import { createFeePolicy, deactivateFeePolicy } from '@/app/actions/admin/settlement';
 import { canManageMoney } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
+import { merchantSelectOptions } from '@/server/services/admin-options';
 import { requireAdmin } from '@/server/auth';
 import { formatWon, formatNumber, ratePercent } from '@/lib/money';
 import { computeFees } from '@/server/services/settlement';
@@ -26,7 +27,7 @@ export default async function AdminFeesPage({
   const canEdit = canManageMoney(me.adminPermission);
 
   const sp = await searchParams;
-  const [policies, merchants] = await Promise.all([
+  const [policies, { merchants, truncated: merchantsTruncated }] = await Promise.all([
     prisma.feePolicy.findMany({
       orderBy: [{ active: 'desc' }, { effectiveFrom: 'desc' }],
       take: 100,
@@ -37,11 +38,8 @@ export default async function AdminFeesPage({
         merchant: { select: { id: true, displayName: true, code: true } },
       },
     }),
-    prisma.merchantProfile.findMany({
-      where: { status: 'APPROVED' },
-      orderBy: { displayName: 'asc' },
-      select: { id: true, displayName: true, code: true },
-    }),
+    // 선택 상자용 기관은 상한까지만(기관이 수천이면 화면이 느려진다). 미리 고른 기관은 항상 포함한다.
+    merchantSelectOptions({ include: [sp.merchantId] }),
   ]);
 
   // 적용 여부는 active 플래그가 아니라 시행 기간으로 판단한다.
@@ -152,7 +150,7 @@ export default async function AdminFeesPage({
             </AdminField>
             <AdminField label="사회복지기관" hint="적용 범위가 사회복지기관일 때만 사용됩니다. 개별 정책이 전역 정책보다 우선합니다.">
               <AdminSelect name="merchantId" defaultValue={presetMerchant ?? ''}>
-                <MerchantOptions merchants={merchants} allLabel="선택 안 함" />
+                <MerchantOptions merchants={merchants} allLabel="선택 안 함" truncated={merchantsTruncated} />
               </AdminSelect>
             </AdminField>
             <div className="grid grid-cols-2 gap-2">

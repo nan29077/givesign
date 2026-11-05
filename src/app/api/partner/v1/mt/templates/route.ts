@@ -28,7 +28,7 @@ export async function GET(req: Request) {
 
   // 템플릿은 운영·테스트가 같은 것을 쓴다. 테스트로 검증한 문구를 그대로 운영에 쓰기 위해서다.
   const rows = await prisma.merchantMtTemplate.findMany({
-    where: { merchantId: auth.merchantId },
+    where: { merchantId: auth.merchantId, archivedAt: null },
     orderBy: { createdAt: 'desc' },
   });
 

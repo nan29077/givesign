@@ -89,7 +89,7 @@ export async function issueTemporaryPasswordAction(
   fd: FormData,
 ): Promise<AdminActionState> {
   return run(async (admin) => {
-    if (admin.adminPermission === 'READ_ONLY') throw new Error('읽기 전용 권한입니다.');
+    // 읽기 전용 권한은 run() 의 WRITE 화이트리스트에서 이미 막힌다.
     // 임시 비밀번호는 그 계정으로 그대로 로그인할 수 있는 값이다(응답에 원문이 1회 노출된다).
     // 상담 등급까지 열어 두면 사회복지기관 계정을 탈취해 정산 요청·API 키 발급까지 할 수 있다.
     assertMoneyAdmin(admin, '임시 비밀번호 발급은 운영/재무 권한에서만 가능합니다.');
@@ -389,40 +389,71 @@ export async function applyGlobalAmountBounds(_prev: AdminActionState, fd: FormD
     if (minAmount > maxAmount) throw new Error('최소 금액이 최대 금액보다 클 수 없습니다.');
 
     const result = await prisma.$transaction(async (tx) => {
-      const total = await tx.merchantProfile.count();
-      // 되돌릴 수 있어야 한다. updateMany 는 이전 값을 남기지 않으므로 먼저 스냅샷을 뜬다.
+      // 되돌릴 수 있어야 한다. updateMany 는 이전 값을 남기지 않으므로 먼저 **전체** 스냅샷을 뜬다.
+      // (예전에는 500곳까지만 남겨 501번째 기관부터 이전 값이 어디에도 없었다)
       const before = await tx.merchantProfile.findMany({
         select: { id: true, code: true, minAmount: true, maxAmount: true },
         orderBy: { createdAt: 'asc' },
-        take: 500,
       });
       await tx.merchantProfile.updateMany({ data: { minAmount, maxAmount } });
-      const off = await tx.chargeProduct.updateMany({
+      // 어떤 항목을 꺼뜨렸는지 id 를 남겨야 되돌릴 수 있다.
+      const outOfRange = await tx.chargeProduct.findMany({
         where: {
           active: true,
           archivedAt: null,
           OR: [{ amount: { lt: minAmount } }, { amount: { gt: maxAmount } }],
         },
-        data: { active: false },
+        select: { id: true },
       });
-      return { total, clamped: off.count, before };
+      const off = outOfRange.length
+        ? await tx.chargeProduct.updateMany({ where: { id: { in: outOfRange.map((p) => p.id) } }, data: { active: false } })
+        : { count: 0 };
+      return { total: before.length, clamped: off.count, before, productIds: outOfRange.map((p) => p.id) };
     });
 
+    // 감사 1건에 다 넣으면 행이 지나치게 커진다. 기관 500곳·상품 1000개 단위로 나눠 남기고 같은 묶음 id 로 잇는다.
+    const batchId = newId();
+    const MERCHANT_CHUNK = 500;
+    const PRODUCT_CHUNK = 1000;
+    const merchantParts = Math.max(1, Math.ceil(result.before.length / MERCHANT_CHUNK));
+    const productParts = Math.ceil(result.productIds.length / PRODUCT_CHUNK);
     await writeAudit({
       adminUserId: admin.id,
       action: 'MERCHANT_AMOUNT_BOUNDS_APPLY_ALL',
       targetType: 'MerchantProfile',
       targetId: 'ALL',
-      before: {
-        merchants: result.before.map((m) => ({
-          code: m.code,
-          minAmount: m.minAmount.toString(),
-          maxAmount: m.maxAmount.toString(),
-        })),
-        truncated: result.total > result.before.length,
-      },
+      before: { batchId, merchantParts, productParts },
       after: { minAmount, maxAmount, appliedTo: result.total, deactivatedProducts: result.clamped },
     });
+    for (let i = 0; i < merchantParts; i += 1) {
+      await writeAudit({
+        adminUserId: admin.id,
+        action: 'MERCHANT_AMOUNT_BOUNDS_SNAPSHOT',
+        targetType: 'MerchantProfile',
+        targetId: batchId,
+        before: {
+          batchId,
+          part: i + 1,
+          of: merchantParts,
+          merchants: result.before.slice(i * MERCHANT_CHUNK, (i + 1) * MERCHANT_CHUNK).map((m) => ({
+            id: m.id,
+            code: m.code,
+            minAmount: m.minAmount.toString(),
+            maxAmount: m.maxAmount.toString(),
+          })),
+        },
+      });
+    }
+    for (let i = 0; i < productParts; i += 1) {
+      await writeAudit({
+        adminUserId: admin.id,
+        action: 'MERCHANT_AMOUNT_BOUNDS_PRODUCTS_OFF',
+        targetType: 'ChargeProduct',
+        targetId: batchId,
+        before: { batchId, part: i + 1, of: productParts, active: true },
+        after: { productIds: result.productIds.slice(i * PRODUCT_CHUNK, (i + 1) * PRODUCT_CHUNK), active: false },
+      });
+    }
     revalidatePath('/admin/merchants');
     revalidatePath('/studio/settings');
     return `사회복지기관 ${result.total}명 전체에 후원 금액 허용 범위 ${minAmount.toString()}원 ~ ${maxAmount.toString()}원을 적용했습니다.` +

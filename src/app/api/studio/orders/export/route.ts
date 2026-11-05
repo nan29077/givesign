@@ -1,3 +1,4 @@
+import { featureGoodsEnabled } from '@/lib/env';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { decrypt } from '@/lib/crypto';
@@ -34,6 +35,8 @@ function csvCell(v: string | null | undefined): string {
 }
 
 export async function GET(req: Request) {
+  // 주문·배송 화면(/studio/orders)과 같은 기준: 기능이 꺼져 있으면 배송지 복호화 경로도 열지 않는다.
+  if (!featureGoodsEnabled()) return new Response('not found', { status: 404 });
   const session = await requireMerchant().catch(() => null);
   if (!session) return new Response('사회복지기관 로그인이 필요합니다.', { status: 401 });
   const { merchantId, id: userId } = session;

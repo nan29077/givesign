@@ -19,6 +19,13 @@ export async function register() {
   const { installCryptoProvider } = await import('@/server/crypto-provider');
   await installCryptoProvider();
 
+  // 기준 데이터(현행 약관·전역 수수료/한도 정책) 점검. DB 조회가 필요해 기동은 막지 않고 오류 로그로 남긴다
+  // (관리자 대시보드에도 같은 경고가 뜬다 — base-data-check.ts 주석 참고).
+  if (env.appEnv === 'prod') {
+    const { logBaseDataProblems } = await import('@/server/services/base-data-check');
+    void logBaseDataProblems();
+  }
+
   if (env.appEnv !== 'prod') {
     console.info(`[env] APP_ENV=${env.appEnv} / NODE_ENV=${env.nodeEnv} 로 기동합니다.`);
   }

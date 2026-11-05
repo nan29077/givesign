@@ -19,7 +19,8 @@ export default async function StudioQrPage() {
   const { merchantId } = await requireMerchant();
   const [org, campaigns, qrAgg, qrPledges] = await Promise.all([
     prisma.merchantProfile.findUniqueOrThrow({ where: { id: merchantId }, select: { code: true, displayName: true } }),
-    prisma.campaign.findMany({ where: { merchantId, status: { not: 'ARCHIVED' } }, orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'desc' }] }),
+    // 작성 중(DRAFT) 캠페인은 공개 전이라 QR 을 만들지 않는다(/api/qr 도 404).
+    prisma.campaign.findMany({ where: { merchantId, status: { in: ['ACTIVE', 'CLOSED'] } }, orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'desc' }] }),
     prisma.charge.groupBy({ by: ['campaignId'], where: { merchantId, source: 'QR', isTest: false, status: { in: PAID_STATUSES } }, _count: { _all: true }, _sum: { amount: true } }),
     prisma.recurringDonation.count({ where: { merchantId, source: 'QR' } }),
   ]);

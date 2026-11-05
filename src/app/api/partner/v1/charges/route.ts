@@ -1,3 +1,4 @@
+import { featureGoodsEnabled } from '@/lib/env';
 import { prisma } from '@/server/db';
 import { decrypt, merchantPayerRef } from '@/lib/crypto';
 import { authenticatePartner } from '@/server/services/partner-auth';
@@ -149,6 +150,7 @@ export async function GET(req: Request) {
     },
   });
 
+  const goods = featureGoodsEnabled();
   // 복호화된 전화번호·배송지 원문을 최대 500건 내보내는 유일한 대량 반출 경로다.
   // 성공 호출을 남기지 않으면 키가 유출됐을 때 언제 몇 건이 나갔는지 추적할 수 없다.
   await logPartnerCall({
@@ -164,7 +166,7 @@ export async function GET(req: Request) {
     req,
     merchantId: auth.merchantId,
     keyId: auth.keyId,
-    transactionNos: rows.filter((r) => r.shipment).map((r) => r.transactionNo),
+    transactionNos: goods ? rows.filter((r) => r.shipment).map((r) => r.transactionNo) : [],
   });
 
   return jsonOk({
@@ -215,7 +217,8 @@ export async function GET(req: Request) {
 
       // ── 배송 (실물 주문만) ────────────────────────────────────
       // 배송지는 개인정보다. 배송·CS 목적으로만 쓰고 그 외 이용·제공은 금지된다.
-      shipping: r.shipment
+      // 실물 상품 기능(FEATURE_GOODS)이 꺼져 있으면 배송지를 복호화하지 않는다(콘솔 /studio/orders 404 와 같은 기준).
+      shipping: goods && r.shipment
         ? {
             receiver: decrypt(r.shipment.receiverEnc),
             phone: decrypt(r.shipment.phoneEnc),

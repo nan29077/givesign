@@ -40,7 +40,8 @@ export async function resolveQrTarget(rawCode: string, campaignId?: string | nul
   if (!m) return null;
   if (!campaignId) return { merchantCode: m.code, merchantName: m.displayName, campaignId: null, campaignTitle: null, url: donationPageUrl(m.code) };
   const c = await prisma.campaign.findFirst({
-    where: { id: campaignId, merchantId: m.id, status: { not: 'ARCHIVED' } },
+    // 공개된 캠페인(모금 중·종료)만. 작성 중(DRAFT)은 공개 페이지가 404 이므로 QR·파일명(제목)도 내주지 않는다.
+    where: { id: campaignId, merchantId: m.id, status: { in: ['ACTIVE', 'CLOSED'] } },
     select: { id: true, title: true },
   });
   if (!c) return null;
