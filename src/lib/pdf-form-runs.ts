@@ -146,6 +146,62 @@ export function rectToCover(x0: number, y0: number, x1: number, y1: number): { m
   };
 }
 
+/**
+ * 새 글 넣기 행렬. 쪽에 /Rotate 가 있으면 화면에서 가로로 보이도록 글자 방향을 돌린다.
+ * (x, y) 는 누른 자리(PDF 사용자 좌표). 기준선은 누른 자리보다 0.35em 아래(글자 아래쪽)로 둔다.
+ */
+export function newTextMatrix(size: number, x: number, y: number, rotate: number): PdfMatrix {
+  const r = (((Math.round(rotate / 90) * 90) % 360) + 360) % 360;
+  const s = size;
+  const [a, b, c, d] =
+    r === 90 ? [0, s, -s, 0] : r === 180 ? [-s, 0, 0, -s] : r === 270 ? [0, -s, s, 0] : [s, 0, 0, s];
+  return [a, b, c, d, x - 0.35 * c, y - 0.35 * d];
+}
+
+/** 방향(회전)은 그대로 두고 글자 크기만 바꾼다. */
+export function resizeMatrix(m: PdfMatrix, size: number): PdfMatrix {
+  const cur = matrixFontSize(m) || 1;
+  const k = size / cur;
+  return [m[0] * k, m[1] * k, m[2] * k, m[3] * k, m[4], m[5]];
+}
+
+/** 화면 좌표 두 점(기준선 시작 → 진행 방향)의 기울기(도, 시계 방향 +). 입력칸을 글자 방향에 맞춰 돌릴 때 쓴다. */
+export function screenAngleDeg(p0: [number, number], p1: [number, number]): number {
+  const deg = (Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI;
+  return Math.abs(deg) < 0.5 ? 0 : Math.round(deg * 10) / 10;
+}
+
+/**
+ * 색 읽기용으로 쪽의 **그 자리만** 그릴 창.
+ * 전 쪽을 큰 배율로 그려 메모리에 두지 않고, 누를 때 그 영역만 작은 캔버스에 그린다.
+ * box 는 배율 1 화면 좌표. 결과 offsetX/offsetY 를 pdf.js getViewport 에 그대로 넘긴다.
+ */
+export function sampleWindow(
+  box: { left: number; top: number; right: number; bottom: number },
+  opts: { scale?: number; pad?: number; maxPx?: number } = {},
+): {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+  inner: { x0: number; y0: number; x1: number; y1: number };
+} {
+  const pad = opts.pad ?? 4;
+  const maxPx = opts.maxPx ?? 1200;
+  const w = Math.max(1, box.right - box.left);
+  const h = Math.max(1, box.bottom - box.top);
+  const scale = Math.max(0.05, Math.min(opts.scale ?? 2, maxPx / Math.max(w, h)));
+  return {
+    scale,
+    offsetX: -box.left * scale + pad,
+    offsetY: -box.top * scale + pad,
+    width: Math.ceil(w * scale + pad * 2),
+    height: Math.ceil(h * scale + pad * 2),
+    inner: { x0: pad, y0: pad, x1: pad + w * scale, y1: pad + h * scale },
+  };
+}
+
 /** 쪽 그림(RGBA)에서 영역의 바탕색과 글자색을 읽는다. 0~1 RGB. */
 export function sampleColors(
   data: Uint8ClampedArray,

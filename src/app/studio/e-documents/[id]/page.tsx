@@ -86,7 +86,11 @@ export default async function EDocEnvelopePage({ params }: { params: Promise<{ i
                       {s.signedAt ? <span className="block text-[#0b7d59]">서명 {formatKst(s.signedAt, false)}</span> : null}
                     </Td>
                     <Td className="min-w-[140px]">
-                      {open && (s.status === 'SENT' || s.status === 'VIEWED') ? (
+                      {open &&
+                      (s.status === 'SENT' ||
+                        s.status === 'VIEWED' ||
+                        // 앞사람이 모두 서명했는데 링크 발송이 끝나지 못해 순서 대기에 남은 서명자
+                        (s.status === 'WAITING' && e.signers.filter((x) => x.order < s.order).every((x) => x.status === 'SIGNED'))) ? (
                         <InlineActionForm
                           action={remindEDocSignerAction}
                           submitLabel={`다시 보내기 (${s.remindCount}/${EDOC_REMIND_MAX})`}

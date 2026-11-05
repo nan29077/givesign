@@ -115,9 +115,12 @@ export async function cancelUpcomingEDocPlan(id: string) {
  * 지갑이 없으면 만들고 시범 제공량을 준다(기관당 1회, 멱등키 trial:{기관}).
  * 트랜잭션 안에서 부르면 같은 트랜잭션에 묶인다.
  */
-export async function ensureWallet(merchantId: string, db: Tx | typeof prisma = prisma) {
+export async function ensureWallet(merchantId: string, db: Tx | typeof prisma = prisma): Promise<Awaited<ReturnType<typeof prisma.eDocWallet.findUniqueOrThrow>>> {
   const existing = await db.eDocWallet.findUnique({ where: { merchantId } });
   if (existing) return existing;
+  // 트랜잭션 밖에서 불렀으면 지갑 생성과 시범 제공 원장 기록을 한 트랜잭션으로 묶는다
+  // (지갑만 생기고 TRIAL_GRANT 가 없으면 verifyWallet 이 영구히 불일치가 된다).
+  if (db === prisma) return prisma.$transaction((tx) => ensureWallet(merchantId, tx));
   const plan = await currentEDocPlan(new Date(), db);
   const inserted = await db.$executeRaw`
     INSERT INTO edoc_wallet (merchant_id, balance, trial_remaining, total_used, created_at, updated_at)
@@ -249,8 +252,11 @@ export async function refundEnvelope(tx: Tx, input: { merchantId: string; envelo
   const key = `refund:${input.envelopeId}`;
   if (use.source === 'MONTHLY' && use.subscriptionId) {
     const back = await tx.eDocSubscription.updateMany({ where: { id: use.subscriptionId, status: 'ACTIVE', endsAt: { gt: new Date() }, used: { gt: 0 } }, data: { used: { decrement: 1 } } });
-    await writeLedger(tx, { merchantId: input.merchantId, kind: 'REFUND', units: back.count ? 1 : 0, source: 'MONTHLY', balanceAfter: balance, trialAfter: trial, idempotencyKey: key, envelopeId: input.envelopeId, subscriptionId: use.subscriptionId, actorId: input.actorId, memo: back.count ? '정액 제공량 1건 환원' : '정액 기간이 끝나 환원하지 않음' });
-    return { refunded: back.count === 1, source: 'MONTHLY' as const };
+    // 정액 기간이 끝났으면 되돌릴 곳이 없다. 효과 0 인 "환원" 행을 남기지 않는다(이용 이력에 "환원 0건" 으로 보여 혼란).
+    // 환원하지 않은 사실과 이유는 호출부의 취소 사건(edoc_event detail)에 남는다.
+    if (back.count !== 1) return { refunded: false as const, source: 'MONTHLY' as const, reason: 'MONTHLY_ENDED' as const };
+    await writeLedger(tx, { merchantId: input.merchantId, kind: 'REFUND', units: 1, source: 'MONTHLY', balanceAfter: balance, trialAfter: trial, idempotencyKey: key, envelopeId: input.envelopeId, subscriptionId: use.subscriptionId, actorId: input.actorId, memo: '정액 제공량 1건 환원' });
+    return { refunded: true, source: 'MONTHLY' as const };
   }
   if (use.source === 'TRIAL') {
     await tx.eDocWallet.update({ where: { merchantId: input.merchantId }, data: { trialRemaining: { increment: 1 } } });
@@ -405,6 +411,16 @@ export async function adjustWallet(input: { merchantId: string; actorId: string;
   if (!input.reason.trim()) throw new EDocBillingError('조정 사유를 입력해 주세요.');
   if (!Number.isSafeInteger(input.amount) || !Number.isSafeInteger(input.units) || (input.amount === 0 && input.units === 0)) throw new EDocBillingError('조정 금액 또는 건수를 입력해 주세요.');
   if (Math.abs(input.amount) > EDOC_TOPUP_MAX || Math.abs(input.units) > 10000) throw new EDocBillingError('조정 범위를 넘었습니다.');
+  // 같은 화면에서 같은 nonce 로 두 번 보내면 멱등키(adjust:{nonce}) 유니크 위반이 난다. 중복 반영은 막혔으니 그 사실을 알린다.
+  return adjustWalletTx(input).catch((e) => {
+    if ((e as { code?: string })?.code === 'P2002') {
+      throw new EDocBillingError('이미 반영된 조정입니다. 화면을 새로 고친 뒤 다시 입력해 주세요.');
+    }
+    throw e;
+  });
+}
+
+function adjustWalletTx(input: { merchantId: string; actorId: string; amount: number; units: number; reason: string; nonce: string }) {
   return prisma.$transaction(async (tx) => {
     const { balance, trial } = await lockWallet(tx, input.merchantId);
     const nb = balance + input.amount;

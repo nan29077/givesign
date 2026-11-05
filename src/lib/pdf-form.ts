@@ -164,23 +164,60 @@ export interface PdfFontInfo {
   reusableProgram: boolean;
   /** 기관이 올린 글꼴로 대신하는지 */
   uploaded: boolean;
+  /**
+   * 쪽별 정보. 서버 렌더러는 **그 쪽에 있는** 같은 이름 글꼴 사전만 쓰므로, 편집기 예측도 쪽별로 한다.
+   * 이 글꼴이 없는 쪽은 목록에 없다. 없으면(이전 응답) 위의 전 쪽 합산 값으로 예측한다.
+   */
+  pages?: Array<{ page: number; chars: string | null; reusableProgram: boolean }>;
 }
 
 /**
  * 새 글자가 어떤 글꼴로 그려질지 미리 판정한다(편집기의 실시간 안내용).
- * 서버 렌더러도 같은 순서로 고른다. 공백은 어느 글꼴에서나 통과시킨다
- * (공백은 덮개만 있으면 되고 글리프가 없어도 보이는 결과가 같다).
+ * 서버 렌더러(`render.ts` chooseFont)와 같은 순서다:
+ *   ① 그 쪽의 원본 글꼴에 모든 글자가 있으면 원본 글꼴 → ② 올린 글꼴 → ③ 원본에 통째로 든 글꼴 → ⑤ 대체 글꼴.
+ * 공백은 어느 글꼴에서나 통과시킨다(공백은 덮개만 있으면 되고 글리프가 없어도 보이는 결과가 같다).
+ * @param page 수정이 들어가는 쪽. 주면 그 쪽 글꼴 사전만 본다.
  */
 export function predictFontTier(
   text: string,
   info: PdfFontInfo | undefined,
+  page?: number,
 ): { tier: PdfFontTier; missing: string[] } {
   if (!info) return { tier: 'FALLBACK', missing: [] };
-  if (info.uploaded) return { tier: 'UPLOADED', missing: [] };
-  const missing = info.chars === null ? [] : missingChars(text, info.chars);
-  if (missing.length === 0) return { tier: 'ORIGINAL', missing };
-  if (info.reusableProgram) return { tier: 'EMBEDDED', missing };
+  let chars: string | null = info.chars;
+  let reusable = info.reusableProgram;
+  let onPage = true;
+  if (page !== undefined && info.pages) {
+    const p = info.pages.find((x) => x.page === page);
+    if (p) {
+      chars = p.chars;
+      reusable = p.reusableProgram;
+    } else {
+      onPage = false;
+      chars = '';
+      reusable = false;
+    }
+  }
+  // 그 쪽에 이 글꼴이 아예 없으면 서버는 "없는 글자" 를 따로 보고하지 않는다.
+  const missing = !onPage ? [] : chars === null ? [] : missingChars(text, chars);
+  if (onPage && missing.length === 0) return { tier: 'ORIGINAL', missing };
+  if (info.uploaded) return { tier: 'UPLOADED', missing };
+  if (reusable) return { tier: 'EMBEDDED', missing };
   return { tier: 'FALLBACK', missing };
+}
+
+/** 두 편집 기록이 같은지(정규화 후 비교). 같으면 결과 PDF 를 다시 만들지 않는다. */
+export function sameLayout(a: unknown, b: unknown): boolean {
+  return JSON.stringify(parsePdfLayout(a) ?? null) === JSON.stringify(parsePdfLayout(b) ?? null);
+}
+
+/**
+ * 원래 글자를 모두 지웠다고 말할 수 없는 쪽 안내(편집기·저장 결과 공통 문구).
+ * 폭을 모르는 글꼴·양식 XObject 안의 글자는 덮기만 하므로 복사·검색에 옛 글자가 남을 수 있다.
+ */
+export function coverOnlyNotice(pages: number[]): string {
+  if (!pages.length) return '';
+  return `${pages.join(', ')}쪽은 일부 원래 글자를 지우지 못했을 수 있습니다. 덮개로 가려 화면·인쇄 결과는 같지만, 복사·검색하면 옛 글자가 나올 수 있으니 결과 PDF 를 확인해 주세요.`;
 }
 
 export function missingChars(text: string, available: string): string[] {

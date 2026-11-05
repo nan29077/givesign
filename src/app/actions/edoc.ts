@@ -133,7 +133,8 @@ export async function remindEDocSignerAction(_prev: StudioActionState, f: FormDa
     const id = text(f, 'envelopeId');
     const r = await remindSigner({ merchantId: user.merchantId, envelopeId: id, signerId: text(f, 'signerId'), actorId: user.id });
     refresh(id);
-    if (!r.ok) return { ok: false, message: '재안내 문자를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.' };
+    // 실패한 발송은 재안내 횟수·1시간 간격에 넣지 않고, 이전 링크도 그대로 살려 둔다(services/edoc.ts issueAndSend).
+    if (!r.ok) return { ok: false, message: '재안내 문자를 보내지 못했습니다. 이전에 보낸 링크는 그대로 열립니다. 잠시 후 다시 시도해 주세요.' };
     return {
       ok: true,
       // 로컬 mock 문자에서만 링크를 화면에 보여 준다(재안내 버튼은 비밀값 상자가 없어 문구에 붙인다).

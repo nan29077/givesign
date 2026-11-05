@@ -24,6 +24,32 @@ export type BasePdfResult =
 
 const OFFICE_EXT = new Set(['docx', 'doc', 'hwp', 'hwpx']);
 const CONVERT_TIMEOUT_MS = 90_000;
+/** soffice 표준 출력·오류 상한. 넘으면 실패로 끊는다(무한 출력으로 메모리를 쓰지 않게). */
+const CONVERT_MAX_BUFFER = 1024 * 1024;
+
+/**
+ * 변환용 LibreOffice 프로파일 설정(매번 새 임시 프로파일에 쓴다).
+ *  - 매크로: 보안 수준 "매우 높음"(3) + 매크로 실행 끔 — 문서 안 매크로·이벤트 스크립트를 돌리지 않는다.
+ *  - BlockUntrustedRefererLinks: 문서가 가리키는 외부 그림·링크를 불러오지 않는다(LibreOffice 7.x 이후).
+ * 문서 안 외부 자원(INCLUDEPICTURE·OLE 링크 등)을 이 설정만으로 모두 막는다고 보장할 수는 없다.
+ * 네트워크를 막은 변환 전용 환경에서 돌리는 것을 운영 권고로 둔다(docs/2026-11-05_점검_D_조치.md).
+ */
+export const SOFFICE_PROFILE_XCU = `<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+</oor:items>
+`;
+
+/** soffice 실행 인자(셸을 거치지 않는 배열 인자). */
+export function sofficeArgs(dir: string, input: string): string[] {
+  return [
+    `-env:UserInstallation=file://${dir.replace(/\\/g, '/')}/profile`,
+    '--headless', '--norestore', '--nologo', '--nodefault', '--nolockcheck',
+    '--convert-to', 'pdf', '--outdir', dir, input,
+  ];
+}
 
 export async function toBasePdf(buf: Uint8Array, ext: string): Promise<BasePdfResult> {
   if (ext === 'pdf') return checkPdf(buf, 'none');
@@ -114,14 +140,23 @@ async function officeToPdf(
   try {
     const input = path.join(dir, `form.${ext}`);
     await fs.writeFile(input, buf);
+    // 매크로·외부 링크를 막은 프로파일을 미리 깔아 둔다.
+    await fs.mkdir(path.join(dir, 'profile', 'user'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'profile', 'user', 'registrymodifications.xcu'), SOFFICE_PROFILE_XCU);
     await new Promise<void>((resolve, reject) => {
       execFile(
         soffice,
-        [
-          `-env:UserInstallation=file://${dir.replace(/\\/g, '/')}/profile`,
-          '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', dir, input,
-        ],
-        { timeout: CONVERT_TIMEOUT_MS, windowsHide: true },
+        sofficeArgs(dir, input),
+        {
+          timeout: CONVERT_TIMEOUT_MS,
+          // 시간 초과 때 정리 신호를 무시하지 못하게 바로 끝낸다. (soffice.bin 자식 프로세스 정리는
+          // 변환 전용 환경의 운영 권고로 둔다 — docs/2026-11-05_점검_D_조치.md)
+          killSignal: 'SIGKILL',
+          maxBuffer: CONVERT_MAX_BUFFER,
+          windowsHide: true,
+          // 사용자 홈에 설정·캐시를 쓰지 않게 임시 폴더를 홈으로 준다.
+          env: { ...process.env, HOME: dir },
+        },
         (err) => (err ? reject(err) : resolve()),
       );
     });

@@ -15,6 +15,7 @@ import { prisma } from '@/server/db';
 import {
   DOCUMENT_LINK_TTL_DAYS, documentStatusLabel, documentTemplateTypeLabel, parseDocumentFields,
   documentTemplateSnapshot,
+  templateSnapshotText,
 } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
@@ -47,7 +48,7 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
     },
   });
   if (!row) notFound();
-  const snapshot = await documentTemplateSnapshot(row.id, row.template);
+  const snapshot = await documentTemplateSnapshot(row, row.template);
   row.template = snapshot.template;
 
   const fields = parseDocumentFields(row.template.fields);
@@ -124,7 +125,7 @@ export default async function DocumentSubmissionPage({ params }: { params: Promi
             <Card>
               <CardTitle>문서 본문</CardTitle>
               <p className="mb-2 mt-0.5 text-[11.5px] leading-relaxed text-ink-400">
-                {snapshot.sha256 ? '작성 요청을 발급한 시점에 고정한 서식 본문입니다. 이후 서식 변경은 이 문서에 반영되지 않습니다.' : '이전 방식으로 발급한 문서의 현재 서식 본문입니다. 제출 당시 본문은 별도 보관 자료를 확인해 주세요.'}
+                {templateSnapshotText(snapshot.state, snapshot.capturedOn)}
               </p>
               <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl bg-ink-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink-700">
                 {row.template.body}

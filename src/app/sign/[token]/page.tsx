@@ -9,6 +9,7 @@ import { SignerOtpGate, SignerSignForm } from '@/components/edoc/signer-flow';
 import {
   accessCookieName,
   checkAccessProof,
+  checkSnapshotPdf,
   edocEventLabel,
   edocRoleLabel,
   envelopeValues,
@@ -42,7 +43,7 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
     );
   }
 
-  const { signer: s, snapshot, merchantName, isPrimary, canSign, waitingReason } = loaded;
+  const { signer: s, snapshot, merchantName, isPrimary, canSign, waitingReason, closed } = loaded;
   const e = s.envelope;
   const verified = checkAccessProof(s.id, s.tokenHash, (await cookies()).get(accessCookieName(s.id))?.value);
   const header = (
@@ -54,6 +55,19 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
       </div>
     </div>
   );
+
+  // 끝난 문서(취소·만료·거절)·아직 차례가 아닌 문서는 인증번호를 보내지 않고 사유만 보여 준다.
+  if (!verified && closed) {
+    return (
+      <Shell>
+        {header}
+        <Card>
+          <p className="flex items-center gap-2 text-[15px] font-extrabold text-ink-900"><Hourglass size={18} strokeWidth={1.7} className="text-ink-400" /> 지금은 이 문서를 열 수 없습니다</p>
+          <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{waitingReason}</p>
+        </Card>
+      </Shell>
+    );
+  }
 
   if (!verified) {
     return (
@@ -70,7 +84,7 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
   // 서명을 마쳤거나 문서가 완료되면 완료본을 보여 준다.
   if (s.status === 'SIGNED' || e.status === 'COMPLETED') {
     const full = await prisma.eDocEnvelope.findUniqueOrThrow({ where: { id: e.id }, include: { signers: { orderBy: { order: 'asc' } }, events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } } });
-    const [values, chain] = await Promise.all([envelopeValues(e.id), verifyEnvelopeChain(e.id)]);
+    const [values, chain, pdfCheck] = await Promise.all([envelopeValues(e.id), verifyEnvelopeChain(e.id), checkSnapshotPdf(snapshot)]);
     const who = new Map(full.signers.map((x) => [x.id, `${edocRoleLabel[x.role]} ${x.nameMasked}`]));
     return (
       <Shell wide>
@@ -78,7 +92,7 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
         <EDocCertificate
           d={{
             orgName: merchantName, title: full.title, envelopeId: full.id, snapshot, values, status: full.status, sentAt: full.sentAt, completedAt: full.completedAt,
-            snapshotHash: full.snapshotHash, documentHash: full.documentHash, lastEventHash: full.lastEventHash, chainOk: chain.ok,
+            snapshotHash: full.snapshotHash, documentHash: full.documentHash, lastEventHash: full.lastEventHash, chainOk: chain.ok, pdfCheck,
             signers: full.signers.map((x) => ({ order: x.order, roleLabel: edocRoleLabel[x.role], nameMasked: x.nameMasked, phoneMasked: x.phoneMasked, signedAt: x.signedAt, signIp: null, signatureUrl: x.signatureUrl, otpVerifiedAt: x.otpVerifiedAt })),
             events: full.events.filter((ev) => !['VALUES_VIEWED', 'OTP_SENT'].includes(ev.type)).map((ev) => ({ at: ev.createdAt, label: edocEventLabel[ev.type] ?? ev.type, who: ev.signerId ? who.get(ev.signerId) ?? '' : '', ip: null })),
           }}

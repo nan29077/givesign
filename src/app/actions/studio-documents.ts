@@ -17,10 +17,11 @@ import { Prisma } from '@/generated/prisma/client';
 import type { DocumentTemplateType } from '@/generated/prisma/enums';
 import type { StudioActionState } from '@/app/actions/studio';
 import {
-  MEDIA_PDF_RE, layoutProblem, renderAndStore, saveTemplateLayout, verifyBasePdf, verifyBasePdfToken,
+  isMediaPdfUrl, layoutProblem, renderAndStore, saveTemplateLayout, verifyBasePdf, verifyBasePdfToken,
   type SaveLayoutResult,
 } from '@/server/services/pdf-form';
-import { parsePdfLayout, type PdfLayout } from '@/lib/pdf-form';
+import { coverOnlyNotice, parsePdfLayout, sameLayout, type PdfLayout } from '@/lib/pdf-form';
+import { isOwnMediaUrl } from '@/server/uploads';
 
 /**
  * 문서 상품 — 사회복지기관 관리자 서버 액션.
@@ -78,22 +79,13 @@ function revalidateDocuments(id?: string) {
  *
  * 무검증으로 저장하면 후원자 화면의 내려받기 링크가 제3자 도메인을 가리키게 되어
  * 그 화면을 여는 모든 후원자의 IP·UA 가 새어 나가고, javascript: 같은 스킴도 그대로 남는다.
+ * 그래서 이 서비스 저장소에 올린 파일 주소(`/api/media/<이름>` 또는 S3_PUBLIC_BASE 아래 같은 이름)만 받는다.
  */
 function safeFileUrl(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;
-  // 자체 업로드 경로
-  if (value.startsWith('/api/media/') && !value.includes('..')) return value;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error('서식 파일 주소 형식이 올바르지 않습니다. 파일을 다시 올려 주세요.');
-  }
-  if (url.protocol !== 'https:') {
-    throw new Error('서식 파일 주소는 https 만 쓸 수 있습니다.');
-  }
-  return url.toString();
+  if (isOwnMediaUrl(value)) return value;
+  throw new Error('서식 파일은 이 화면에서 올린 파일만 쓸 수 있습니다. 파일을 다시 올려 주세요.');
 }
 
 // ===========================================================================
@@ -164,7 +156,7 @@ function parseTemplateForm(
     }
     fileName = text(formData, 'fileName').slice(0, 120) || '문서서식';
     const base = text(formData, 'basePdfUrl');
-    basePdfUrl = MEDIA_PDF_RE.test(base) ? base : null;
+    basePdfUrl = isMediaPdfUrl(base) ? base : null;
     const from = text(formData, 'baseConvertedFrom');
     baseConvertedFrom = ['none', 'image', 'office'].includes(from) ? from : null;
     // 편집기의 기록은 길 수 있어 text() 의 길이 제한을 거치지 않고 읽는다.
@@ -278,10 +270,10 @@ async function applyPdf(
   }
   const problem = layoutProblem(layout, pageCount);
   if (problem) return { ok: false, message: problem };
-  if (!baseChanged && JSON.stringify(parsePdfLayout(current?.pdfLayout) ?? null) === JSON.stringify(layout)) {
+  if (!baseChanged && sameLayout(current?.pdfLayout, layout)) {
     return { ok: true, data, summary: null, cleared: false };
   }
-  const rendered = await renderAndStore(url, layout);
+  const rendered = await renderAndStore(merchantId, url, layout);
   if (!rendered.ok) return rendered;
   Object.assign(data, {
     pdfLayout: layout as unknown as Prisma.InputJsonValue,
@@ -302,12 +294,14 @@ async function applyPdf(
   };
 }
 
-function pdfSummaryText(summary: { edits: number; fallback: number } | null): string {
+function pdfSummaryText(summary: { edits: number; fallback: number; coverOnlyPages?: number[] } | null): string {
   if (!summary) return '';
   if (summary.edits === 0) return ' 원본 서식 그대로 씁니다.';
+  const coverOnly = coverOnlyNotice(summary.coverOnlyPages ?? []);
   return (
     ` 원본 위 수정 ${summary.edits}곳을 반영했습니다.` +
-    (summary.fallback ? ` (${summary.fallback}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴로 넣었습니다)` : '')
+    (summary.fallback ? ` (${summary.fallback}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴로 넣었습니다)` : '') +
+    (coverOnly ? ` ${coverOnly}` : '')
   );
 }
 

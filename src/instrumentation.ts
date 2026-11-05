@@ -10,6 +10,9 @@ export async function register() {
 
   // 기동은 계속하되, 특정 기능이 멈추는 설정 누락은 반드시 눈에 띄게 남긴다.
   for (const w of bootWarnings()) console.warn(`[env] ${w}`);
+  // S3 구성(공개 배포 경로·비공개 접두사) 경고. 로컬 디스크 경고는 운영 점검(assertBootSafety)이 맡는다.
+  const { storageConfig, storageWarnings } = await import('@/server/uploads');
+  if (storageConfig().driver === 's3') for (const w of storageWarnings()) console.warn(`[storage] ${w}`);
 
   // 암호화 provider 주입. CRYPTO_PROVIDER 값에 따라 구현체를 갈아끼운다.
   // (미구현 provider 를 임의로 성공 처리하지 않는다 — 주입에 실패하면 그대로 기동을 멈춘다)

@@ -53,6 +53,7 @@ logs/
 # 런타임 업로드 이미지
 /public/uploads/
 /var/uploads/
+/var/private/
 output/
 
 # 작업용 패치/diff

@@ -1,7 +1,7 @@
 import { requireMerchant } from '@/server/auth';
 import { isSameOrigin } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
-import { newObjectName, putObject } from '@/server/uploads';
+import { FONT_ASSET_MAX_BYTES, registerFontAsset } from '@/server/services/pdf-form/font-assets';
 import { stripSubsetTag } from '@/lib/pdf-form';
 import fontkit from '@pdf-lib/fontkit';
 
@@ -14,11 +14,13 @@ export const dynamic = 'force-dynamic';
  * 원본 PDF 에는 보통 문서에 쓰인 글자만 들어 있어(부분집합), 새 글자가 원본에 없으면 대체 글꼴로
  * 그릴 수밖에 없다. 기관이 그 글꼴 파일(예: 함초롬바탕 TTF)을 올리면 같은 글꼴로 그린다.
  * 서식 등록 전에도 쓸 수 있도록 서식과 묶지 않는다(저장 이름만 돌려주고 편집 기록 fonts[] 에 담긴다).
+ * 대신 기관 소유로 대장(`document_font_asset`)에 남겨 기관별 개수·총량 상한을 걸고, 렌더할 때
+ * 그 기관이 올린 글꼴만 쓴다. 어느 서식에도 쓰이지 않은 글꼴은 전자문서 배치가 정리한다.
  *
- * 글꼴은 서버 안에서만 쓰고 공개 주소로 내보내지 않는다(글꼴 라이선스). 결과 PDF 에는 쓰인 글자만
+ * 글꼴은 비공개 저장소에만 두고 공개 주소로 내보내지 않는다(글꼴 라이선스). 결과 PDF 에는 쓰인 글자만
  * 부분집합으로 들어간다.
  */
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = FONT_ASSET_MAX_BYTES;
 
 function sniffFont(buf: Buffer): 'ttf' | 'otf' | null {
   if (buf.length < 12) return null;
@@ -58,8 +60,8 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, message: '글꼴 파일을 읽을 수 없습니다.' }, { status: 400 });
   }
 
-  const name = newObjectName(ext);
-  await putObject(name, buf, 'application/octet-stream');
   const displayName = file.name.replace(/[\\/]/g, '').slice(0, 120) || `글꼴.${ext}`;
-  return Response.json({ ok: true, font: { match, url: name, name: displayName } });
+  const saved = await registerFontAsset(merchant.merchantId, buf, ext, match, displayName);
+  if (!saved.ok) return Response.json({ ok: false, message: saved.message }, { status: saved.status });
+  return Response.json({ ok: true, font: { match, url: saved.asset.name, name: displayName } });
 }

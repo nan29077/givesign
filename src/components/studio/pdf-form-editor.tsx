@@ -9,11 +9,12 @@ import {
 import { Card, CardTitle, cx } from '@/components/ui';
 import { openPdf, pdfOpenErrorMessage } from '@/components/pdf/pdfjs';
 import {
-  MAX_EDIT_TEXT, MAX_PDF_EDITS, displayFontName, matrixFontSize, pdfFontTierLabel, predictFontTier, stripSubsetTag,
-  type PdfEdit, type PdfFontInfo, type PdfFontTier, type PdfLayout, type PdfMatrix,
+  MAX_EDIT_TEXT, MAX_PDF_EDITS, coverOnlyNotice, displayFontName, matrixFontSize, pdfFontTierLabel, predictFontTier,
+  stripSubsetTag, type PdfEdit, type PdfFontInfo, type PdfFontTier, type PdfLayout, type PdfMatrix,
 } from '@/lib/pdf-form';
 import {
-  coverPolygon, groupTextRuns, rectToCover, sampleColors, styleOptions, type PdfTextRun, type TextStyleOption,
+  coverPolygon, groupTextRuns, newTextMatrix, rectToCover, resizeMatrix, sampleColors, sampleWindow, screenAngleDeg,
+  styleOptions, type PdfTextRun, type TextStyleOption,
 } from '@/lib/pdf-form-runs';
 
 /**
@@ -44,8 +45,8 @@ interface PageState {
   widthPt: number;
   heightPt: number;
   runs: PdfTextRun[];
-  /** 색 읽기용 원본 그림 */
-  sample: { data: Uint8ClampedArray; width: number; height: number; viewport: PageViewport } | null;
+  /** 쪽 회전(/Rotate, 도). 새 글 방향을 화면 가로에 맞출 때 쓴다. */
+  rotate: number;
 }
 
 type Active =
@@ -61,6 +62,7 @@ interface ReportItem {
 
 const SANS_STACK = '"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo","Nanum Gothic",sans-serif';
 const SERIF_STACK = '"Noto Serif KR","Batang","AppleMyungjo","Nanum Myeongjo",serif';
+/** 색 읽기 배율. 누른 자리만 이 배율로 작게 그린다(전 쪽 그림을 메모리에 두지 않는다). */
 const SAMPLE_SCALE = 2;
 const ZOOMS = [0.6, 0.75, 1, 1.25, 1.5, 2];
 
@@ -174,16 +176,6 @@ export function PdfFormEditor({
         for (let n = 1; n <= doc.numPages; n++) {
           const page = await doc.getPage(n);
           const vp1 = page.getViewport({ scale: 1 });
-          const vp = page.getViewport({ scale: SAMPLE_SCALE });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.ceil(vp.width);
-          canvas.height = Math.ceil(vp.height);
-          const ctx = canvas.getContext('2d', { willReadFrequently: true });
-          let sample: PageState['sample'] = null;
-          if (ctx) {
-            await page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
-            sample = { data: ctx.getImageData(0, 0, canvas.width, canvas.height).data, width: canvas.width, height: canvas.height, viewport: vp };
-          }
           const text = await page.getTextContent();
           const nameOf = (key: string) => {
             try {
@@ -196,7 +188,8 @@ export function PdfFormEditor({
           const items = text.items.filter(
             (it): it is typeof it & { str: string; transform: number[]; width: number; fontName: string } => 'str' in it,
           );
-          out.push({ pageNo: n, widthPt: vp1.width, heightPt: vp1.height, runs: groupTextRuns(n, items, nameOf), sample });
+          out.push({ pageNo: n, widthPt: vp1.width, heightPt: vp1.height, runs: groupTextRuns(n, items, nameOf), rotate: page.rotate ?? 0 });
+          page.cleanup();
           if (cancelled) return;
         }
         if (!cancelled) setPages(out);
@@ -344,12 +337,33 @@ export function PdfFormEditor({
   };
   const removeEdit = (id: string) => commit({ ...layoutRef.current, edits: layoutRef.current.edits.filter((e) => e.id !== id) });
 
-  /** 원본 그림에서 그 자리의 바탕·글자색을 읽는다. */
-  const colorsAt = (pageNo: number, poly: Array<[number, number]>) => {
-    const p = pages.find((x) => x.pageNo === pageNo);
-    if (!p?.sample) return { cover: [1, 1, 1] as [number, number, number], color: [0, 0, 0] as [number, number, number] };
-    const b = boxOf(p.sample.viewport, poly);
-    return sampleColors(p.sample.data, p.sample.width, p.sample.height, { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom });
+  /**
+   * 원본 그림에서 그 자리의 바탕·글자색을 읽는다.
+   * 누른 자리만 작은 캔버스에 그려 읽고 바로 버린다(전 쪽 고해상도 그림을 상주시키지 않는다).
+   */
+  const colorsAt = async (
+    pageNo: number,
+    poly: Array<[number, number]>,
+  ): Promise<{ cover: [number, number, number]; color: [number, number, number] }> => {
+    const fallback = { cover: [1, 1, 1] as [number, number, number], color: [0, 0, 0] as [number, number, number] };
+    if (!baseDoc) return fallback;
+    try {
+      const page = await baseDoc.getPage(pageNo);
+      const win = sampleWindow(boxOf(page.getViewport({ scale: 1 }), poly), { scale: SAMPLE_SCALE });
+      const vp = page.getViewport({ scale: win.scale, offsetX: win.offsetX, offsetY: win.offsetY });
+      const canvas = document.createElement('canvas');
+      canvas.width = win.width;
+      canvas.height = win.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return fallback;
+      await page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
+      const data = ctx.getImageData(0, 0, win.width, win.height).data;
+      canvas.width = 0;
+      canvas.height = 0;
+      return sampleColors(data, win.width, win.height, win.inner);
+    } catch {
+      return fallback;
+    }
   };
 
   const editForRun = (run: PdfTextRun) => layout.edits.find((e) => e.id === run.id) ?? null;
@@ -359,11 +373,12 @@ export function PdfFormEditor({
     const existing = editForRun(run);
     if (mode === 'erase') {
       if (existing) return;
-      const { cover, color } = colorsAt(run.page, coverPolygon(run));
-      upsertEdit({
-        id: run.id, page: run.page, kind: 'erase', matrix: run.matrix, width: run.width, text: '',
-        font: { baseFont: run.baseFont, serif: run.serif, bold: run.bold }, color, cover, original: run.text,
-      });
+      void colorsAt(run.page, coverPolygon(run)).then(({ cover, color }) =>
+        upsertEdit({
+          id: run.id, page: run.page, kind: 'erase', matrix: run.matrix, width: run.width, text: '',
+          font: { baseFont: run.baseFont, serif: run.serif, bold: run.bold }, color, cover, original: run.text,
+        }),
+      );
       return;
     }
     if (existing) {
@@ -393,7 +408,7 @@ export function PdfFormEditor({
     return { run: r, style: styles.find((s) => s.key === key) ?? null };
   };
 
-  const onPageClick = (pageNo: number, vp: PageViewport, e: React.MouseEvent<HTMLDivElement>) => {
+  const onPageClick = async (pageNo: number, vp: PageViewport, e: React.MouseEvent<HTMLDivElement>) => {
     if (mode !== 'add') return;
     if ((e.target as HTMLElement).closest('[data-editor-ui]')) return;
     if (active) {
@@ -404,8 +419,10 @@ export function PdfFormEditor({
     const [x, y] = vp.convertToPdfPoint(e.clientX - rect.left, e.clientY - rect.top);
     const { run, style } = nearestStyle(pageNo, x, y);
     const size = style?.size ?? 11;
-    const matrix: PdfMatrix = [size, 0, 0, size, x, y - size * 0.35];
-    const color: [number, number, number] = run ? colorsAt(run.page, coverPolygon(run)).color : [0, 0, 0];
+    // 회전된 쪽(/Rotate 90·180·270)에서도 화면에서 가로로 보이게 글자 방향을 돌린다.
+    const rotate = pages.find((p) => p.pageNo === pageNo)?.rotate ?? 0;
+    const matrix: PdfMatrix = newTextMatrix(size, x, y, rotate);
+    const color: [number, number, number] = run ? (await colorsAt(run.page, coverPolygon(run))).color : [0, 0, 0];
     setActive({ kind: 'new', page: pageNo, matrix, style, color });
     setDraft('');
   };
@@ -436,11 +453,12 @@ export function PdfFormEditor({
     const [x0, y0] = d.vp.convertToPdfPoint(box.left, box.top);
     const [x1, y1] = d.vp.convertToPdfPoint(box.left + box.w, box.top + box.h);
     const { matrix, width } = rectToCover(x0, y0, x1, y1);
-    const { cover, color } = colorsAt(d.page, coverPolygon({ matrix, width }));
-    upsertEdit({
-      id: rid('area'), page: d.page, kind: 'erase', matrix, width, text: '',
-      font: { baseFont: '', serif: false, bold: false }, color, cover, original: '(영역)',
-    });
+    void colorsAt(d.page, coverPolygon({ matrix, width })).then(({ cover, color }) =>
+      upsertEdit({
+        id: rid('area'), page: d.page, kind: 'erase', matrix, width, text: '',
+        font: { baseFont: '', serif: false, bold: false }, color, cover, original: '(영역)',
+      }),
+    );
   };
 
   /** 넣은 글 옮기기(화면 px 만큼) */
@@ -459,11 +477,12 @@ export function PdfFormEditor({
       if (active.kind === 'run') {
         const r = active.run;
         if (text !== r.text) {
-          const { cover, color } = colorsAt(r.page, coverPolygon(r));
-          upsertEdit({
-            id: r.id, page: r.page, kind: text.trim() ? 'replace' : 'erase', matrix: r.matrix, width: r.width, text,
-            font: { baseFont: r.baseFont, serif: r.serif, bold: r.bold }, color, cover, original: r.text,
-          });
+          void colorsAt(r.page, coverPolygon(r)).then(({ cover, color }) =>
+            upsertEdit({
+              id: r.id, page: r.page, kind: text.trim() ? 'replace' : 'erase', matrix: r.matrix, width: r.width, text,
+              font: { baseFont: r.baseFont, serif: r.serif, bold: r.bold }, color, cover, original: r.text,
+            }),
+          );
         }
       } else if (active.kind === 'edit') {
         const e = active.edit;
@@ -490,13 +509,13 @@ export function PdfFormEditor({
     if (!st) return;
     if (active.kind === 'new') {
       const m = active.matrix;
-      setActive({ ...active, style: st, matrix: [st.size, 0, 0, st.size, m[4], m[5]] });
+      setActive({ ...active, style: st, matrix: resizeMatrix(m, st.size) });
     } else if (active.kind === 'edit' && active.edit.kind === 'add') {
       const m = active.edit.matrix;
       const next: PdfEdit = {
         ...active.edit,
         font: { baseFont: st.baseFont, serif: st.serif, bold: st.bold },
-        matrix: [st.size, 0, 0, st.size, m[4], m[5]],
+        matrix: resizeMatrix(m, st.size),
       };
       upsertEdit(next);
       setActive({ kind: 'edit', edit: next });
@@ -529,7 +548,7 @@ export function PdfFormEditor({
     if (edit.kind === 'erase') return { tier: null, missing: [], predicted: false };
     const r = report.get(edit.id);
     if (r) return { tier: r.tier, missing: r.missing, predicted: false };
-    const p = predictFontTier(edit.text, fontInfo(edit.font.baseFont));
+    const p = predictFontTier(edit.text, fontInfo(edit.font.baseFont), edit.page);
     return { tier: p.tier, missing: p.missing, predicted: true };
   };
 
@@ -566,7 +585,7 @@ export function PdfFormEditor({
       ? active.run.size
       : matrixFontSize(active.kind === 'edit' ? active.edit.matrix : active.matrix)
     : 0;
-  const activePrediction = active ? predictFontTier(draft, fontInfo(activeFontName)) : null;
+  const activePrediction = active ? predictFontTier(draft, fontInfo(activeFontName), activePage(active)) : null;
   const activeStyleKey = active && activeFontName ? `${activeFontName}|${Math.round(activeSize * 10) / 10}` : '';
   const canPickStyle = active?.kind === 'new' || (active?.kind === 'edit' && active.edit.kind === 'add');
   const fallbackCount = layout.edits.filter((e) => tierOf(e).tier === 'FALLBACK').length;
@@ -865,8 +884,9 @@ export function PdfFormEditor({
             </>
           )}
           {coverOnly.length ? (
-            <p className="mt-2 text-[11.5px] leading-relaxed text-ink-500">
-              {coverOnly.join(', ')}쪽은 원본 구조상 원래 글자를 파일에서 지우지 못하고 덮기만 합니다. 화면·인쇄 결과는 같습니다.
+            <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-warning-500">
+              <TriangleAlert size={16} strokeWidth={1.7} className="mt-px shrink-0" />
+              {coverOnlyNotice(coverOnly)}
             </p>
           ) : null}
         </Card>
@@ -1224,11 +1244,30 @@ function InlineInput({
     color = active.color;
   }
   const size = matrixFontSize(matrix);
-  const b = boxOf(vp, coverPolygon({ matrix, width: Math.max(width, size * 4) }));
   const px = size * vp.scale;
+  // 글자가 화면에서 기울어 있으면(회전된 쪽·세로 글자) 입력칸도 같은 방향으로 돌린다.
+  const start = vp.convertToViewportPoint(matrix[4], matrix[5]) as [number, number];
+  const angle = screenAngleDeg(start, vp.convertToViewportPoint(matrix[4] + matrix[0], matrix[5] + matrix[1]) as [number, number]);
+  const b = angle
+    ? (() => {
+        // 돌리기 전 기준(가로) 상자: 기준선 시작점에서 위로 0.95em, 아래로 0.26em.
+        const w = Math.max(width, size * 4) * vp.scale;
+        return { left: start[0], top: start[1] - px * 0.95, right: start[0] + w, bottom: start[1] + px * 0.26 };
+      })()
+    : boxOf(vp, coverPolygon({ matrix, width: Math.max(width, size * 4) }));
 
   return (
-    <div data-editor-ui className="absolute z-10" style={{ left: b.left - 2, top: b.top - 2 }} onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+    <div
+      data-editor-ui
+      className="absolute z-10"
+      style={
+        angle
+          ? { left: b.left - 2, top: b.top - 2, transform: `rotate(${angle}deg)`, transformOrigin: `2px ${start[1] - b.top + 2}px` }
+          : { left: b.left - 2, top: b.top - 2 }
+      }
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <input
         ref={ref}
         value={draft}

@@ -16,10 +16,15 @@ import {
  * 나머지 바이트는 원본 그대로 둔다.
  *
  * ── 하지 않는 것 (안전하게 남겨 두는 경우) ──────────────────────────────
- *  - 폭을 알 수 없는 글꼴(Type3·특수 CMap): 뒤 글자 위치를 지킬 수 없어 지우지 않는다.
+ *  - 폭을 알 수 없는 글꼴(표준 14 글꼴·Type3 폭 미지정·특수 CMap): 뒤 글자 위치를 지킬 수 없어
+ *    지우지 않는다.
  *  - 양식 XObject 안의 글자: 쪽 스트림만 다룬다. 덮개는 그대로 가린다.
  *  - 읽다가 해석할 수 없는 구문을 만나면 그 쪽은 원본 스트림을 그대로 둔다.
  * 지우지 못해도 화면·인쇄 결과는 덮개로 같다. 결과 보고에 지운 글자 수를 남긴다.
+ *
+ * 위 경우 가운데 덮개 영역에 걸칠 수 있는 글자가 있었으면 `partial` 을 세운다. 그런 쪽은
+ * "일부 원래 글자를 지우지 못했을 수 있다" 고 화면에 알린다(옛 값이 복사·검색에 남을 수 있다).
+ * 폭을 모르니 정확히 덮개 안이었는지는 알 수 없어, 넉넉한 어림 범위로 겹침만 본다.
  */
 
 type Mat = [number, number, number, number, number, number];
@@ -328,6 +333,42 @@ export interface StripResult {
   removed: number;
   /** 해석하지 못해 원본을 그대로 둔 경우 */
   skipped: boolean;
+  /**
+   * 폭을 모르는 글꼴·양식 XObject 안의 글자처럼, 덮개 영역에 있을 수 있는데 지우지 못한 글자가
+   * 있었던 경우. 쪽 스트림의 다른 글자는 지웠을 수 있다.
+   */
+  partial: boolean;
+}
+
+type Box = [number, number, number, number];
+
+function boxOf(points: Array<[number, number]>): Box {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [x, y] of points) {
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  return [x0, y0, x1, y1];
+}
+
+function boxesMeet(a: Box, b: Box): boolean {
+  return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+}
+
+/** 양식 XObject 내용에 글자 연산(또는 다른 XObject 그리기)이 있는지. 못 읽으면 있다고 본다. */
+function formMayHaveText(stream: PDFStream): boolean {
+  let bytes: Uint8Array;
+  try {
+    bytes = stream instanceof PDFRawStream ? decodePDFRawStream(stream).decode() : stream.getContents();
+  } catch {
+    return true;
+  }
+  return /(^|[\s\]>)])(Tj|TJ|'|"|Do)(?=[\s[<(/]|$)/.test(latin1(bytes));
 }
 
 /** 쪽 내용 스트림을 하나로 읽는다. */
@@ -364,9 +405,11 @@ function hexOf(codes: number[], bytes: 1 | 2): string {
  * 바뀐 것이 있으면 쪽 Contents 를 새 스트림 하나로 바꾼다.
  */
 export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon[]): StripResult {
-  if (polys.length === 0) return { removed: 0, skipped: false };
+  if (polys.length === 0) return { removed: 0, skipped: false, partial: false };
   const src = readContents(doc, page);
-  if (!src) return { removed: 0, skipped: true };
+  if (!src) return { removed: 0, skipped: true, partial: false };
+  const polyBoxes = polys.map((p) => boxOf(p));
+  const nearCover = (b: Box) => polyBoxes.some((pb) => boxesMeet(pb, b));
 
   const res = page.node.Resources();
   const fontDict = res ? look(doc, res.get(PDFName.of('Font'))) : undefined;
@@ -382,8 +425,11 @@ export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon
     return m;
   };
 
+  const xobjDict = res ? look(doc, res.get(PDFName.of('XObject'))) : undefined;
+
   const edits: Array<{ s: number; e: number; text: string }> = [];
   let removed = 0;
+  let partial = false;
 
   try {
     const lx = new Lexer(src);
@@ -408,16 +454,45 @@ export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon
       posKnown = true;
     };
 
+    /**
+     * 폭을 몰라 지우지 못하는 글자열이 덮개에 걸칠 수 있는지 어림한다.
+     * 현재 위치에서 바이트마다 최대 1.2em(+자간·조정값) 나아간다고 보고, 높이는 -0.5~1.2em 으로 잡는다.
+     * 현재 위치를 모르면(앞 글자열의 폭을 몰랐으면) 걸칠 수 있다고 본다.
+     */
+    const flagUnknown = (nBytes: number, adjSum: number) => {
+      if (partial || nBytes <= 0) return;
+      if (!posKnown) {
+        partial = true;
+        return;
+      }
+      const em = Math.abs(fs) || 1;
+      const reach = nBytes * 1.2 + adjSum / 1000 + (nBytes * (Math.abs(tc) + Math.abs(tw))) / em;
+      const trm = mul(mul([fs * th, 0, 0, fs, 0, rise], tm), ctm);
+      const box = boxOf([
+        apply(trm, -0.2, -0.5),
+        apply(trm, reach + 0.2, -0.5),
+        apply(trm, reach + 0.2, 1.2),
+        apply(trm, -0.2, 1.2),
+      ]);
+      if (nearCover(box)) partial = true;
+    };
+    const bytesIn = (items: Array<{ bytes: number[] } | { adj: number }>) =>
+      items.reduce((n, it) => n + ('bytes' in it ? it.bytes.length : 0), 0);
+    const adjIn = (items: Array<{ bytes: number[] } | { adj: number }>) =>
+      items.reduce((n, it) => n + ('adj' in it ? Math.abs(it.adj) : 0), 0);
+
     /** 글자열을 걸으며 지울 글자를 정한다. 고쳐 쓸 TJ 조각을 돌려준다(바뀐 것이 없으면 null). */
     const walk = (items: Array<{ bytes: number[] } | { adj: number }>): string | null => {
       const m = font ? metricsFor(font) : null;
       if (!m || !posKnown) {
+        flagUnknown(bytesIn(items), adjIn(items));
         posKnown = false;
         return null;
       }
       const out: Array<Glyph | { adj: number }> = [];
       let changed = false;
-      for (const it of items) {
+      for (let ii = 0; ii < items.length; ii++) {
+        const it = items[ii];
         if ('adj' in it) {
           tm = mul([1, 0, 0, 1, (-it.adj / 1000) * fs * th, 0], tm);
           out.push(it);
@@ -427,6 +502,10 @@ export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon
           const code = m.bytes === 2 ? (it.bytes[k] << 8) | it.bytes[k + 1] : it.bytes[k];
           const w0 = m.width(code);
           if (w0 === null) {
+            // 이 연산 전체를 그대로 두므로, 이미 지우기로 한 글자도 남는다.
+            if (changed) partial = true;
+            const rest = items.slice(ii + 1);
+            flagUnknown(it.bytes.length - k + bytesIn(rest), adjIn(rest));
             posKnown = false;
             return null;
           }
@@ -576,16 +655,42 @@ export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon
           }
           break;
         }
+        case 'Do': {
+          // 양식 XObject 안의 글자는 지우지 않는다. 덮개에 걸칠 수 있으면 알린다.
+          const n = operands.find((o) => o.t === 'name');
+          if (partial || !n || n.t !== 'name') break;
+          const xo = xobjDict instanceof PDFDict ? look(doc, xobjDict.get(PDFName.of(n.v))) : undefined;
+          if (!(xo instanceof PDFStream)) break;
+          const sub = look(doc, xo.dict.get(PDFName.of('Subtype')));
+          if (!(sub instanceof PDFName) || sub.decodeText() !== 'Form') break;
+          if (!formMayHaveText(xo)) break;
+          const bb = look(doc, xo.dict.get(PDFName.of('BBox')));
+          const bbox = bb instanceof PDFArray ? [0, 1, 2, 3].map((i) => num(doc, bb.get(i))) : [];
+          if (bbox.length !== 4 || bbox.some((v) => v === null)) {
+            partial = true;
+            break;
+          }
+          const mx = look(doc, xo.dict.get(PDFName.of('Matrix')));
+          const fm: Mat =
+            mx instanceof PDFArray && mx.size() === 6
+              ? ([0, 1, 2, 3, 4, 5].map((i) => num(doc, mx.get(i)) ?? (i === 0 || i === 3 ? 1 : 0)) as Mat)
+              : I;
+          const full = mul(fm, ctm);
+          const [bx0, by0, bx1, by1] = bbox as number[];
+          const box = boxOf([apply(full, bx0, by0), apply(full, bx1, by0), apply(full, bx1, by1), apply(full, bx0, by1)]);
+          if (nearCover(box)) partial = true;
+          break;
+        }
         default:
           break;
       }
       operands.length = 0;
     }
   } catch {
-    return { removed: 0, skipped: true };
+    return { removed: 0, skipped: true, partial: false };
   }
 
-  if (edits.length === 0) return { removed: 0, skipped: false };
+  if (edits.length === 0) return { removed: 0, skipped: false, partial };
 
   // 뒤에서부터 바꿔 끼운다.
   const chunks: Uint8Array[] = [];
@@ -606,5 +711,5 @@ export function stripCoveredText(doc: PDFDocument, page: PDFPage, polys: Polygon
 
   const stream = doc.context.flateStream(out);
   page.node.set(PDFName.of('Contents'), doc.context.register(stream));
-  return { removed, skipped: false };
+  return { removed, skipped: false, partial };
 }

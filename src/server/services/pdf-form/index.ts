@@ -1,16 +1,17 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
 import { prisma } from '@/server/db';
-import { getObject, newObjectName, putObject } from '@/server/uploads';
+import { getObject, newObjectName, objectNameFromUrl, putObject } from '@/server/uploads';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import {
-  emptyPdfLayout, parsePdfLayout, type PdfFontInfo, type PdfLayout,
+  emptyPdfLayout, parsePdfLayout, sameLayout, type PdfFontInfo, type PdfLayout,
 } from '@/lib/pdf-form';
 import type { Prisma } from '@/generated/prisma/client';
 import { toBasePdf } from './convert';
 import { describeFonts, type FontEncoder } from './fonts';
 import { renderPdfLayout, type RenderReportItem } from './render';
+import { fontLoaderFor, fontOwnershipProblem } from './font-assets';
 
 /**
  * 서식 원본 편집 — 서버 쪽 진입점.
@@ -27,7 +28,17 @@ import { renderPdfLayout, type RenderReportItem } from './render';
  * 미리보기·등록 때 그 토큰을 확인한다. 이미 저장된 서식은 서식 ID 와 기관으로 확인한다.
  */
 
-export const MEDIA_PDF_RE = /^\/api\/media\/([a-f0-9]{32}\.pdf)$/;
+/**
+ * 이 서비스 저장소의 PDF 주소에서 객체 이름을 뽑는다(`/api/media/<이름>.pdf` 또는 S3_PUBLIC_BASE 아래 같은 이름).
+ * 주소 문자열 형태가 아니라 **객체 이름**으로 다뤄야 S3 + 공개 배포 구성에서도 원본 편집이 동작한다.
+ */
+export function mediaPdfName(url: string | null | undefined): string | null {
+  const name = objectNameFromUrl(url);
+  return name && /^[a-f0-9]{32}\.pdf$/.test(name) ? name : null;
+}
+export function isMediaPdfUrl(url: string | null | undefined): boolean {
+  return mediaPdfName(url) !== null;
+}
 /** 기관이 올린 글꼴은 공개 주소로 내보내지 않는다(라이선스). 저장소 이름만 기록한다. */
 export const FONT_OBJECT_RE = /^[a-f0-9]{32}\.(ttf|otf)$/;
 
@@ -60,19 +71,18 @@ export function verifyBasePdfToken(merchantId: string, url: string, token: strin
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
-/** /api/media/<이름>.pdf → 저장소에서 읽는다. 다른 주소는 읽지 않는다. */
+/** 이 서비스 저장소의 PDF 주소 → 저장소에서 읽는다. 다른 주소는 읽지 않는다. */
 export async function readMediaPdf(url: string | null | undefined): Promise<Uint8Array | null> {
-  if (!url) return null;
-  const m = MEDIA_PDF_RE.exec(url);
-  if (!m) return null;
-  const buf = await getObject(m[1]);
+  const name = mediaPdfName(url);
+  if (!name) return null;
+  const buf = await getObject(name);
   return buf ? new Uint8Array(buf) : null;
 }
 
-async function loadFontAsset(name: string): Promise<Uint8Array | null> {
-  if (!FONT_OBJECT_RE.test(name)) return null;
-  const buf = await getObject(name);
-  return buf ? new Uint8Array(buf) : null;
+/** 이 기관이 올린 글꼴만 읽는 렌더러용 로더. */
+function loadFontAssetFor(merchantId: string) {
+  const load = fontLoaderFor(merchantId);
+  return (name: string) => (FONT_OBJECT_RE.test(name) ? load(name) : Promise.resolve(null));
 }
 
 export interface BasePdfInfo {
@@ -94,7 +104,7 @@ export async function prepareBasePdf(
   const res = await toBasePdf(buf, ext);
   if (!res.ok) return res;
   let url = originalUrl;
-  if (res.converted !== 'none' || !MEDIA_PDF_RE.test(originalUrl)) {
+  if (res.converted !== 'none' || !isMediaPdfUrl(originalUrl)) {
     url = await putObject(newObjectName('pdf'), Buffer.from(res.pdf), 'application/octet-stream');
   }
   return {
@@ -174,15 +184,18 @@ export interface RenderedFile {
  * 수정이 하나도 없으면 null(바탕 PDF 를 그대로 쓴다).
  */
 export async function renderAndStore(
+  merchantId: string,
   basePdfUrl: string,
   layout: PdfLayout,
 ): Promise<{ ok: true; file: RenderedFile | null } | { ok: false; message: string }> {
   if (layout.edits.length === 0) return { ok: true, file: null };
+  const fontProblem = await fontOwnershipProblem(merchantId, layout);
+  if (fontProblem) return { ok: false, message: fontProblem };
   const base = await readMediaPdf(basePdfUrl);
   if (!base) return { ok: false, message: '원본 PDF 를 찾을 수 없습니다. 서식 파일을 다시 올려 주세요.' };
   let rendered;
   try {
-    rendered = await renderPdfLayout(base, layout, { loadAsset: loadFontAsset });
+    rendered = await renderPdfLayout(base, layout, { loadAsset: loadFontAssetFor(merchantId) });
   } catch (err) {
     logger.warn('[pdf-form] 결과 PDF 생성 실패', { err: err instanceof Error ? err.message : String(err) });
     return { ok: false, message: '고친 내용을 PDF 로 만들지 못했습니다. 마지막 수정을 되돌린 뒤 다시 저장해 주세요.' };
@@ -219,7 +232,7 @@ async function resolveBase(
     if (!base) return { error: '원본 PDF 를 찾을 수 없습니다. 서식 파일을 다시 올려 주세요.' };
     return { base, pageCount: t.pdfPageCount };
   }
-  if (!MEDIA_PDF_RE.test(source.basePdfUrl) || !verifyBasePdfToken(merchantId, source.basePdfUrl, source.token)) {
+  if (!isMediaPdfUrl(source.basePdfUrl) || !verifyBasePdfToken(merchantId, source.basePdfUrl, source.token)) {
     return { error: '업로드 확인이 끝났습니다. 서식 파일을 다시 올려 주세요.' };
   }
   const base = await readMediaPdf(source.basePdfUrl);
@@ -240,10 +253,16 @@ export async function previewLayout(
   if ('error' in resolved) return { ok: false, message: resolved.error };
   const layout = parsePdfLayout(rawLayout);
   if (!layout) return { ok: false, message: '편집 내용 형식이 올바르지 않습니다.' };
-  const problem = layoutProblem(layout, resolved.pageCount);
+  const problem = layoutProblem(layout, resolved.pageCount) ?? (await fontOwnershipProblem(merchantId, layout));
   if (problem) return { ok: false, message: problem };
-  const r = await renderPdfLayout(resolved.base, layout, { loadAsset: loadFontAsset });
-  return { ok: true, bytes: r.bytes, report: r.report, stripped: r.strippedGlyphs, coverOnlyPages: r.coverOnlyPages };
+  try {
+    const r = await renderPdfLayout(resolved.base, layout, { loadAsset: loadFontAssetFor(merchantId) });
+    return { ok: true, bytes: r.bytes, report: r.report, stripped: r.strippedGlyphs, coverOnlyPages: r.coverOnlyPages };
+  } catch (err) {
+    // 손상된 글꼴·PDF 로 그리지 못하면 저장 경로(renderAndStore)와 같은 안내를 준다.
+    logger.warn('[pdf-form] 미리보기 생성 실패', { err: err instanceof Error ? err.message : String(err) });
+    return { ok: false, message: '고친 내용을 PDF 로 만들지 못했습니다. 마지막 수정을 되돌린 뒤 다시 시도해 주세요.' };
+  }
 }
 
 /** 이전 이름 호환(서식 ID 로 미리보기). */
@@ -258,6 +277,8 @@ export interface SaveLayoutResult {
   edits: number;
   stripped: number;
   coverOnlyPages: number[];
+  /** 저장된 기록과 같아 결과 PDF 를 다시 만들지 않았다 */
+  unchanged?: boolean;
 }
 
 /**
@@ -271,7 +292,7 @@ export async function saveTemplateLayout(
 ): Promise<SaveLayoutResult | { ok: false; message: string }> {
   const t = await prisma.documentTemplate.findFirst({
     where: { id: templateId, merchantId, archivedAt: null, templateType: 'FILE' },
-    select: { id: true, basePdfUrl: true, pdfPageCount: true },
+    select: { id: true, basePdfUrl: true, pdfPageCount: true, pdfLayout: true, renderedPdfUrl: true },
   });
   if (!t?.basePdfUrl) return { ok: false, message: '원본을 고칠 수 있는 서식이 아닙니다.' };
   const layout = parsePdfLayout(rawLayout);
@@ -279,7 +300,14 @@ export async function saveTemplateLayout(
   const problem = layoutProblem(layout, t.pdfPageCount);
   if (problem) return { ok: false, message: problem };
 
-  const res = await renderAndStore(t.basePdfUrl, layout);
+  // 저장된 기록과 같으면 결과 PDF 를 다시 만들지 않는다(등록 화면 저장 applyPdf 와 같은 기준).
+  if (t.pdfLayout && sameLayout(t.pdfLayout, layout) && (layout.edits.length === 0 || t.renderedPdfUrl)) {
+    return {
+      ok: true, report: [], renderedPdfUrl: t.renderedPdfUrl, edits: layout.edits.length, stripped: 0, coverOnlyPages: [], unchanged: true,
+    };
+  }
+
+  const res = await renderAndStore(merchantId, t.basePdfUrl, layout);
   if (!res.ok) return res;
   await prisma.documentTemplate.update({
     where: { id: t.id },
