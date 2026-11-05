@@ -36,10 +36,12 @@ export default async function NewDocumentTemplatePage({
   const { merchantId } = await requireMerchant();
   const sp = await searchParams;
 
-  const [count, merchant] = await Promise.all([
-    prisma.documentTemplate.count({ where: { merchantId, archivedAt: null } }),
+  const [count, merchant, purposeOwners] = await Promise.all([
+    prisma.documentTemplate.count({ where: { merchantId, archivedAt: null, defaultSet: false } }),
     prisma.merchantProfile.findUnique({ where: { id: merchantId }, select: { id: true } }),
+    prisma.documentTemplate.findMany({ where: { merchantId, archivedAt: null, purpose: { not: null } }, select: { name: true, purpose: true } }),
   ]);
+  const takenPurposes = Object.fromEntries(purposeOwners.map((o) => [o.purpose!, o.name]));
   if (!merchant) notFound();
   const full = count >= MAX_DOCUMENT_TEMPLATES;
 
@@ -89,6 +91,8 @@ export default async function NewDocumentTemplatePage({
             defaultBody={preset?.body}
             presetKey={preset?.key ?? null}
             submitLabel="서식 등록"
+            takenPurposes={takenPurposes}
+            defaultPurpose={preset?.purpose && !takenPurposes[preset.purpose] ? preset.purpose : null}
           />
         </>
       )}

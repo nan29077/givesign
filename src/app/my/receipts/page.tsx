@@ -34,6 +34,10 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
 
   return (
     <div className="space-y-4">
+      <Link href="/my/documents" className="flex items-center justify-between rounded-2xl border border-ink-100 bg-white px-4 py-3 text-[13px] font-bold text-ink-800 hover:border-brand-200">
+        <span>기관에서 받은 감사장·확인서 보기</span>
+        <span className="text-brand-700">받은 문서</span>
+      </Link>
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[16px] font-extrabold text-ink-900">영수증 발급 정보</h2>

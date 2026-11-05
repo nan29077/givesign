@@ -19,7 +19,10 @@ import {
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import type { PdfFontInfo } from '@/lib/pdf-form';
-import { fontInfoForBase, readMediaPdf, templateLayout } from '@/server/services/pdf-form';
+import { fontInfoForBase, layoutMergeTexts, readMediaPdf, templateLayout } from '@/server/services/pdf-form';
+import { MergePreview } from '@/components/studio/merge-preview';
+import { DOCUMENT_PURPOSE_LABEL } from '@/server/services/purpose-documents';
+import { isDocumentPurpose } from '@/server/services/purpose-templates';
 import type { ExistingPdfForm } from '@/components/studio/document-file-editor-field';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +32,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
   const { merchantId } = await requireMerchant();
   const { id } = await params;
 
-  const [template, products, recent, counts] = await Promise.all([
+  const [template, products, recent, counts, purposeOwners] = await Promise.all([
     prisma.documentTemplate.findFirst({ where: { id, merchantId } }),
     prisma.chargeProduct.findMany({
       where: { merchantId, documentTemplateId: id, archivedAt: null },
@@ -46,6 +49,10 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
       by: ['status'],
       where: { merchantId, templateId: id },
       _count: { _all: true },
+    }),
+    prisma.documentTemplate.findMany({
+      where: { merchantId, archivedAt: null, purpose: { not: null }, id: { not: id } },
+      select: { name: true, purpose: true },
     }),
   ]);
   if (!template) notFound();
@@ -71,6 +78,8 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
     };
   }
   const countOf = (status: string) => counts.find((c) => c.status === status)?._count._all ?? 0;
+  const takenPurposes = Object.fromEntries(purposeOwners.map((o) => [o.purpose!, o.name]));
+  const purposeLabel = isDocumentPurpose(template.purpose) ? DOCUMENT_PURPOSE_LABEL[template.purpose] : null;
 
   return (
     <>
@@ -115,6 +124,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
               fields={fields}
               submitLabel="서식 저장"
               pdfEditor={pdfEditor}
+              takenPurposes={takenPurposes}
             />
 
             <Card className="mt-4">
@@ -139,6 +149,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
 
           {/* ── 미리보기 · 현황 ─────────────────────────────────── */}
           <aside className={cx('min-w-0 space-y-3', isFile ? 'grid gap-3 md:grid-cols-2 md:space-y-0 xl:grid-cols-3' : 'xl:sticky xl:top-20 xl:self-start')}>
+            <MergePreview body={template.body} pdfTexts={isFile ? layoutMergeTexts(template.pdfLayout) : undefined} purposeLabel={purposeLabel} />
             <Card>
               <CardTitle>후원자에게 보이는 모습</CardTitle>
               <p className="mb-3 mt-0.5 text-[11.5px] leading-relaxed text-ink-400">
@@ -182,6 +193,7 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
               <div className="mt-3">
                 <DataRow label="자필 서명" value={template.requireSignature ? '받음' : '받지 않음'} />
                 <DataRow label="사용 여부" value={template.active ? '사용 중' : '중지'} />
+                <DataRow label="자동 발송" value={purposeLabel ? `${purposeLabel} · ${template.autoSend ? '사용' : '끔'}` : '쓰지 않음'} />
                 <DataRow label="등록" value={formatKst(template.createdAt, false)} />
               </div>
             </Card>

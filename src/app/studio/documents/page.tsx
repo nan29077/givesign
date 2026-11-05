@@ -17,6 +17,7 @@ import {
 } from '@/server/services/documents';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
+import { purposeStatus } from '@/server/services/purpose-templates';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export const dynamic = 'force-dynamic';
  */
 
 const TABS = [
+  { key: 'purposes', label: '자동 발송' },
   { key: 'templates', label: '문서 서식' },
   { key: 'submissions', label: '제출된 문서' },
   { key: 'archived', label: '보관함' },
@@ -74,6 +76,8 @@ export default async function StudioDocumentsPage({
     ]);
 
   const activeTemplates = templates.filter((t) => t.active);
+  const purposes = tab === 'purposes' ? await purposeStatus(merchantId) : [];
+  const issuedTotal = await prisma.issuedDocument.count({ where: { merchantId, archivedAt: null } });
 
   return (
     <>
@@ -115,7 +119,7 @@ export default async function StudioDocumentsPage({
 
       <nav
         aria-label="문서 관리 메뉴"
-        className="mb-4 grid grid-cols-3 overflow-hidden rounded-2xl border border-ink-100 bg-white p-1 shadow-[0_8px_24px_rgba(23,22,26,0.05)]"
+        className="mb-4 grid grid-cols-4 overflow-hidden rounded-2xl border border-ink-100 bg-white p-1 shadow-[0_8px_24px_rgba(23,22,26,0.05)]"
       >
         {TABS.map((t) => (
           <Link
@@ -129,11 +133,76 @@ export default async function StudioDocumentsPage({
           >
             {t.label}
             <span className="ml-1 tabular-nums opacity-60">
-              {t.key === 'templates' ? templates.length : t.key === 'submissions' ? submissionTotal : archivedTotal}
+              {t.key === 'purposes' ? issuedTotal : t.key === 'templates' ? templates.length : t.key === 'submissions' ? submissionTotal : archivedTotal}
             </span>
           </Link>
         ))}
       </nav>
+
+      {/* ── 용도별 자동 발송 현황 ─────────────────────────────── */}
+      {tab === 'purposes' ? (
+        <>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+            <SectionTitle
+              title="용도별 자동 발송"
+              description="후원·약정·봉사 활동이 생기면 용도마다 걸린 서식으로 문서를 만들어 보냅니다. 서식이 없으면 기본 서식을 복사해 씁니다."
+            />
+            <LinkButton href="/studio/documents/issued" variant="secondary">
+              발급 문서 {formatNumber(issuedTotal)}건
+            </LinkButton>
+          </div>
+          <Table>
+            <thead>
+              <tr>
+                <Th>용도</Th>
+                <Th>보내는 방법</Th>
+                <Th>서식</Th>
+                <Th>상태</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {purposes.map((p) => (
+                <tr key={p.purpose}>
+                  <Td className="text-[12.5px] font-bold text-ink-800">{p.label}</Td>
+                  <Td className="text-[12px] text-ink-500">{p.signature ? '전자서명 요청(이용요금 1건)' : '열람 링크 문자'}</Td>
+                  <Td>
+                    {p.template ? (
+                      <Link href={`/studio/documents/${p.template.id}`} className="text-[12.5px] font-bold text-brand-700 hover:underline">
+                        {p.template.name}
+                      </Link>
+                    ) : (
+                      <span className="text-[12px] text-ink-400">없음 — 첫 발송 때 기본 서식을 복사합니다</span>
+                    )}
+                    {p.template?.defaultSet ? (
+                      <span className="ml-1.5"><Badge tone="neutral">{p.template.unchanged ? '기본 서식 그대로' : '기본 서식에서 수정'}</Badge></span>
+                    ) : p.template ? (
+                      <span className="ml-1.5"><Badge tone="brand">기관 서식</Badge></span>
+                    ) : null}
+                  </Td>
+                  <Td>
+                    {!p.template ? (
+                      <Badge tone="neutral">기본 서식 대기</Badge>
+                    ) : p.sending ? (
+                      <Badge tone="success">자동 발송 중</Badge>
+                    ) : !p.template.active ? (
+                      <Badge tone="warning">서식 중지</Badge>
+                    ) : (
+                      <Badge tone="warning">자동 발송 끔</Badge>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+          <div className="mt-4">
+            <Notice tone="neutral" title="자동 발송 규칙">
+              감사장·확인서는 서명 없이 열람 링크로 보내며 링크는 30일 동안 열립니다(지나면 후원자 마이페이지에서 다시 엽니다).
+              약정서·신청서·변경 신청서는 전자문서 센터 서명 요청으로 보내고 이용요금이 1건 차감됩니다. 잔액이 없으면 보내지 않고 승인 대기함에 올라갑니다.
+              기부금영수증은 이 기능으로 만들지 않고 영수증 대장에서만 발급합니다. 탈퇴한 후원자에게는 보내지 않습니다.
+            </Notice>
+          </div>
+        </>
+      ) : null}
 
       {/* ── 서식 목록 ─────────────────────────────────────────── */}
       {tab === 'templates' ? (
@@ -179,6 +248,7 @@ export default async function StudioDocumentsPage({
                             <Badge tone="brand">{documentTemplateTypeLabel[t.templateType].text}</Badge>
                             {t.active ? <Badge tone="success">사용 중</Badge> : <Badge tone="neutral">중지</Badge>}
                             {t.requireSignature ? <Badge tone="neutral">서명 받음</Badge> : null}
+                            {t.purpose ? <Badge tone={t.autoSend ? 'success' : 'warning'}>{t.autoSend ? '자동 발송' : '자동 발송 끔'}</Badge> : null}
                           </div>
 
                           {t.description ? (
