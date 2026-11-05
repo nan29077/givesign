@@ -39,7 +39,10 @@ export interface RenderResult {
   report: RenderReportItem[];
   /** 덮은 자리에서 실제로 지운 원래 글자 수 */
   strippedGlyphs: number;
-  /** 해석하지 못해 원래 글자를 지우지 못하고 덮기만 한 쪽 */
+  /**
+   * 원래 글자를 모두 지웠다고 말할 수 없는 쪽: 내용을 해석하지 못해 덮기만 했거나, 폭을 모르는
+   * 글꼴·양식 XObject 안의 글자가 덮개에 걸칠 수 있어 일부를 지우지 못했을 수 있는 쪽.
+   */
   coverOnlyPages: number[];
 }
 
@@ -207,7 +210,7 @@ export async function renderPdfLayout(
     if (polys.length) {
       const stripped = stripCoveredText(doc, page, polys);
       strippedGlyphs += stripped.removed;
-      if (stripped.skipped) coverOnlyPages.push(pageNo);
+      if (stripped.skipped || stripped.partial) coverOnlyPages.push(pageNo);
     }
 
     // 1) 덮개

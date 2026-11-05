@@ -5,7 +5,7 @@ import { CircleCheck, FileDown, Loader2, Save, TriangleAlert, X } from 'lucide-r
 import { Button, cx } from '@/components/ui';
 import { PdfFormEditor } from '@/components/studio/pdf-form-editor';
 import { saveDocumentPdfLayoutAction } from '@/app/actions/studio-documents';
-import type { PdfFontInfo, PdfLayout } from '@/lib/pdf-form';
+import { coverOnlyNotice, type PdfFontInfo, type PdfLayout } from '@/lib/pdf-form';
 
 /**
  * 넓은 화면 원본 편집(/studio/documents/[id]/edit). 편집 내용만 따로 저장한다.
@@ -62,14 +62,17 @@ export function PdfFormEditorPage({
       setSavedJson(JSON.stringify(layoutRef.current));
       setResultUrl(res.renderedPdfUrl);
       const fallback = res.report.filter((r) => r.tier === 'FALLBACK').length;
+      const coverOnly = coverOnlyNotice(res.coverOnlyPages);
       setNotice({
         tone: 'ok',
-        text:
-          res.edits === 0
+        text: res.unchanged
+          ? '저장된 내용과 같아 결과 파일을 그대로 둡니다.'
+          : res.edits === 0
             ? '원본 그대로 쓰도록 저장했습니다.'
             : `저장했습니다. 수정 ${res.edits}곳` +
               (res.stripped ? ` · 덮은 자리의 원래 글자 ${res.stripped}자를 지웠습니다` : '') +
-              (fallback ? ` · ${fallback}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴을 썼습니다.` : ' · 모두 원본 글꼴로 들어갔습니다.'),
+              (fallback ? ` · ${fallback}곳은 원본 글꼴에 없는 글자가 있어 같은 계열 글꼴을 썼습니다.` : ' · 모두 원본 글꼴로 들어갔습니다.') +
+              (coverOnly ? ` ${coverOnly}` : ''),
       });
     } catch {
       setNotice({ tone: 'error', text: '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.' });

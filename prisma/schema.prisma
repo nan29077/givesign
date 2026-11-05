@@ -686,6 +686,7 @@ model MerchantProfile {
   webhookDeliveries  WebhookDelivery[]
   documentTemplates  DocumentTemplate[]
   documentSubmissions DocumentSubmission[]
+  documentFontAssets  DocumentFontAsset[]
   donationPage       MerchantDonationPage?
   campaigns          Campaign[]
   recurringDonations RecurringDonation[]
@@ -984,6 +985,10 @@ model DocumentSubmission {
   /// 제출 시점의 접속 정보. 전자문서 분쟁 대응 근거로 남긴다.
   submitIp    String?                  @map("submit_ip")
   submitAgent String?                  @map("submit_agent")
+  /// 제출 당시 서식 스냅샷(이름·본문·항목·PDF 주소·해시) 암호문. 이 기능 이전 제출 건은 비어 있다.
+  templateSnapshotEnc  String? @map("template_snapshot_enc")
+  /// 스냅샷 JSON 의 SHA-256 (요청 당시 서식 확인값)
+  templateSnapshotHash String? @map("template_snapshot_hash")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -997,6 +1002,26 @@ model DocumentSubmission {
   @@index([templateId])
   @@index([expiresAt])
   @@map("document_submission")
+}
+
+/// 기관이 올린 원본 서식용 글꼴 파일(TTF·OTF). 공개 주소 없이 비공개 저장소에만 둔다.
+/// 기관별 개수·총량 상한과 렌더 시 소유 확인의 근거다. 어느 서식에도 쓰이지 않은 채 오래된 행은
+/// 전자문서 배치(/api/cron/edoc)가 파일과 함께 정리한다.
+model DocumentFontAsset {
+  id          String    @id
+  merchantId  String    @map("merchant_id")
+  /// 저장소 객체 이름(<32자리 16진>.ttf|otf). 편집 기록 fonts[].url 과 같다.
+  name        String    @unique
+  /// 대신할 PDF 글꼴 이름(부분집합 접두사 없이)
+  match       String
+  displayName String    @map("display_name")
+  bytes       Int
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@map("document_font_asset")
 }
 
 model MerchantCode {

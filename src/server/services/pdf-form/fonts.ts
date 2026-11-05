@@ -414,24 +414,50 @@ export function codesToHex(codes: number[], bytes: 1 | 2): PDFHexString {
   return PDFHexString.of(codes.map((c) => c.toString(16).padStart(bytes * 2, '0')).join(''));
 }
 
-/** 편집기에 돌려줄 글꼴별 정보(모든 쪽 합산). */
+/**
+ * 편집기에 돌려줄 글꼴별 정보.
+ * 전 쪽 합산 값과 함께 **쪽별** 값(`pages`)을 준다. 렌더러는 쪽마다 `findGroup(fontGroups(doc, page), 이름)`
+ * 으로 고르므로, 같은 이름의 부분집합 사전이 쪽마다 다르면 합산 값으로는 예측이 틀린다.
+ */
 export function describeFonts(
   doc: PDFDocument,
   uploadedMatches: string[],
   reusable: (enc: FontEncoder) => boolean,
 ): PdfFontInfo[] {
+  const summarize = (list: FontEncoder[]) => {
+    let chars: Set<string> | null = new Set<string>();
+    let canReuse = false;
+    for (const enc of list) {
+      if (enc.chars === null) chars = null;
+      else if (chars) for (const ch of enc.chars) chars.add(ch);
+      if (!canReuse && reusable(enc)) canReuse = true;
+    }
+    return { chars, reusable: canReuse };
+  };
   const byName = new Map<string, { chars: Set<string> | null; reusable: boolean }>();
+  const perPage: Array<Map<string, FontEncoder[]>> = [];
   for (const page of doc.getPages()) {
-    for (const [name, list] of fontGroups(doc, page)) {
+    const groups = fontGroups(doc, page);
+    perPage.push(groups);
+    for (const [name, list] of groups) {
       const cur = byName.get(name) ?? { chars: new Set<string>(), reusable: false };
-      for (const enc of list) {
-        if (enc.chars === null) cur.chars = null;
-        else if (cur.chars) for (const ch of enc.chars) cur.chars.add(ch);
-        if (!cur.reusable && reusable(enc)) cur.reusable = true;
-      }
+      const s = summarize(list);
+      if (s.chars === null) cur.chars = null;
+      else if (cur.chars) for (const ch of s.chars) cur.chars.add(ch);
+      if (s.reusable) cur.reusable = true;
       byName.set(name, cur);
     }
   }
+  const pagesFor = (baseFont: string) => {
+    const out: NonNullable<PdfFontInfo['pages']> = [];
+    perPage.forEach((groups, i) => {
+      const group = findGroup(groups, baseFont);
+      if (!group) return;
+      const s = summarize(group);
+      out.push({ page: i + 1, chars: s.chars ? Array.from(s.chars).join('') : null, reusableProgram: s.reusable });
+    });
+    return out;
+  };
   const uploaded = new Set(uploadedMatches.map((m) => m.toLowerCase()));
   return Array.from(byName.entries()).map(([baseFont, v]) => {
     const cls = classifyFontName(baseFont);
@@ -443,6 +469,7 @@ export function describeFonts(
       chars: v.chars ? Array.from(v.chars).join('') : null,
       reusableProgram: v.reusable,
       uploaded: uploaded.has(stripSubsetTag(baseFont).toLowerCase()),
+      pages: pagesFor(baseFont),
     };
   });
 }

@@ -1,5 +1,5 @@
 import { requireMerchant } from '@/server/auth';
-import { isSameOrigin } from '@/server/request-guard';
+import { isSameOrigin, readTextWithLimit } from '@/server/request-guard';
 import { consumeRateLimit } from '@/server/rate-limit';
 import { previewLayout, type PreviewSource } from '@/server/services/pdf-form';
 
@@ -27,11 +27,12 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, message: '미리보기 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.' }, { status: 429 });
   }
 
-  const text = await req.text();
-  if (text.length > MAX_BODY) return Response.json({ ok: false, message: '편집 내용이 너무 큽니다.' }, { status: 413 });
+  // 다 읽은 뒤 재지 않고, 읽으면서 상한을 넘으면 멈춘다.
+  const read = await readTextWithLimit(req, MAX_BODY);
+  if (!read.ok) return Response.json({ ok: false, message: '편집 내용이 너무 큽니다.' }, { status: 413 });
   let body: Record<string, unknown>;
   try {
-    body = JSON.parse(text) as Record<string, unknown>;
+    body = JSON.parse(read.text) as Record<string, unknown>;
   } catch {
     return Response.json({ ok: false, message: '편집 내용 형식이 올바르지 않습니다.' }, { status: 400 });
   }
