@@ -11,6 +11,8 @@ import { Badge, Card, DataRow, Notice } from '@/components/ui';
 import { campaignProgress, campaignStatusLabel, kstToday } from '@/lib/fundraising';
 import { formatNumber, formatWon } from '@/lib/money';
 import { aiDraftAvailability } from '@/server/services/ai-drafts';
+import { CampaignPromos } from '@/components/studio/campaign-promos';
+import { moCommandKind } from '@/lib/mo-commands';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +51,20 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
             <QrCard title={`${c.title} QR 코드`} subtitle="이 캠페인 페이지로 바로 연결됩니다" qrPath={`/api/qr/${org.code}/campaigns/${c.id}`} targetUrl={campaignUrl(org.code, c.id)} compact />
           </div>
         </Card>
+      ) : null}
+      {c && moCommandKind(c.code) ? (
+        <div className="mb-5">
+          <Notice tone="warning" title="키워드가 문자 명령어와 겹칩니다">
+            &quot;{c.code}&quot; 는 새 문자 명령어(영수증·내역·변경·해지·문의)와 같은 말입니다. 이 캠페인 키워드가 우선해 지금처럼 이 캠페인 후원으로 처리됩니다. 후원자가 명령어를 쓸 수 있게 하려면 키워드를 바꿔 주세요.
+          </Notice>
+        </div>
+      ) : null}
+      {c ? (
+        <CampaignPromos
+          merchantId={merchantId}
+          campaign={{ id: c.id, code: c.code, title: c.title, aliases: c.aliases, status: c.status }}
+          moHint={moNumbers.length ? moNumbers.map((m) => `${formatMoNumber(m.phoneNumber)} 로${m.mode === 'SHARED_PREFIX' && m.keyword ? ` "${m.keyword}" 다음에` : ''}`).join(' / ') : null}
+        />
       ) : null}
       <CampaignForm initial={c} today={kstToday()} ai={aiDraftAvailability()} />
       <div className="mt-5">

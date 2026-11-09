@@ -7,6 +7,7 @@ import { campaignStatusLabel } from '@/lib/fundraising';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { formatNumber, formatWon } from '@/lib/money';
 import { campaignUrl, donationPageUrl } from '@/server/services/qr';
+import { promoActive, promoLandingUrl } from '@/server/services/promo-codes';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,9 @@ export default async function StudioQrPage() {
     prisma.recurringDonation.count({ where: { merchantId, source: 'QR' } }),
   ]);
   const byCampaign = new Map(qrAgg.map((a) => [a.campaignId ?? 'none', a]));
+  // 홍보물 QR(2026-11-12 4차 K1): 찍으면 문자 앱이 열리는 중간 페이지(/m/[id])를 가리킨다
+  const promos = await prisma.campaignPromo.findMany({ where: { merchantId, archivedAt: null, campaignId: { in: campaigns.map((c) => c.id) } }, orderBy: { createdAt: 'asc' } });
+  const campaignTitle = new Map(campaigns.map((c) => [c.id, c.title]));
   const total = qrAgg.reduce((a, r) => ({ n: a.n + r._count._all, amt: a.amt + (r._sum.amount ?? 0n) }), { n: 0, amt: 0n });
   const pageQr = `/api/qr/${org.code}`;
   return (
@@ -63,6 +67,24 @@ export default async function StudioQrPage() {
               </Card>
             );
           })}
+        </div>
+      )}
+      <h2 className="mb-1 mt-6 text-[16px] font-black text-ink-900">홍보물 QR</h2>
+      <p className="mb-3 text-[13px] text-ink-500">현수막·소식지·행사장마다 따로 만든 QR 입니다. 휴대폰으로 찍으면 홍보물 키워드가 채워진 문자 앱이 열리고, 안 열리면 후원페이지로 안내합니다. 홍보물은 캠페인 상세에서 만듭니다.</p>
+      {promos.length === 0 ? (
+        <EmptyState title="홍보물이 없습니다" description="캠페인 상세의 '홍보물별 키워드·QR' 에서 만들 수 있습니다." />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {promos.map((p) => (
+            <Card key={p.id}>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge tone={promoActive(p) ? 'brand' : 'warning'}>{promoActive(p) ? '사용 중' : '만료'}</Badge>
+                <span className="text-[12.5px] text-ink-500">{campaignTitle.get(p.campaignId)}</span>
+                {p.keyword ? <span className="font-mono text-[12px] text-ink-500">키워드 {p.keyword}</span> : null}
+              </div>
+              <QrCard title={p.name} subtitle={`${campaignTitle.get(p.campaignId) ?? ''} 홍보물`} qrPath={`/api/qr/promo/${p.id}`} targetUrl={promoLandingUrl(p.id)} />
+            </Card>
+          ))}
         </div>
       )}
       <div className="mt-5"><Notice tone="neutral">QR 주소는 기관 코드와 캠페인이 바뀌지 않는 한 그대로입니다. 한 번 인쇄한 QR 도 계속 쓸 수 있습니다. 캠페인을 보관하면 그 캠페인 QR 은 열리지 않습니다.</Notice></div>

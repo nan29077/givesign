@@ -79,6 +79,9 @@ export function SelectAmountPanel({
   defaultCampaignId = null,
   reconsent = [],
   closedCampaignTitle = null,
+  suggestedCampaignId = null,
+  suggestedAmount = null,
+  suggestionNote = null,
 }: {
   token: string;
   merchantName: string;
@@ -103,8 +106,12 @@ export function SelectAmountPanel({
   closedCampaignTitle?: string | null;
   /** 개정되어 다시 동의가 필요한 필수 약관. 모두 체크해야 후원을 진행할 수 있다. */
   reconsent?: Array<{ type: string; title: string; version: string; content: string }>;
+  /** 문자 내용으로 미리 골라 둔 캠페인·금액(2026-11-12 4차 K2). 초기 선택일 뿐이고 후원자가 확인 후 누른다. */
+  suggestedCampaignId?: string | null;
+  suggestedAmount?: string | null;
+  suggestionNote?: string | null;
 }) {
-  const [campaignId, setCampaignId] = React.useState(defaultCampaignId ?? '');
+  const [campaignId, setCampaignId] = React.useState(defaultCampaignId ?? suggestedCampaignId ?? '');
   const [anonymous, setAnonymous] = React.useState(false);
   const [agreedTypes, setAgreedTypes] = React.useState<string[]>([]);
   const [openTerms, setOpenTerms] = React.useState<string | null>(null);
@@ -118,13 +125,20 @@ export function SelectAmountPanel({
   const [state, formAction, pending] = React.useActionState(confirmChargeAmountAction, initial);
 
   const firstSelectable = products.find((p) => p.payable && !p.soldOut) ?? products[0];
-  const [productId, setProductId] = React.useState<string>(firstSelectable?.id ?? '');
-  const [custom, setCustom] = React.useState('');
+  // 미리 고른 금액: 같은 금액 항목이 있으면 그 항목, 없고 직접 입력 범위 안이면 직접 입력칸에 채운다.
+  const suggestedProduct = suggestedAmount ? products.find((p) => p.payable && !p.soldOut && p.kind !== 'PHYSICAL' && p.amount === suggestedAmount) : undefined;
+  const suggestCustom = Boolean(
+    suggestedAmount && !suggestedProduct && allowCustom && BigInt(suggestedAmount) >= BigInt(customMin) && BigInt(suggestedAmount) <= BigInt(customMax)
+      && (!customStep || BigInt(suggestedAmount) % BigInt(customStep) === 0n),
+  );
+  const [productId, setProductId] = React.useState<string>(suggestedProduct?.id ?? firstSelectable?.id ?? '');
+  const [custom, setCustom] = React.useState(suggestCustom ? suggestedAmount! : '');
   // 직접 입력을 받지 않는 사회복지기관인데 mode 를 custom 으로 시작하면,
   // 금액 입력칸이 보이는데 서버는 항상 거절하는 화면이 된다.
   const [mode, setMode] = React.useState<'preset' | 'custom'>(
-    products.length > 0 || !allowCustom ? 'preset' : 'custom',
+    suggestCustom ? 'custom' : products.length > 0 || !allowCustom ? 'preset' : 'custom',
   );
+  const showSuggestion = Boolean(suggestionNote && ((suggestedCampaignId && !defaultCampaignId) || suggestedProduct || suggestCustom));
   const [qty, setQty] = React.useState(1);
   const [opts, setOpts] = React.useState<Record<string, string>>({});
   const [addr, setAddr] = React.useState({
@@ -568,6 +582,10 @@ export function SelectAmountPanel({
         <input type="checkbox" checked={anonymous} onChange={(e) => setAnonymous(e.target.checked)} className="h-4 w-4 rounded border-ink-300" />
         후원페이지 최근 후원에 익명으로 표시
       </label>
+
+      {showSuggestion ? (
+        <p className="rounded-xl bg-brand-50 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-800">{suggestionNote}</p>
+      ) : null}
 
       {closedCampaignTitle ? (
         <p className="rounded-xl bg-warning-50 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-800">

@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/layout/console-shell';
 import { Badge, Card, EmptyState, Notice, StatTile, Table, Td, Th } from '@/components/ui';
 import { ProgressBar } from '@/components/public/progress-bar';
 import { campaignProgress, campaignStatusLabel } from '@/lib/fundraising';
+import { moCommandKind } from '@/lib/mo-commands';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { formatKst, kstDateKey } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
@@ -76,7 +77,17 @@ async function CampaignsTab() {
   });
   const stats = await campaignStats(rows.map((r) => r.id));
   if (rows.length === 0) return <EmptyState title="등록된 캠페인이 없습니다" />;
+  // 2026-11-12 4차 K3: 새 문자 명령어와 같은 키워드를 쓰는 기존 캠페인(그 캠페인 키워드가 우선한다)
+  const conflicts = rows.filter((c) => moCommandKind(c.code));
   return (
+    <>
+    {conflicts.length ? (
+      <div className="mb-3">
+        <Notice tone="warning" title={`문자 명령어와 겹치는 캠페인 키워드 ${conflicts.length}개`}>
+          {conflicts.map((c) => `${c.merchant.displayName}(${c.merchant.code}) "${c.code}"`).join(', ')} — 이 기관에서는 캠페인 키워드가 우선해 그 단어가 명령어(영수증·내역·변경·해지·문의)로 동작하지 않습니다. 기관에 키워드 변경을 안내해 주세요.
+        </Notice>
+      </div>
+    ) : null}
     <Table>
       <thead>
         <tr><Th>기관</Th><Th>캠페인</Th><Th>키워드</Th><Th>상태</Th><Th>모금액 / 목표</Th><Th>후원</Th><Th>기간</Th></tr>
@@ -99,6 +110,7 @@ async function CampaignsTab() {
         })}
       </tbody>
     </Table>
+    </>
   );
 }
 

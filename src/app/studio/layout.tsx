@@ -57,6 +57,8 @@ function buildGroups(pending: {
         ...(volunteer ? [{ href: '/studio/volunteers', label: '자원봉사', icon: 'volunteers' as const, badge: pending.volunteers }] : []),
         { href: '/studio/agreements', label: '약정서·신청서', icon: 'agreements' },
         { href: '/studio/messages', label: '문자 관리', icon: 'messages' },
+        // 문자 '문의' 로 접수한 문의 응대·자동 답변 설정(2026-11-12 4차 K4)
+        { href: '/studio/inquiries', label: '문의 응대', icon: 'messages' },
       ],
     },
     {

@@ -7,6 +7,7 @@ import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import { FUNNEL_CHANNEL_LABEL, funnelReport } from '@/server/services/funnel-report';
 import type { FunnelChannel } from '@/server/services/funnel';
+import { COMMAND_COUNT_LABEL, commandCounts } from '@/server/services/mo-commands';
 
 /** 신고 · 문자 후원 단계 탭 */
 export function ReportTabs({ active }: { active: 'reports' | 'funnel' }) {
@@ -46,6 +47,7 @@ export async function FunnelTab({ merchantId, days, campaign, channel }: { merch
   const campaigns = await prisma.campaign.findMany({ where: { merchantId, status: { not: 'ARCHIVED' } }, orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }], select: { id: true, title: true, code: true } });
   const campaignId = campaign && campaigns.some((c) => c.id === campaign) ? campaign : null;
   const report = await funnelReport({ merchantId, campaignId, channel: ch, since: sinceDays(period) });
+  const commands = await commandCounts(merchantId, sinceDays(period)); // 명령 문자(2026-11-12 4차 K3) — 결제 단계와 따로
   const q = (over: Record<string, string | null>) => {
     const p = new URLSearchParams({ tab: 'funnel', days: String(period), channel: ch, ...(campaignId ? { campaign: campaignId } : {}) });
     for (const [k, v] of Object.entries(over)) {
@@ -99,6 +101,17 @@ export async function FunnelTab({ merchantId, days, campaign, channel }: { merch
             ? '단계: 문자 수신 → 안내 문자(확인 링크) 발송 → 링크 열람 → 금액·방식 선택 → 인증(PIN) 시작 → 후원 완료. 결제수단 미등록 번호는 안내 문자 대신 가입 안내가 나가 "결제수단 미등록" 으로 끝납니다.'
             : '웹·QR 후원은 후원페이지에서 금액을 제출한 순간부터 셉니다(문자 수신·회신 단계 없음, 후원페이지 방문 수는 세지 않습니다).'}
         </p>
+        {ch === 'MO' ? (
+          <Card>
+            <h2 className="mb-1 text-[15px] font-black text-ink-900">명령 문자 (최근 {period}일)</h2>
+            <p className="mb-3 text-[12.5px] text-ink-500">정기·봉사·영수증·내역·변경·해지·문의 문자는 후원(결제) 단계에 넣지 않고 따로 셉니다.</p>
+            {commands.length === 0 ? <p className="text-[13px] text-ink-400">이 기간에 받은 명령 문자가 없습니다.</p> : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {commands.map((c) => <StatTile key={c.kind} label={COMMAND_COUNT_LABEL[c.kind] ?? c.kind} value={`${formatNumber(c.count)}건`} />)}
+              </div>
+            )}
+          </Card>
+        ) : null}
       </div>
     </>
   );
