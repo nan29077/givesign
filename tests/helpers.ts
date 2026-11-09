@@ -36,6 +36,8 @@ export async function resetDb() {
     'funnel_step', 'content_feedback', 'content_review_alert',
     // 2026-11-09 D 통합 발송 관리 (FK 없음)
     'outbound_queue',
+    // 2026-11-12 4차 J 문서 묶음 (기관 FK 없음 — 항목 표는 CASCADE)
+    'document_bundle', 'document_bundle_send',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서

@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/server/db';
 import { provisionDefaultPurposeTemplatesSafe } from '@/server/services/purpose-templates';
+import { provisionDefaultBundlesSafe } from '@/server/services/document-bundles';
 import { writeAudit } from '@/server/auth';
 import { notifyUser } from '@/server/services/notifications';
 import { newId, newMerchantCode } from '@/lib/id';
@@ -265,7 +266,10 @@ export async function updateMerchantStatus(_prev: AdminActionState, fd: FormData
 
     // 승인되면 용도별 자동 발송 기본 서식 세트(감사장·약정서 등)를 기관 서식으로 깔아 둔다. 실패해도 승인은 그대로다
     // (첫 발송 때 다시 시도된다).
-    if (status === 'APPROVED') await provisionDefaultPurposeTemplatesSafe(merchantId);
+    if (status === 'APPROVED') {
+      await provisionDefaultPurposeTemplatesSafe(merchantId);
+      await provisionDefaultBundlesSafe(merchantId);
+    }
 
     // 감사로그를 먼저 남긴다.
     // 알림 저장이 실패하면 예외가 밖으로 나가는데, 그 사이에 두면

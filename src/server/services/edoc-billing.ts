@@ -379,6 +379,7 @@ export async function approveBillingRequest(input: { requestId: string; actorId:
         await writeLedger(tx, { merchantId: req.merchantId, kind: 'TOPUP', amount: req.bonus, vatBase: 0, source: 'PREPAID', balanceAfter: after, trialAfter: trial, idempotencyKey: `bonus:${req.id}`, billingRequestId: req.id, actorId: input.actorId, memo: '충전 보너스' });
       }
       await tx.eDocWallet.update({ where: { merchantId: req.merchantId }, data: { balance: after, lowBalanceNotifiedAt: null } });
+      await emitBalanceAdded(tx, req.merchantId, req.id, 'TOPUP');
       return { kind: 'TOPUP' as const, merchantId: req.merchantId, amount: req.amount, bonus: req.bonus, balanceAfter: after };
     }
 
@@ -390,8 +391,18 @@ export async function approveBillingRequest(input: { requestId: string; actorId:
       data: { id: newId(), merchantId: req.merchantId, billingRequestId: req.id, price: req.amount, quota: req.quota, startsAt: now, endsAt: addDays(now, EDOC_MONTHLY_DAYS) },
     });
     await writeLedger(tx, { merchantId: req.merchantId, kind: 'PLAN_GRANT', units: req.quota, vatBase: req.amount, source: 'MONTHLY', balanceAfter: balance, trialAfter: trial, idempotencyKey: `plan:${req.id}`, billingRequestId: req.id, subscriptionId: sub.id, actorId: input.actorId, memo: `30일 정액 ${req.amount.toLocaleString('ko-KR')}원` });
+    await emitBalanceAdded(tx, req.merchantId, req.id, 'MONTHLY');
     return { kind: 'MONTHLY' as const, merchantId: req.merchantId, amount: req.amount, subscription: sub };
   });
+}
+
+/**
+ * 충전·정액 반영 이벤트(2026-11-12 4차 J3). 승인 트랜잭션 안에서 남긴다 — 멈춘 발송 재시도는 소비자(edoc-balance-retry)가 한다.
+ * 이 함수(업무)에 재시도 코드를 넣지 않는다.
+ */
+async function emitBalanceAdded(tx: Tx, merchantId: string, requestId: string, kind: 'TOPUP' | 'MONTHLY') {
+  const { emitDomainEvent } = await import('./events');
+  await emitDomainEvent({ merchantId, type: 'edoc.balance_added', subjectType: 'edoc_billing_request', subjectId: requestId, payload: { kind } }, tx);
 }
 
 export async function rejectBillingRequest(input: { requestId: string; actorId: string; reason: string }) {

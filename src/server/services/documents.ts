@@ -365,7 +365,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'CONSENT_PRIVACY', category: '동의서', signers: [{ role: 'DONOR', label: '정보주체' }],
+    key: 'CONSENT_PRIVACY', purpose: 'PRIVACY_CONSENT', category: '동의서', signers: [{ role: 'DONOR', label: '정보주체' }],
     name: '개인정보 수집·이용 동의서',
     description: '수집 항목·목적·보유 기간을 알리고 동의를 받는 서식',
     body: [
@@ -381,6 +381,29 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
       f('phone', '연락처', 'PHONE'),
       f('agree_privacy', '개인정보 수집·이용에 동의합니다', 'CHECKBOX'),
       f('agree_third', '제3자 제공에 동의합니다 (선택)', 'CHECKBOX', false),
+    ],
+    requireSignature: true,
+  },
+  {
+    // 2026-11-12 4차 J2 — 정기후원 신청 묶음(약정서 + 개인정보 동의 + 출금 동의)
+    key: 'DEBIT_CONSENT', purpose: 'DEBIT_CONSENT', category: '후원', signers: [{ role: 'DONOR', label: '후원자' }],
+    name: '정기후원 출금 동의서',
+    description: '매월 정해진 날 후원금을 출금하는 데 동의를 받는 서식',
+    body: [
+      '{{기관명}} 정기후원 출금에 아래와 같이 동의합니다.',
+      '',
+      '후원자: {{후원자명}} · 출금 금액: 매월 {{금액}} · 출금일: 매월 {{출금일}}일',
+      '',
+      '1. 출금 방법: 기브싸인에 등록한 결제수단에서 약정한 날 출금합니다. 계좌·카드 번호는 이 문서에 적지 않고 결제수단 등록 화면에서 따로 등록합니다.',
+      '2. 출금일이 휴일이면 다음 영업일에 출금될 수 있습니다. 잔액이 모자라 출금하지 못하면 기관이 안내한 날 다시 시도할 수 있습니다.',
+      '3. 변경·해지: 언제든지 마이페이지 또는 기관에 요청해 금액·출금일을 바꾸거나 해지할 수 있습니다.',
+      '',
+      '작성일: {{발급일}}',
+    ].join('\n'),
+    fields: [
+      f('name', '성명', 'TEXT'),
+      f('phone', '연락처', 'PHONE'),
+      f('agree_debit', '위 내용으로 매월 출금하는 데 동의합니다', 'CHECKBOX'),
     ],
     requireSignature: true,
   },

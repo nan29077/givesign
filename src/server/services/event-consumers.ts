@@ -13,6 +13,7 @@ import { registerMarketingConsentConsumer } from './marketing-consent';
 import { registerOfflineDepositConsumers } from './deposits';
 import { registerImpactLegalHandlers } from './impact-legal-approvals';
 import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
+import { registerDocumentBundleHandlers } from './document-bundle-approvals';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -172,5 +173,7 @@ export function registerDefaultConsumers() {
   registerImpactLegalHandlers();
   // 2026-11-11 G: 주간 운영 계획 제안 승인(캘린더 요일 추가 · 주제 → 검토 대기 콘텐츠). 게시·발송을 만들지 않는다.
   registerWeeklyPlanApprovalHandlers();
+  // 2026-11-12 4차 J: 문서 묶음 대량 발송 승인 · 충전 뒤 멈춘 서명 문서 재시도 · 묶음 상태 · (기관이 켰을 때만) 약정 → 묶음
+  registerDocumentBundleHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

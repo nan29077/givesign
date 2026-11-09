@@ -407,6 +407,8 @@ function ensureDefaults() {
   def('legal-docs', '법정 서류 준비', (ctx) => legalDocsInboxGroup(ctx.merchantId, ctx.now));
   // 2026-11-11 G — 주간 운영 계획 제안(승인 대기)
   def('weekly-plan', '주간 운영 계획', async (ctx) => (await import('./weekly-plan')).weeklyPlanInboxGroup(ctx.merchantId, ctx.now));
+  // 2026-11-12 4차 J — 멈춘 문서 묶음 발송(잔액 부족·발송 전 점검)
+  def('document-bundles', '문서 묶음', async (ctx) => (await import('./document-bundles')).bundlesInboxGroup(ctx.merchantId, ctx.now));
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */

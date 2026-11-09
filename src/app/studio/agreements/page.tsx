@@ -31,7 +31,7 @@ export default async function StudioAgreementsPage({ searchParams }: { searchPar
   const esignMock = getESignAdapter().info().mode === 'mock';
   return (
     <>
-      <PageHeader title="약정서·신청서" description="정기후원 약정서와 자원봉사 신청서가 작성 시점 내용 그대로 보관됩니다. 약정을 바꾸면 새 판이 생기고 이전 판도 남습니다." />
+      <PageHeader title="약정서·신청서" description="정기후원 약정서와 자원봉사 신청서가 작성 시점 내용 그대로 보관됩니다. 약정을 바꾸면 새 판이 생기고 이전 판도 남습니다." action={<Link href="/studio/agreements/bundles" className="inline-flex h-10 items-center rounded-xl border border-ink-200 bg-white px-3 text-[13px] font-bold text-ink-700 hover:border-brand-400">업무별 문서 묶음</Link>} />
       {env.automation.esignEnabled ? (
         esignMock ? <Notice tone="warning" title="전자서명 mock">전자서명 공급자(페이싸인·모두싸인 등) 계약 전입니다. 서명 요청은 기록되지만 실제로 발송되지 않습니다.</Notice> : null
       ) : (

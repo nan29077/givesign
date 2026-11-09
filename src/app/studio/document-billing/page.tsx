@@ -10,6 +10,7 @@ import { upcomingEDocPlans, walletOverview } from '@/server/services/edoc-billin
 import { EDOC_MONTHLY_DAYS, EDOC_TOPUP_MIN, edocLedgerKindLabel, edocUseSourceLabel } from '@/lib/edoc-billing';
 import { formatKst } from '@/lib/datetime';
 import { newId } from '@/lib/id';
+import { BalanceBlockedCard } from '@/components/studio/balance-blocked-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,8 @@ export default async function DocumentBillingPage() {
         <StatTile label="시범 제공" value={`${o.wallet.trialRemaining}건`} />
         <StatTile label="누적 발송" value={`${o.wallet.totalUsed.toLocaleString('ko-KR')}건`} />
       </div>
+
+      <BalanceBlockedCard merchantId={merchantId} />
 
       <Notice tone="neutral" title="결제는 아직 연동 전입니다">
         신청하면 관리자가 안내하는 계좌로 입금해 주세요. 입금이 확인되면 반영합니다. 자동 출금이나 자동 갱신은 없습니다. 세금계산서가 필요하면 신청할 때 체크해 주세요.
