@@ -41,6 +41,8 @@ export interface JourneyContext {
   dayOfMonth?: number | null;
   /** 결제에서 시작한 실행의 결제 건(발송 직전 환불 재확인 — 점검 A-M3) */
   chargeId?: string | null;
+  /** 계좌이체 확정(offline.received)에서 시작한 실행의 기록 id(발송 직전 되돌리기 재확인 — 2026-11-09 E) */
+  offlineDonationId?: string | null;
   /** 봉사 전날 안내: 신청·회차·시작 시각(발송 직전 재확인 — 점검 A-M6) */
   applicationId?: string | null;
   shiftId?: string | null;

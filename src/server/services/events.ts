@@ -84,6 +84,13 @@ export const DOMAIN_EVENT_TYPES = [
    * 소비자: recurring-recovery(조치 필요 정기후원의 다음 출금일을 오늘로 당김)
    */
   'payment_method.registered',
+  /**
+   * 기관 통장 계좌이체 후원 확정(입금 맞추기) — deposits.ts(확정 트랜잭션 안), dedupe offline.received:{입금 id}(직접 입력은 offline.received:manual:{기록 id}).
+   * 소비자: offline-alert(기관 알림 — 한 번에 여러 건이면 묶음 1건) · journeys(후원 감사 — 기관이 '계좌이체 확인분에도' 를 켰을 때만)
+   */
+  'offline.received',
+  /** 계좌이체 후원 확정 취소(되돌리기) — deposits.ts(같은 트랜잭션). 소비자: journey-offline-revert(진행 중 감사 저니 취소) */
+  'offline.reverted',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 

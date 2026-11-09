@@ -10,6 +10,7 @@ import { handleDocumentSigned } from './issued-documents';
 import { chargeDonorLabel } from './charge-events';
 import { registerRecurringRecoveryConsumer } from './recurring-recovery';
 import { registerMarketingConsentConsumer } from './marketing-consent';
+import { registerOfflineDepositConsumers } from './deposits';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -163,5 +164,7 @@ export function registerDefaultConsumers() {
   // 2026-11-09: 결제수단 새로 등록 → 조치 필요 정기후원 바로 재시도 / 결제 성공 → 후원 화면에서 체크한 (선택) 소식 수신 동의 반영
   registerRecurringRecoveryConsumer();
   registerMarketingConsentConsumer();
+  // 2026-11-09 E: 계좌이체 후원 확정 → 기관 알림(여러 건이면 묶음 1건)
+  registerOfflineDepositConsumers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

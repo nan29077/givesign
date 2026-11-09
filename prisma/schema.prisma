@@ -533,6 +533,9 @@ model PayerProfile {
   volunteerApplications VolunteerApplication[]
   volunteerActivities   VolunteerActivity[]
   agreementDocuments    AgreementDocument[]
+  bankDeposits          BankDeposit[]
+  offlineDonations      OfflineDonation[]
+  offlinePledges        OfflinePledge[]
 
   @@index([lockedUntil])
   @@index([onboardingStatus])
@@ -676,6 +679,9 @@ model MerchantProfile {
   receiptCycle              String            @default("YEARLY") @map("receipt_cycle")
   /// 매월 1일 전월 후원 내역 안내 발송 여부
   monthlyNoticeEnabled      Boolean           @default(true) @map("monthly_notice_enabled")
+  /// 기관 통장으로 바로 들어온 계좌이체 후원(offline_donation 확정분)을 기부금영수증 합산에 넣을지 (2026-11-09 E).
+  /// 기본 끔 — 기관이 이미 다른 곳에서 영수증을 발급했을 수 있어 이중 발급 위험이 있다.
+  receiptIncludeOffline     Boolean           @default(false) @map("receipt_include_offline")
   approvedAt                DateTime?         @map("approved_at") @db.Timestamptz(3)
   suspendedAt               DateTime?         @map("suspended_at") @db.Timestamptz(3)
   createdAt                 DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -714,6 +720,10 @@ model MerchantProfile {
   recurringDonations    RecurringDonation[]
   receipts              DonationReceipt[]
   receiptExports        ReceiptExport[]
+  bankStatementImports  BankStatementImport[]
+  bankDeposits          BankDeposit[]
+  offlineDonations      OfflineDonation[]
+  offlinePledges        OfflinePledge[]
   donorMembers          DonorMember[]
   inKindDonations       InKindDonation[]
   inKindReceipts        InKindReceipt[]
@@ -2677,6 +2687,7 @@ model DonationReceipt {
   merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Restrict)
   payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Restrict)
   charges  Charge[]
+  offlineDonations OfflineDonation[]
 
   @@unique([merchantId, taxYear, seq])
   @@index([payerId, taxYear])
@@ -2702,6 +2713,171 @@ model ReceiptExport {
 
   @@index([merchantId, taxYear, createdAt])
   @@map("receipt_export")
+}
+
+// ===========================================================================
+// 입금 자동 대사 — 기관 통장 거래내역 파일 (2026-11-09 E)
+// 기관 통장으로 바로 들어온 계좌이체·CMS 후원. 기브싸인이 받은 돈이 아니라 정산 원장·결제(charge)와 무관하다.
+// ===========================================================================
+
+enum BankDepositStatus {
+  /// 후보 없음 — 새 후원자로 연결하거나 무시
+  UNMATCHED
+  /// 사람이 확인할 후보가 있음
+  SUGGESTED
+  /// 후원자와 연결해 확정(offline_donation 생성)
+  MATCHED
+  /// 후원 아님(무시)
+  IGNORED
+}
+
+enum OfflineDonationSource {
+  BANK_FILE
+  MANUAL
+}
+
+enum OfflineDonationStatus {
+  CONFIRMED
+  /// 확정 취소(되돌리기). 행은 지우지 않는다.
+  REVERTED
+}
+
+/// 거래내역 파일 업로드 이력. 같은 파일(내용 SHA-256)은 기관당 한 번만 올린다. 파일 자체는 저장하지 않는다.
+model BankStatementImport {
+  id               String    @id
+  merchantId       String    @map("merchant_id")
+  fileName         String    @map("file_name")
+  fileHash         String    @map("file_hash")
+  /// 인식한 형식(은행 이름 또는 '열 직접 지정')
+  format           String
+  /// utf-8 · cp949 · xlsx
+  encoding         String
+  /// 읽은 입금 행 수
+  rowCount         Int       @map("row_count")
+  newCount         Int       @default(0) @map("new_count")
+  /// 다른 파일에서 이미 넣은 같은 입금
+  duplicateCount   Int       @default(0) @map("duplicate_count")
+  /// 출금·0원·빈 행
+  skippedCount     Int       @default(0) @map("skipped_count")
+  errorCount       Int       @default(0) @map("error_count")
+  autoMatchedCount Int       @default(0) @map("auto_matched_count")
+  suggestedCount   Int       @default(0) @map("suggested_count")
+  unmatchedCount   Int       @default(0) @map("unmatched_count")
+  periodFrom       DateTime? @map("period_from") @db.Timestamptz(3)
+  periodTo         DateTime? @map("period_to") @db.Timestamptz(3)
+  createdBy        String    @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deposits BankDeposit[]
+
+  @@unique([merchantId, fileHash])
+  @@index([merchantId, createdAt])
+  @@map("bank_statement_import")
+}
+
+/// 통장 입금 한 건. 계좌번호 원문은 저장하지 않는다(적요의 긴 숫자는 가린다).
+/// 같은 입금을 두 파일에서 두 번 넣지 않게 (기관, 거래일시, 금액, 입금자명, 잔액) 해시가 유니크다.
+model BankDeposit {
+  id               String            @id
+  merchantId       String            @map("merchant_id")
+  importId         String?           @map("import_id")
+  occurredAt       DateTime          @map("occurred_at") @db.Timestamptz(3)
+  /// 표시용 입금자명(파일 그대로, 길이 제한)
+  depositorName    String            @map("depositor_name")
+  /// 매칭용 정규화 키(공백·괄호·법인 표기 제거)
+  depositorKey     String            @map("depositor_key")
+  amount           BigInt
+  memo             String?
+  balance          BigInt?
+  txHash           String            @map("tx_hash")
+  status           BankDepositStatus @default(UNMATCHED)
+  autoMatched      Boolean           @default(false) @map("auto_matched")
+  payerId          String?           @map("payer_id")
+  pledgeId         String?           @map("pledge_id")
+  /// 확인 후보 [{key, payerId?, contactId?, name, phoneMasked, reason}] — 표시 이름·마스킹 번호만
+  candidates       Json              @default("[]")
+  /// 같은 날 같은 사람·같은 금액 입금이 또 있음(둘 다 남기고 경고)
+  duplicateWarning Boolean           @default(false) @map("duplicate_warning")
+  confirmedBy      String?           @map("confirmed_by")
+  confirmedAt      DateTime?         @map("confirmed_at") @db.Timestamptz(3)
+  ignoredBy        String?           @map("ignored_by")
+  ignoredAt        DateTime?         @map("ignored_at") @db.Timestamptz(3)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant         MerchantProfile      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  import           BankStatementImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  payer            PayerProfile?        @relation(fields: [payerId], references: [id], onDelete: SetNull)
+  pledge           OfflinePledge?       @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
+  offlineDonations OfflineDonation[]
+
+  @@unique([merchantId, txHash])
+  @@index([merchantId, status, occurredAt])
+  @@index([merchantId, payerId])
+  @@index([importId])
+  @@map("bank_deposit")
+}
+
+/// 기브싸인 결제 밖 후원(계좌이체·CMS 등) 기록. charge 표를 쓰지 않는다(결제·정산·수수료 규칙과 분리).
+/// 확정 취소는 status=REVERTED(행 보존). 입금 1건에 확정(CONFIRMED) 기록은 1건(부분 유니크 offline_donation_deposit_confirmed_one).
+model OfflineDonation {
+  id           String                @id
+  merchantId   String                @map("merchant_id")
+  payerId      String                @map("payer_id")
+  depositId    String?               @map("deposit_id")
+  source       OfflineDonationSource @default(BANK_FILE)
+  amount       BigInt
+  /// 후원일(입금 시각)
+  donatedAt    DateTime              @map("donated_at") @db.Timestamptz(3)
+  campaignId   String?               @map("campaign_id")
+  pledgeId     String?               @map("pledge_id")
+  status       OfflineDonationStatus @default(CONFIRMED)
+  autoMatched  Boolean               @default(false) @map("auto_matched")
+  /// 묶인 기부금영수증(기관 설정 receipt_include_offline 을 켰을 때만 묶인다)
+  receiptId    String?               @map("receipt_id")
+  createdBy    String                @map("created_by")
+  createdAt    DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  revertedAt   DateTime?             @map("reverted_at") @db.Timestamptz(3)
+  revertedBy   String?               @map("reverted_by")
+  revertReason String?               @map("revert_reason")
+
+  merchant MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  payer    PayerProfile     @relation(fields: [payerId], references: [id], onDelete: Restrict)
+  deposit  BankDeposit?     @relation(fields: [depositId], references: [id], onDelete: SetNull)
+  receipt  DonationReceipt? @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  pledge   OfflinePledge?   @relation(fields: [pledgeId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, donatedAt])
+  @@index([merchantId, payerId, status])
+  @@index([depositId])
+  @@index([receiptId])
+  @@map("offline_donation")
+}
+
+/// 계좌이체 약정(오프라인 약정 표시). "매월 N일 경 M원 계좌이체" — 매칭 근거와 이번 달 미입금 목록에만 쓴다.
+/// 출금·결제를 만들지 않는다. 기관·후원자당 보관 전 약정 1건(부분 유니크 offline_pledge_live_one).
+model OfflinePledge {
+  id         String    @id
+  merchantId String    @map("merchant_id")
+  payerId    String    @map("payer_id")
+  amount     BigInt
+  /// 입금 예정일(1~31, 그달에 없으면 말일)
+  dayOfMonth Int       @map("day_of_month")
+  campaignId String?   @map("campaign_id")
+  memo       String?
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant  MerchantProfile   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  payer     PayerProfile      @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  deposits  BankDeposit[]
+  donations OfflineDonation[]
+
+  @@index([merchantId, archivedAt])
+  @@map("offline_pledge")
 }
 
 enum DonorMemberStatus {

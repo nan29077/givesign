@@ -195,6 +195,10 @@ async function sendGuard(run: RunRow, now: Date): Promise<StepOutcome | null> {
     const c = await prisma.charge.findUnique({ where: { id: ctx.chargeId }, select: { status: true } });
     if (!c || !(PAID_STATUSES as readonly string[]).includes(c.status)) return { type: 'stop', detail: '환불·취소된 후원' };
   }
+  if (ctx.offlineDonationId) {
+    const o = await prisma.offlineDonation.findUnique({ where: { id: ctx.offlineDonationId }, select: { status: true } });
+    if (!o || o.status !== 'CONFIRMED') return { type: 'stop', detail: '확정 취소된 계좌이체' };
+  }
   if (isQuietHour(now)) return { type: 'retry', until: nextMorning(now), detail: '야간 발송 보류' };
   const sent = await prisma.journeyStepLog.count({
     where: { merchantId: run.merchantId, payerId: run.payerId, sent: true, at: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
@@ -507,21 +511,31 @@ async function onDecision(req: ApprovalRow, decision: 'APPROVE' | 'REJECT') {
  */
 export async function cancelRunsForRefundedCharge(ev: StoredDomainEvent) {
   if (ev.subjectType !== 'charge') return 'SKIPPED' as const;
+  return cancelRunsForSubject(ev, 'charge', { error: '후원 환불', approval: '후원 환불로 취소', log: '후원이 환불되어 멈춤' });
+}
+
+/** 계좌이체 확정 취소(offline.reverted) → 그 기록에서 시작한 진행 중 실행을 멈춘다(2026-11-09 E). 발송 직전 재확인과 이중 보호. */
+export async function cancelRunsForRevertedOffline(ev: StoredDomainEvent) {
+  if (ev.subjectType !== 'offline_donation') return 'SKIPPED' as const;
+  return cancelRunsForSubject(ev, 'offline_donation', { error: '계좌이체 확정 취소', approval: '계좌이체 확정 취소로 취소', log: '계좌이체 확정이 취소되어 멈춤' });
+}
+
+async function cancelRunsForSubject(ev: StoredDomainEvent, subjectType: string, text: { error: string; approval: string; log: string }) {
   const runs = await prisma.journeyRun.findMany({
-    where: { merchantId: ev.merchantId, subjectType: 'charge', subjectId: ev.subjectId, status: { in: ['WAITING', 'AWAITING_APPROVAL'] } },
+    where: { merchantId: ev.merchantId, subjectType, subjectId: ev.subjectId, status: { in: ['WAITING', 'AWAITING_APPROVAL'] } },
     select: { id: true, journeyKey: true, stepIndex: true, payerId: true },
   });
   if (runs.length === 0) return 'SKIPPED' as const;
   for (const run of runs) {
     const r = await prisma.journeyRun.updateMany({
       where: { id: run.id, status: { in: ['WAITING', 'AWAITING_APPROVAL'] } },
-      data: { status: 'CANCELED', finishedAt: new Date(), lockedAt: null, lockedBy: null, lastError: '후원 환불' },
+      data: { status: 'CANCELED', finishedAt: new Date(), lockedAt: null, lockedBy: null, lastError: text.error },
     });
     if (r.count === 0) continue;
     const step = journeyDef(run.journeyKey)?.steps[run.stepIndex];
-    if (step) await cancelApproval(`journey:${run.id}:${step.key}`, '후원 환불로 취소');
+    if (step) await cancelApproval(`journey:${run.id}:${step.key}`, text.approval);
     await prisma.journeyStepLog.create({
-      data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: '후원이 환불되어 멈춤', merchantId: ev.merchantId, payerId: run.payerId },
+      data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: text.log, merchantId: ev.merchantId, payerId: run.payerId },
     });
   }
 }
@@ -579,6 +593,7 @@ export function registerJourneyEngine() {
     },
   });
   registerConsumer({ name: 'journey-refund', types: ['charge.refunded'], handle: cancelRunsForRefundedCharge });
+  registerConsumer({ name: 'journey-offline-revert', types: ['offline.reverted'], handle: cancelRunsForRevertedOffline });
   registerApprovalHandler('JOURNEY_STEP', {
     onApprove: (req) => onDecision(req, 'APPROVE'),
     onReject: async (req) => {
