@@ -10,6 +10,7 @@ import { checkLimits } from './limits';
 import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, startPinAuthorization } from './charge-flow';
 import { failPreparedCharge } from './payment-recovery';
+import { recordFunnelStep } from './funnel';
 import { logger } from '@/lib/logger';
 import { allowLegacyWebInstantPay } from '@/lib/env';
 import type { ChargeStatus } from '@/generated/prisma/enums';
@@ -166,6 +167,7 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
     throw error;
   }
   await idem.release(charge.id);
+  await recordFunnelStep({ step: 'AMOUNT_SELECTED', chargeId: charge.id }); // 단계 측정(2026-11-09) — 웹은 금액 제출부터
 
   // 기본 경로: 결제사 PIN 입력 링크를 문자로 보낸다. 이 시점에는 출금이 일어나지 않는다.
   if (resolveWebChargeChannel() === 'PIN') {

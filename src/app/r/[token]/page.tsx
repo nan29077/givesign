@@ -26,6 +26,8 @@ import { loadSelectAmountContext } from '@/server/services/charge-select';
 import { currentTermsList } from '@/server/services/terms';
 import { getPaymentAdapter } from '@/server/adapters/payment';
 import { formatMoNumber } from '@/lib/mo-number';
+import { headers } from 'next/headers';
+import { recordFunnelLinkOpened } from '@/server/services/funnel';
 
 /**
  * MT 문자로 발송된 1회용 보안링크 진입점.
@@ -333,6 +335,8 @@ async function SelectAmountScreen({ token }: { token: string }) {
     );
   }
   const ctx = loaded.ctx;
+  // 단계 측정(2026-11-09): 처음 연 것만, 링크 미리보기 수집기는 제외. 실패해도 화면은 그대로 그린다.
+  await recordFunnelLinkOpened(ctx.chargeId, (await headers()).get('user-agent'));
 
   // 결제 연동이 mock 이면 화면에 반드시 표시한다 (가짜 성공 처리 금지 원칙)
   let paymentMock = true;

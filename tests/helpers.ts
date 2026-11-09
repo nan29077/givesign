@@ -32,6 +32,8 @@ export async function resetDb() {
     'donor_email_token',
     // 라이브 바자회: 기관·회원 FK 가 없는 표(CASCADE 로 지워지지 않는다)
     'bazaar_ledger', 'bazaar_reconcile', 'bazaar_sale_line', 'bazaar_sale_batch', 'bazaar_live', 'bazaar_seller',
+    // 2026-11-09 단계 측정·콘텐츠 승인 편의 (FK 없음)
+    'funnel_step', 'content_feedback', 'content_review_alert',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서

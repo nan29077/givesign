@@ -3331,9 +3331,8 @@ model MerchantContentSetting {
   tone        String   @default("WARM")
   /// 콘텐츠에 쓰지 않을 단어
   bannedWords String[] @map("banned_words")
-  /// 자동 승인 (기본 꺼짐). 생성 직후 같은 검사(금지어·자막 길이·링크·AI 표시)와 모집등록번호가 있으면
-  /// 담당자 승인 없이 APPROVED 로 둔다. 게시 예약은 하지 않는다 — 콘텐츠 캘린더의 autoSchedule 이 켜져 있고
-  /// 캘린더가 만든 콘텐츠일 때만 그 슬롯 시각으로 자동 예약한다(content-calendar.ts).
+  /// (사용하지 않음 — 2026-11-09 대표 결정) 예전 자동 승인 설정. 호환을 위해 컬럼만 남기고 항상 false 로 저장하며
+  /// 값과 무관하게 무시한다. 콘텐츠는 사람이 승인해야만 게시된다(approvedBy='AUTO' 경로 없음).
   autoApprove Boolean  @default(false) @map("auto_approve")
   /// 월 생성 한도 (건)
   monthlyLimit Int     @default(30) @map("monthly_limit")
@@ -3395,12 +3394,20 @@ model ContentItem {
   approvedAt   DateTime?     @map("approved_at") @db.Timestamptz(3)
   /// 자원봉사 모집 공고 콘텐츠면 그 공고(선택, 관계 없는 스칼라). 2026-11-06
   postingId    String?       @map("posting_id")
+  /// 수정 요청으로 다시 만든 판이면 바로 앞 판(보관됨). 2026-11-09
+  revisionOf     String?     @map("revision_of")
+  /// 수정 요청 판들의 첫 판 — 콘텐츠당 하루 수정 요청 횟수를 센다. 2026-11-09
+  revisionRootId String?     @map("revision_root_id")
+  /// 담당자 수정 요청 한 줄(가린 값). LLM 공급자면 대본에 반영, mock 이면 메모로만. 2026-11-09
+  revisionRequest String?    @map("revision_request")
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   merchant  MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   jobs      ContentJob[]
   publishes ContentPublish[]
+
+  @@index([revisionRootId, createdAt])
 
   @@index([merchantId, status, createdAt])
   @@index([campaignId])
@@ -3791,6 +3798,71 @@ model AiCache {
 
   @@unique([merchantId, feature, cacheKey])
   @@map("ai_cache")
+}
+
+// ===========================================================================
+// 문자 후원 단계별 이탈 측정 · 콘텐츠 승인 편의 (2026-11-09)
+// ===========================================================================
+
+/// 문자·웹 후원 단계 도달 기록. (흐름, 단계) 당 1행 — **처음 도달만** 남긴다(같은 단계 반복 접속은 세지 않는다).
+/// 흐름 키(flow_key)는 MO 수신 건이면 `mo:{수신 id}`, 웹 후원이면 `charge:{결제 id}` 다(MO 후원은 결제 건이 수신 건에 붙는다).
+/// 개인정보 원문을 넣지 않는다(전화·이름·문자 본문 없음). 원천은 결제·수신 테이블이고 이 표는 측정 시작 이후만 있다.
+model FunnelStep {
+  id         String   @id
+  flowKey    String   @map("flow_key")
+  /// MO_RECEIVED · REPLY_SENT · LINK_OPENED · AMOUNT_SELECTED · AUTH_STARTED · PAID · FAILED · BLOCKED
+  step       String
+  merchantId String   @map("merchant_id")
+  /// MO · WEB · QR
+  channel    String
+  campaignId String?  @map("campaign_id")
+  /// 유입 경로(charge.source 와 같은 값)
+  source     String?
+  moMessageId String? @map("mo_message_id")
+  chargeId   String?  @map("charge_id")
+  /// 끝 상태(FAILED·BLOCKED)의 이유 분류: LIMIT · UNREGISTERED · PAYMENT_FAILED · CONTENT_BLOCKED · EXPIRED
+  reason     String?
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+
+  @@unique([flowKey, step])
+  @@index([merchantId, occurredAt])
+  @@index([occurredAt])
+  @@index([chargeId])
+  @@map("funnel_step")
+}
+
+/// 콘텐츠 반려·수정 요청 이유 (기관별 학습용). 다음 생성 때 LLM 프롬프트 "피해야 할 것" 에 최근 20개를 요약해 넣는다.
+/// 메모는 가린 값(maskForLlm)만 저장하고 실명 패턴은 거절한다. 본문을 로그에 남기지 않는다.
+model ContentFeedback {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  itemId     String   @map("item_id")
+  /// REJECT(반려) · REVISE(수정 요청)
+  kind       String
+  /// 반려 이유 분류 (FACT · TONE · PRIVACY · IMAGE · LENGTH · OTHER). 수정 요청은 null
+  reasonCode String?  @map("reason_code")
+  note       String?
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, createdAt])
+  @@index([itemId, kind, createdAt])
+  @@map("content_feedback")
+}
+
+/// 콘텐츠 승인 알림 발송 기록 — (기관·슬롯·시점) 당 1회. 키 예: `weekly:{기관}:{주 시작 KST 날짜}`, `due24:{콘텐츠}:{슬롯 시각}`, `due3:{…}`.
+model ContentReviewAlert {
+  dedupeKey  String   @id @map("dedupe_key")
+  merchantId String   @map("merchant_id")
+  /// WEEKLY · DUE_24H · DUE_3H
+  kind       String
+  itemId     String?  @map("item_id")
+  /// SENT(콘솔 알림) · SKIPPED(대상 없음)
+  status     String   @default("SENT")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, createdAt])
+  @@map("content_review_alert")
 }
 
 // ===========================================================================

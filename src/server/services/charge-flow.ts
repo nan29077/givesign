@@ -24,6 +24,7 @@ import { DOCUMENT_LINK_TTL_DAYS, ensureDocumentSubmission, isDocumentProduct } f
 import * as tpl from './mt-templates';
 import { calculateFees, postChargeSettlement } from './settlement';
 import { notifySuperAdmins } from './notifications';
+import { recordChargeStatusStep, recordFunnelStep } from './funnel';
 import type { ChargeStatus, MoProcessResult, PaymentMode, PaymentTxStatus } from '@/generated/prisma/enums';
 import type { TemplateOutput } from './mt-templates';
 
@@ -307,6 +308,7 @@ async function setStatus(chargeId: string, to: ChargeStatus, reason?: string, ac
       data: { id: newId(), chargeId, fromStatus: cur?.status ?? null, toStatus: to, reason: reason ?? null, actor },
     }),
   ]);
+  await recordChargeStatusStep(chargeId, to, reason); // 단계 측정(2026-11-09) — 실패해도 예외 없음
 }
 
 export async function loadBannedWords(merchantId: string): Promise<BannedWordRule[]> {
@@ -681,6 +683,7 @@ async function processMoRow(
   // (약정 화면이 등록·로그인을 이어서 안내한다).
   const reserved = await handleReservedMoKeyword({ inbound, routed, moRowId: moRow.id, ph });
   if (reserved) return reserved;
+  await recordFunnelStep({ step: 'MO_RECEIVED', moMessageId: moRow.id, merchantId: merchant.id }); // 단계 측정(2026-11-09)
 
   // (3) 실제 활성 빌키가 있을 때만 결제 결제로 진행한다.
   const token = await prisma.paymentMethodToken.findFirst({
@@ -689,6 +692,7 @@ async function processMoRow(
   });
 
   if (!token) {
+    await recordFunnelStep({ step: 'BLOCKED', moMessageId: moRow.id, merchantId: merchant.id, reason: 'UNREGISTERED' }); // 단계 측정
     const current = await prisma.payerProfile.findUniqueOrThrow({ where: { id: payer.id } });
     await prisma.moInboundMessage.update({
       where: { id: moRow.id },
@@ -787,6 +791,7 @@ async function processMoRow(
   // 또 한 통이라 제한의 의미가 없다. 수신 기록만 남겨 관리자 화면에 드러낸다.
   const throttled = await checkMoThrottle(merchant.id, payer.id, ph, inbound.fromNumber);
   if (throttled) {
+    await recordFunnelStep({ step: 'BLOCKED', moMessageId: moRow.id, merchantId: merchant.id, reason: 'LIMIT' }); // 단계 측정
     await prisma.moInboundMessage.update({
       where: { id: moRow.id },
       data: { result: 'BLOCKED', resultDetail: throttled.detail, processedAt: new Date() },
@@ -931,7 +936,7 @@ async function processMoRow(
     take: 4,
     select: { name: true },
   });
-  await sendMt({
+  const replied = await sendMt({
     phone: inbound.fromNumber,
     template: tpl.tplSelectAmount({
       merchantName: merchant.displayName,
@@ -944,6 +949,7 @@ async function processMoRow(
     chargeId: charge.id,
     merchantId: merchant.id,
   });
+  if (replied) await recordFunnelStep({ step: 'REPLY_SENT', chargeId: charge.id }); // 단계 측정(2026-11-09)
 
   return {
     result: 'ROUTED',
@@ -1629,6 +1635,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     };
   }
 
+  await recordFunnelStep({ step: 'PAID', chargeId }); // 단계 측정(2026-11-09) — 승인 트랜잭션 커밋 뒤, 실패해도 예외 없음
   // 집계는 결제 판정 트랜잭션에서 이미 반영(예약)했다. 여기서 다시 더하면 두 번 세어진다.
   await clearFailures(charge.payerId!);
 
