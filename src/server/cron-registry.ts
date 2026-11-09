@@ -52,6 +52,11 @@ export const CRON_JOBS: CronDef[] = [
     description: '콘텐츠 자율 생성(캘린더)·멈춘 생성 재개·SNS 예약 게시·지표 수집',
   },
   {
+    name: 'content-review', path: '/api/cron/content-review', schedule: '15분마다', eventBridge: 'rate(15 minutes)',
+    intervalSec: 900, lockTtlSec: 300,
+    description: '콘텐츠 승인 알림 — 월요일 09시 그 주 검토 대기 건수, 게시 시각 하루 전·3시간 전 미승인(같은 슬롯·시점 1회, 콘솔 알림)',
+  },
+  {
     name: 'recurring', path: '/api/cron/recurring', schedule: '매일 10:00', eventBridge: 'cron(0 1 * * ? *)',
     intervalSec: 86_400, lockTtlSec: 900,
     description: '정기후원 출금·실패 재시도·정지',

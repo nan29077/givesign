@@ -25,6 +25,7 @@ import {
   type Scene,
 } from '@/server/services/content';
 import { ownedContentItemId } from '@/server/services/attribution';
+import { contentPrecheck } from '@/server/services/content-review';
 import { GET as cleanupGET } from '@/app/api/cron/cleanup/route';
 import { resetDb, seedBasics, seedRegisteredPayer, moPayload, inboundAndPay, type Fixture } from './helpers';
 
@@ -167,22 +168,29 @@ describe('[C] 콘텐츠', () => {
     expect(rows.get(p3.id)!.status).toBe('PUBLISHING'); // 아직 진행 중일 수 있는 건은 건드리지 않는다
   });
 
-  it('자동 승인을 켜도 금지어가 든 결과는 검토 대기로 두고 사유를 남긴다 / 수혜자 문구는 장면에 넣지 않는다', async () => {
+  // 2026-11-09 대표 결정으로 자동 승인이 없어졌다. 예전 이 테스트는 "자동 승인 켜짐 → APPROVED" 를 확인했는데,
+  // 그 부분만 새 규칙(설정이 남아 있어도 검토 대기, approvedBy 없음)으로 바꾸고, 검증하던 다른 성질 —
+  // 수혜자 문구를 장면에 넣지 않음 · 기관 해시태그의 금지어를 같은 검사(contentDraftViolation)가 잡음 — 은 그대로 둔다.
+  it('자동 승인 설정이 남아 있어도 검토 대기로 만들고, 금지어는 사전 점검이 잡는다 / 수혜자 문구는 장면에 넣지 않는다', async () => {
     await prisma.merchantProfile.update({ where: { id: fx.merchantId }, data: { fundraisingRegNo: '2026-서울-00999' } });
     const c = await seedCampaign();
     await prisma.merchantContentSetting.create({ data: { merchantId: fx.merchantId, autoApprove: true, bannedWords: [], hashtags: ['금지태그'] } });
     const ok = await requestContent({ merchantId: fx.merchantId, campaignId: c.id, kind: 'SHORTFORM', userId: fx.merchantUserId });
-    expect(ok.status).toBe('APPROVED');
+    expect(ok.status).toBe('REVIEW');
+    expect(ok.approvedBy).toBeNull();
     const scenes = ok.scenes as unknown as Scene[];
     expect(scenes.some((s) => s.caption.includes('김철수'))).toBe(false);
     expect(ok.script ?? '').not.toContain('김철수');
+    expect((await contentPrecheck(ok)).find((r) => r.key === 'DRAFT')!.ok).toBe(true);
 
-    // 기관 해시태그에 금지어가 들어가면(공급자 산출물 검사와 같은 경로) 자동 승인을 막는다
+    // 기관 해시태그에 금지어가 들어가면(공급자 산출물 검사와 같은 경로) 사전 점검이 사유를 보여 준다
     await prisma.merchantContentSetting.update({ where: { merchantId: fx.merchantId }, data: { bannedWords: ['금지태그'] } });
     const held = await requestContent({ merchantId: fx.merchantId, campaignId: c.id, kind: 'IMAGE_SQUARE', userId: fx.merchantUserId });
     expect(held.status).toBe('REVIEW');
     expect(held.approvedBy).toBeNull();
-    expect(held.error).toMatch(/자동 승인 보류: 금지어/);
+    const draft = (await contentPrecheck(held)).find((r) => r.key === 'DRAFT')!;
+    expect(draft.ok).toBe(false);
+    expect(draft.detail).toMatch(/금지어/);
 
     expect(contentDraftViolation({ bannedWords: [], captions: ['a'], caption: '{링크} AI 생성 콘텐츠' })).toBeNull();
     expect(contentDraftViolation({ bannedWords: [], captions: ['a'], caption: 'AI 생성 콘텐츠' })).toMatch(/링크/);

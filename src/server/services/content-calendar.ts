@@ -4,7 +4,7 @@ import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
 import type { ContentKind } from '@/generated/prisma/enums';
 import { campaignStats } from './fundraising';
-import { autoScheduleSlotItem, ContentError, getContentSetting, monthlyUsage, requestContent } from './content';
+import { ContentError, getContentSetting, monthlyUsage, requestContent } from './content';
 
 /**
  * 콘텐츠 캘린더 — 기관이 정한 요일·시각(KST)마다 콘텐츠를 스스로 만든다.
@@ -15,7 +15,8 @@ import { autoScheduleSlotItem, ContentError, getContentSetting, monthlyUsage, re
  *    이유는 행으로 남기지 않는다(조건이 풀리면 다음 배치가 만든다). 설정 화면이 같은 함수로 이유를 보여 준다.
  *  - 캠페인은 돌아가며 고른다: 최근 14일 캘린더 사용 횟수가 적은 것 → 진행률 낮고 마감 가까운 것.
  *  - 형식은 설정 목록을 슬롯 순서대로 돌린다(비우면 숏폼·카드뉴스).
- *  - 자동 승인 + 자동 예약이면 생성 직후, 아니면 담당자가 승인하는 순간(슬롯이 아직 미래일 때) 그 시각으로 예약한다.
+ *  - 자동 승인은 없다(2026-11-09). 담당자가 승인하는 순간(슬롯이 아직 미래이고 자동 예약이 켜져 있을 때) 그 시각으로 예약한다.
+ *    슬롯이 지난 뒤 승인하면 담당자가 다음 빈 슬롯 / 지금 / 승인만 중에서 고른다(content.ts approveContent).
  *    검토 대기 콘텐츠는 콘텐츠 화면·통합 승인 대기함이 content_item 상태에서 직접 모은다.
  */
 
@@ -178,8 +179,6 @@ export async function fillNextSlot(merchantId: string, now = new Date()) {
       where: { id: slot.id },
       data: { itemId: item.id, status, note: item.status === 'FAILED' ? (item.error ?? '생성 실패').slice(0, 300) : item.status === 'REVIEW' ? '검토 대기 — 승인하면 슬롯 시각으로 예약합니다(자동 예약 켬일 때).' : null },
     });
-    // 자동 승인된 콘텐츠는 파이프라인 안에서 슬롯이 연결되기 전에 승인됐으므로 여기서 예약한다.
-    if (item.status === 'APPROVED') await autoScheduleSlotItem(item.id, now);
     return { slot: await prisma.contentSlot.findUniqueOrThrow({ where: { id: slot.id } }), reason: null };
   } catch (e) {
     const message = e instanceof ContentError ? e.message : '생성 중 오류가 발생했습니다.';
@@ -187,6 +186,32 @@ export async function fillNextSlot(merchantId: string, now = new Date()) {
     await prisma.contentSlot.update({ where: { id: slot.id }, data: { status: 'FAILED', note: message.slice(0, 300) } });
     return { slot: await prisma.contentSlot.findUniqueOrThrow({ where: { id: slot.id } }), reason: null };
   }
+}
+
+/**
+ * 슬롯 시각이 지난 콘텐츠를 늦게 승인할 때 "다음 빈 슬롯" 으로 옮긴다(2026-11-09). 캘린더 설정(요일·시각) 기준 앞으로 4주 안에서
+ * 아직 콘텐츠가 없는 가장 가까운 슬롯. (기관, 슬롯 시각) 유니크라 동시에 옮겨도 한 슬롯에 둘이 들어가지 않는다(충돌하면 다음 후보).
+ * 옮긴 슬롯은 캘린더가 새로 만들지 않는다. 옮긴 시각을 돌려준다(없으면 null).
+ */
+export async function moveSlotToNextFree(slotId: string, now = new Date()): Promise<Date | null> {
+  const slot = await prisma.contentSlot.findUnique({ where: { id: slotId } });
+  if (!slot) return null;
+  const setting = await getContentSetting(slot.merchantId);
+  const candidates = calendarSlots(setting, now, CALENDAR_LOOKAHEAD_DAYS * 4);
+  if (candidates.length === 0) return null;
+  const taken = new Set(
+    (await prisma.contentSlot.findMany({ where: { merchantId: slot.merchantId, slotAt: { in: candidates } }, select: { slotAt: true } })).map((r) => r.slotAt.getTime()),
+  );
+  for (const at of candidates) {
+    if (taken.has(at.getTime())) continue;
+    try {
+      const r = await prisma.contentSlot.updateMany({ where: { id: slot.id, slotAt: slot.slotAt }, data: { slotAt: at, note: `게시 시각이 지나 ${formatSlot(at)} 슬롯으로 옮겼습니다.` } });
+      return r.count === 1 ? at : null;
+    } catch (e) {
+      if ((e as { code?: string })?.code !== 'P2002') throw e;
+    }
+  }
+  return null;
 }
 
 /** 배치(/api/cron/content): 캘린더를 켠 기관마다 다음 빈 슬롯 하나씩. */

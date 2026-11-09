@@ -27,6 +27,7 @@ import { monthRange } from './monthly-notice';
 import { recordAiUsage } from './ai-usage';
 import { adaptCaption, captionProblem, composeFromVariant, LINK_TOKEN, postToText, type PlatformPost } from './content-captions';
 import { ownedPostingId } from './volunteer-postings';
+import { CONTENT_REJECT_REASON_LABEL } from '@/lib/content-review';
 
 /**
  * 콘텐츠 자동 생성 → 검토 → 승인 → (SNS 게시) 파이프라인.
@@ -35,7 +36,7 @@ import { ownedPostingId } from './volunteer-postings';
  *  - (콘텐츠, 단계) 당 작업 기록 1행. 이미 끝난 단계는 다시 돌리지 않는다 — 같은 단계를 두 번 과금하지 않는다.
  *  - 모든 산출물에 "AI 생성 콘텐츠" 표시, 기관에 모집등록번호가 있으면 함께 넣는다.
  *  - 모집등록번호가 없으면 생성·내려받기는 되지만 승인(=기관 명의 게시)은 막는다(기부금품법 모집 표시).
- *  - 기관 명의로 나가는 게시물이라 기본은 승인제. 기관이 '자동 승인'을 켜면 생성 직후 승인까지 진행한다.
+ *  - 기관 명의로 나가는 게시물이라 **항상 사람이 승인해야 게시된다**(2026-11-09 대표 결정 — 자동 승인 없음, autoApprove 는 무시).
  *  - 게시는 (콘텐츠, 플랫폼) 당 1회. 예약 시각이 되면 배치가 올린다. SOCIAL_PUBLISH_ENABLED 가 꺼져 있으면 예약을 받지 않는다.
  */
 
@@ -121,7 +122,8 @@ export interface CalendarSettingInput {
 
 export async function saveContentSetting(
   merchantId: string,
-  input: { tone: string; bannedWords: string[]; autoApprove: boolean; hashtags: string[]; calendar?: CalendarSettingInput },
+  /** autoApprove 는 받아도 무시한다(2026-11-09 — 항상 사람 승인). 호환을 위해 인자만 남긴다. */
+  input: { tone: string; bannedWords: string[]; autoApprove?: boolean; hashtags: string[]; calendar?: CalendarSettingInput },
 ) {
   const tone = TONES.includes(input.tone as Tone) ? input.tone : 'WARM';
   const banned = input.bannedWords.map((w) => w.trim()).filter(Boolean).slice(0, 50);
@@ -138,7 +140,7 @@ export async function saveContentSetting(
         autoSchedule: c.autoSchedule,
       }
     : {};
-  const data = { tone, bannedWords: banned, autoApprove: input.autoApprove, hashtags: tags, ...calendar };
+  const data = { tone, bannedWords: banned, autoApprove: false, hashtags: tags, ...calendar };
   return prisma.merchantContentSetting.upsert({
     where: { merchantId },
     create: { merchantId, ...data },
@@ -386,6 +388,9 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
   const claimed: Step[] = [];
   try {
     const { brief, color, logo } = await buildBrief(item.merchantId, item.campaignId, toneOverride, item.postingId);
+    // 수정 요청 한 줄·반려 이유 학습(2026-11-09). LLM 공급자만 문장에 반영하고 mock 은 무시한다(요청은 콘텐츠 메모로 남는다).
+    brief.revisionRequest = item.revisionRequest ?? null;
+    brief.avoid = await contentAvoidHints(item.merchantId);
     const kind = item.kind;
     let cost = 0;
 
@@ -451,17 +456,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
     const caption = buildCaptionTemplate({ summary: brief.summary, campaignTitle: brief.campaignTitle, moNumber: brief.moNumber, keyword: brief.keyword, regNo: brief.regNo, tags });
     // LLM 이 쓴 플랫폼별 본문에 시스템이 문자 안내·링크·해시태그·AI 표시를 붙여 완성본으로 저장한다(mock 은 저장하지 않고 규칙 기반).
     const platformCaptions = script.platformCaptions ? composeStoredCaptions(script.platformCaptions, { moLines: moLines(brief.moNumber, brief.keyword), tags, footer: aiFooter(brief.regNo) }) : null;
-    // 자동 승인도 담당자 수정과 같은 검사를 거친다. 걸리면 자동 승인을 무시하고 검토 대기로 두며 사유를 남긴다.
-    const violation = setting.autoApprove
-      ? contentDraftViolation({
-          bannedWords: setting.bannedWords,
-          captions: scenes.map((s) => s.caption),
-          caption,
-          hashtags: tags,
-          platformCaptions: platformCaptions ? Object.values(platformCaptions).map((p) => postToText(p)) : [],
-        })
-      : null;
-    const autoApprove = setting.autoApprove && regNoIncluded && !violation;
+    // 자동 승인은 없다(2026-11-09 대표 결정). 생성 결과는 항상 검토 대기이고, 사전 점검 결과는 승인 화면이 보여 준다(content-review.ts).
     // 다른 실행이 먼저 끝냈으면(생성 중이 아니면) 덮어쓰지 않는다.
     const finished = await prisma.contentItem.updateMany({
       where: { id: itemId, status: 'GENERATING' },
@@ -477,20 +472,13 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         aiLabeled: true,
         regNoIncluded,
         costKrw: { increment: cost },
-        status: autoApprove ? 'APPROVED' : 'REVIEW',
-        approvedBy: autoApprove ? 'AUTO' : null,
-        approvedAt: autoApprove ? new Date() : null,
-        error: violation ? `자동 승인 보류: ${violation}`.slice(0, 300) : null,
+        status: 'REVIEW',
+        approvedBy: null,
+        approvedAt: null,
+        error: null,
       },
     });
     if (finished.count === 0) logger.warn('콘텐츠 생성 결과를 반영하지 않음 — 이미 다른 실행이 끝냈습니다', { itemId });
-    else if (autoApprove) {
-      await emitDomainEventSafe({
-        merchantId: item.merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: itemId,
-        payload: { kind: item.kind, campaignId: item.campaignId, approvedBy: 'AUTO' },
-      });
-      await autoScheduleSlotItem(itemId);
-    }
   } catch (e) {
     if (e instanceof StepBusyError) {
       logger.info('콘텐츠 생성 단계가 다른 실행에서 진행 중 — 이 실행은 물러납니다', { itemId, message: e.message });
@@ -588,6 +576,25 @@ export async function renderCaption(item: CaptionItem, platform: SocialPlatform 
 // 검토 · 승인
 // ---------------------------------------------------------------------------
 
+/**
+ * 반려·수정 요청 이유 학습(2026-11-09) — 기관의 최근 20개를 "피해야 할 것" 문장으로 요약한다. 메모는 저장 때 이미 가렸다.
+ * LLM 프롬프트에만 쓰고 로그에 남기지 않는다.
+ */
+export async function contentAvoidHints(merchantId: string): Promise<string[]> {
+  const rows = await prisma.contentFeedback
+    .findMany({ where: { merchantId }, orderBy: { createdAt: 'desc' }, take: 20, select: { kind: true, reasonCode: true, note: true } })
+    .catch(() => []);
+  if (rows.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const r of rows) if (r.reasonCode) counts.set(r.reasonCode, (counts.get(r.reasonCode) ?? 0) + 1);
+  const out = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([code, n]) => `${CONTENT_REJECT_REASON_LABEL[code as keyof typeof CONTENT_REJECT_REASON_LABEL] ?? code} 때문에 반려된 적이 있음(${n}회)`);
+  const notes = [...new Set(rows.map((r) => r.note?.trim()).filter((n): n is string => Boolean(n)))].slice(0, 6);
+  for (const n of notes) out.push(n.slice(0, 80));
+  return out.slice(0, 10);
+}
+
 async function ownItem(merchantId: string, id: string) {
   const item = await prisma.contentItem.findFirst({ where: { id, merchantId } });
   if (!item) throw new ContentError('콘텐츠를 찾을 수 없습니다.');
@@ -633,20 +640,44 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
   });
 }
 
-export async function approveContent(merchantId: string, id: string, userId: string) {
+/**
+ * 슬롯 시각이 지난 뒤 승인할 때의 예약 선택(2026-11-09).
+ *  NEXT_SLOT = 캘린더 설정 기준 다음 빈 슬롯으로 옮겨 예약 · NOW = 지금 게시 예약 · APPROVE_ONLY = 승인만.
+ *  (자동 예약 조건 — autoSchedule·SNS 게시 열림·연결 채널 — 은 셋 다 그대로 적용한다)
+ */
+export type PastSlotChoice = 'NEXT_SLOT' | 'NOW' | 'APPROVE_ONLY';
+
+export async function approveContent(merchantId: string, id: string, userId: string, opts: { whenPast?: PastSlotChoice; now?: Date } = {}) {
+  if (!userId || userId === 'AUTO' || userId === 'CALENDAR') throw new ContentError('담당자만 승인할 수 있습니다.');
   const item = await ownItem(merchantId, id);
   if (item.status !== 'REVIEW') throw new ContentError('검토 대기 중인 콘텐츠만 승인할 수 있습니다.');
   if (!item.aiLabeled) throw new ContentError('AI 생성 표시가 없는 콘텐츠는 승인할 수 없습니다.');
   if (!item.regNoIncluded) {
     throw new ContentError('기부금품 모집등록번호가 없어 승인할 수 없습니다. 기관 정보에 모집등록번호를 넣고 콘텐츠를 다시 만들어 주세요.');
   }
-  const approved = await prisma.contentItem.update({ where: { id }, data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() } });
+  // 검토 대기일 때만 조건부로 바꾼다 — 두 사람이 동시에 눌러도 승인·이벤트·예약은 한 번(2026-11-09).
+  const claimed = await prisma.contentItem.updateMany({ where: { id, merchantId, status: 'REVIEW' }, data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() } });
+  if (claimed.count === 0) throw new ContentError('이미 다른 담당자가 처리한 콘텐츠입니다.');
+  const approved = await prisma.contentItem.findUniqueOrThrow({ where: { id } });
   await emitDomainEventSafe({
     merchantId, type: 'content.approved', subjectType: 'content_item', subjectId: id,
     payload: { kind: approved.kind, campaignId: approved.campaignId, approvedBy: 'USER' },
   });
   // 캘린더 슬롯 콘텐츠면, 슬롯이 아직 미래이고 자동 예약이 켜져 있을 때 그 시각으로 예약한다.
-  await autoScheduleSlotItem(id);
+  // 슬롯이 지났으면 고른 대로(기본은 승인만 — 화면은 "다음 빈 슬롯" 을 기본으로 보낸다).
+  const now = opts.now ?? new Date();
+  const slot = await prisma.contentSlot.findFirst({ where: { itemId: id }, select: { id: true, slotAt: true } });
+  if (slot && slot.slotAt.getTime() <= now.getTime() && opts.whenPast && opts.whenPast !== 'APPROVE_ONLY') {
+    if (opts.whenPast === 'NOW') await autoScheduleSlotItem(id, now, { at: now });
+    else {
+      const { moveSlotToNextFree } = await import('./content-calendar');
+      const moved = await moveSlotToNextFree(slot.id, now);
+      if (moved) await autoScheduleSlotItem(id, now);
+      else await prisma.contentSlot.update({ where: { id: slot.id }, data: { status: 'APPROVED', note: '다음 빈 슬롯을 찾지 못했습니다(캘린더 설정 확인). 승인됨 — 게시 예약은 직접 해 주세요.' } }).catch(() => undefined);
+    }
+  } else {
+    await autoScheduleSlotItem(id, now);
+  }
   return prisma.contentItem.findUniqueOrThrow({ where: { id } });
 }
 
@@ -654,7 +685,7 @@ export async function approveContent(merchantId: string, id: string, userId: str
  * 콘텐츠 캘린더 슬롯 자동 예약. 슬롯이 미래이고, 기관이 autoSchedule 을 켰고, SNS 게시가 열려 있으며,
  * 연결된 채널 중 설정 플랫폼·형식 허용인 곳이 있을 때만. 결과는 슬롯 메모로 남긴다. 실패가 승인을 되돌리지 않는다.
  */
-export async function autoScheduleSlotItem(itemId: string, now = new Date()): Promise<SocialPlatform[]> {
+export async function autoScheduleSlotItem(itemId: string, now = new Date(), opts: { at?: Date } = {}): Promise<SocialPlatform[]> {
   const slot = await prisma.contentSlot.findFirst({ where: { itemId } });
   if (!slot) return [];
   const note = async (status: string, text: string | null) =>
@@ -666,7 +697,9 @@ export async function autoScheduleSlotItem(itemId: string, now = new Date()): Pr
     await note('APPROVED', '자동 예약 꺼짐 — 승인됨. 게시 예약은 콘텐츠 화면에서 직접 해 주세요.');
     return [];
   }
-  if (slot.slotAt.getTime() <= now.getTime()) {
+  // at 을 주면(슬롯이 지난 뒤 "지금 게시 예약") 그 시각으로 예약한다.
+  const at = opts.at ?? slot.slotAt;
+  if (!opts.at && slot.slotAt.getTime() <= now.getTime()) {
     await note('APPROVED', '슬롯 시각이 지나 자동 예약하지 않았습니다.');
     return [];
   }
@@ -682,8 +715,8 @@ export async function autoScheduleSlotItem(itemId: string, now = new Date()): Pr
     return [];
   }
   try {
-    const created = await schedulePublish(slot.merchantId, itemId, targets, slot.slotAt);
-    await note('SCHEDULED', `${created.map((p) => PLATFORM_LABEL[p]).join(' · ')} 예약`);
+    const created = await schedulePublish(slot.merchantId, itemId, targets, at);
+    await note('SCHEDULED', `${created.map((p) => PLATFORM_LABEL[p]).join(' · ')} 예약${opts.at ? ' (지금 게시)' : ''}`);
     return created;
   } catch (e) {
     await note('APPROVED', `자동 예약 실패: ${(e as Error).message}`);
