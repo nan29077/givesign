@@ -29,7 +29,7 @@ import { logger } from '@/lib/logger';
  * 발생처가 없던 `supporter.dormant`·`agreement.issued` 는 뺐다(다시 쓰려면 발생처와 함께 넣는다).
  */
 export const DOMAIN_EVENT_TYPES = [
-  /** 결제 성공 — charge-flow·payment-reconcile(같은 트랜잭션). 소비자: merchant-alert·supporter-link·campaign-goal·journeys */
+  /** 결제 성공 — charge-flow·payment-reconcile(같은 트랜잭션). 소비자: merchant-alert·supporter-link·campaign-goal·journeys·marketing-consent */
   'charge.paid',
   /** 환불 완료 — refund.ts(같은 트랜잭션). 소비자: journey-refund(진행 중 저니 취소) */
   'charge.refunded',
@@ -77,6 +77,13 @@ export const DOMAIN_EVENT_TYPES = [
   'receipt.year_closed',
   /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign */
   'document.closed',
+  /** 같은 주기에 실패한 뒤 출금 성공(복구) — recurring.ts, dedupe recurring.recovered:{id}:{cycle}. 기록만(복구 현황 집계는 recurring_run.recovered) */
+  'recurring.recovered',
+  /**
+   * 결제수단 새로 등록·재인증 — payer-registration.ts(completeRegistration). merchantId 는 등록 링크의 기관(없으면 빈 값 — 결제수단은 기관 소속이 아니다).
+   * 소비자: recurring-recovery(조치 필요 정기후원의 다음 출금일을 오늘로 당김)
+   */
+  'payment_method.registered',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 

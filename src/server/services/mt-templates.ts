@@ -44,6 +44,14 @@ export const MT_TEMPLATE = {
   RECURRING_FAILED: 'RECURRING_FAILED',
   /** 정기후원 연속 실패로 정지 */
   RECURRING_SUSPENDED: 'RECURRING_SUSPENDED',
+  /** 정기후원 출금 실패 — 계좌 문제(해지·출금 불가), 결제수단 다시 등록 안내(복구 링크) 2026-11-09 */
+  RECURRING_ACCOUNT_PROBLEM: 'RECURRING_ACCOUNT_PROBLEM',
+  /** 정기후원 출금 실패 — 추가 인증 필요, 다시 등록(인증) 안내(복구 링크) */
+  RECURRING_AUTH_REQUIRED: 'RECURRING_AUTH_REQUIRED',
+  /** 정기후원 출금 실패 — 결제수단 없음, 등록 안내(복구 링크) */
+  RECURRING_NO_METHOD: 'RECURRING_NO_METHOD',
+  /** 일시정지한 정기후원 재개 전날 안내 */
+  RECURRING_RESUME_SOON: 'RECURRING_RESUME_SOON',
   /** 기부금영수증 발급 안내 (열람 링크) */
   RECEIPT_ISSUED: 'RECEIPT_ISSUED',
   /** 전자문서 서명 요청(서명 링크) */
@@ -414,6 +422,53 @@ export function tplRecurringSuspended(input: { merchantName: string; amount: big
   };
 }
 
+// 정기후원 실패 원인별 안내 (2026-11-09). 모두 정보성(본인 약정의 상태 안내). 복구 링크(보안링크)가 들어가므로 vars 를 두지 않는다.
+// 결제사 일시 오류(PROVIDER_TEMPORARY)는 문자를 보내지 않는다(recurring-failure.ts 정책표).
+
+/** 잔액 부족. 코드는 예전 실패 안내(RECURRING_FAILED)와 같다 — 재시도 예정 실패라는 점은 그대로이고 문구·링크만 원인에 맞춘다. */
+export function tplRecurringInsufficient(input: { merchantName: string; amount: bigint; retryDate: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 정기후원 ${formatNumber(input.amount)}원 출금이 잔액 부족으로 완료되지 않았습니다. ` +
+      `${input.retryDate}에 다시 시도합니다. 출금일 변경·이번 달 쉬기:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECURRING_FAILED, text, masked: maskLink(text) };
+}
+
+export function tplRecurringAccountProblem(input: { merchantName: string; amount: bigint; deadline: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 정기후원 ${formatNumber(input.amount)}원 출금이 계좌 문제(해지·출금 불가)로 완료되지 않았습니다. ` +
+      `${input.deadline}까지 결제수단을 다시 등록해 주세요. 등록하지 않으면 정기후원이 멈춥니다:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECURRING_ACCOUNT_PROBLEM, text, masked: maskLink(text) };
+}
+
+export function tplRecurringAuthRequired(input: { merchantName: string; amount: bigint; deadline: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 정기후원 ${formatNumber(input.amount)}원 출금에 은행 추가 인증이 필요합니다. ` +
+      `${input.deadline}까지 결제수단을 다시 등록(인증)해 주세요:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECURRING_AUTH_REQUIRED, text, masked: maskLink(text) };
+}
+
+export function tplRecurringNoMethod(input: { merchantName: string; amount: bigint; deadline: string; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 정기후원 ${formatNumber(input.amount)}원 출금이 등록된 결제수단이 없어 완료되지 않았습니다. ` +
+      `${input.deadline}까지 결제수단을 등록해 주세요:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.RECURRING_NO_METHOD, text, masked: maskLink(text) };
+}
+
+export function tplRecurringResumeSoon(input: { merchantName: string; amount: bigint; resumeOn: string; nextDate: string }): TemplateOutput {
+  const text =
+    `[기브싸인] ${input.merchantName} 정기후원이 내일(${input.resumeOn}) 다시 시작됩니다. ` +
+    `다음 출금 예정 ${input.nextDate}, ${formatNumber(input.amount)}원. 바꾸려면 마이페이지에서 할 수 있습니다.`;
+  return { code: MT_TEMPLATE.RECURRING_RESUME_SOON, text, masked: text };
+}
+
 export function tplReceiptIssued(input: { merchantName: string; taxYear: number; amount: bigint; link: string }): TemplateOutput {
   const body = `[기브싸인] ${input.merchantName} ${input.taxYear}년 기부금영수증(${formatNumber(input.amount)}원)이 발급되었습니다. 열람·출력:`;
   const text = withLink(body, input.link);
@@ -642,7 +697,7 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
   },
   [MT_TEMPLATE.RECURRING_FAILED]: {
     label: '정기후원 출금 실패 안내',
-    description: '정기후원 출금이 실패하면 사유와 다음 재시도일을 안내합니다.',
+    description: '정기후원 출금이 실패하면 사유와 다음 재시도일을 안내합니다. 잔액 부족은 개인 복구 링크가 든 고정 문구로 보내므로 여기서 바꾼 본문은 한도·기타 실패에만 쓰입니다.',
     editable: true,
     defaultBody: '{사회복지기관} 정기후원 {금액} 출금이 완료되지 않았습니다. 사유: {사유} {다음출금}에 다시 시도합니다.',
     variables: [V.merchant, V.amount, V.reason, { token: '{다음출금}', label: '다음 재시도일' }],
@@ -652,6 +707,34 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '출금이 연속 실패해 정기후원이 멈췄을 때 보냅니다.',
     editable: true,
     defaultBody: '{사회복지기관} 정기후원({금액})이 출금 실패가 반복되어 잠시 멈췄습니다. 마이페이지에서 결제수단을 확인해 주세요.',
+    variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECURRING_ACCOUNT_PROBLEM]: {
+    label: '정기후원 실패 — 계좌 문제',
+    description: '계좌 해지·출금 불가로 실패하면 자동 재시도하지 않고, 기한까지 결제수단을 다시 등록하도록 개인 복구 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 {금액} 출금이 계좌 문제로 완료되지 않았습니다. 기한까지 결제수단을 다시 등록해 주세요: [보안링크]',
+    variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECURRING_AUTH_REQUIRED]: {
+    label: '정기후원 실패 — 추가 인증 필요',
+    description: '은행 추가 인증이 필요해 실패하면 다시 등록(인증)하도록 개인 복구 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 {금액} 출금에 은행 추가 인증이 필요합니다. 결제수단을 다시 등록(인증)해 주세요: [보안링크]',
+    variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECURRING_NO_METHOD]: {
+    label: '정기후원 실패 — 결제수단 없음',
+    description: '등록된 결제수단이 없어 실패하면 결제수단을 등록하도록 개인 복구 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 {금액} 출금이 결제수단이 없어 완료되지 않았습니다. 결제수단을 등록해 주세요: [보안링크]',
+    variables: [V.merchant, V.amount],
+  },
+  [MT_TEMPLATE.RECURRING_RESUME_SOON]: {
+    label: '정기후원 재개 전날 안내',
+    description: '후원자가 날짜를 정해 쉬어 간 정기후원이 다시 시작되기 하루 전에 한 번 알려 드립니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원이 내일 다시 시작됩니다. 다음 출금 예정 {다음출금}, {금액}.',
     variables: [V.merchant, V.amount],
   },
   [MT_TEMPLATE.RECEIPT_ISSUED]: {

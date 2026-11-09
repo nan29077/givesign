@@ -566,16 +566,24 @@ model PayerMerchantLink {
   merchantMemberId String?   @map("merchant_member_id")
   /// 후원자가 이 기관의 월간 후원 안내(알림톡·문자) 수신을 거부한 시각. 결제·영수증 안내는 계속 나간다.
   noticeOptOutAt   DateTime? @map("notice_opt_out_at") @db.Timestamptz(3)
+  /// (선택) 기관 소식·후원 안내 수신 동의 시각 (2026-11-09). 월간 안내 수신 거부(notice_opt_out_at)와 다른 동의다.
+  /// 아직 이 동의로 보내는 것은 없다(동의자만 쌓는다). 동의 중 = 이 값이 있고 철회 시각이 비어 있음.
+  marketingConsentAt          DateTime? @map("marketing_consent_at") @db.Timestamptz(3)
+  marketingConsentWithdrawnAt DateTime? @map("marketing_consent_withdrawn_at") @db.Timestamptz(3)
+  /// 마지막으로 동의를 받은 곳: DONATE · SIGNUP · VOLUNTEER · MY
+  marketingConsentSource      String?   @map("marketing_consent_source")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   payer    PayerProfile    @relation(fields: [payerId], references: [id], onDelete: Cascade)
   merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  marketingConsentLogs MarketingConsentLog[]
 
   @@unique([payerId, merchantId])
   @@index([merchantId])
   @@index([merchantId, payerRef])
   @@index([merchantId, merchantMemberId])
+  @@index([merchantId, marketingConsentAt])
   @@map("payer_merchant_link")
 }
 
@@ -1357,6 +1365,7 @@ model Charge {
   campaign           Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   recurring          RecurringDonation?   @relation(fields: [recurringId], references: [id], onDelete: SetNull)
   receipt            DonationReceipt?     @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  marketingConsentIntent MarketingConsentIntent?
 
   @@index([campaignId, status])
   @@index([contentItemId])
@@ -2355,6 +2364,17 @@ enum RecurringStatus {
   @@map("recurring_status")
 }
 
+/// 정기후원 실패 복구 상태 (2026-11-09)
+enum RecurringRecoveryState {
+  NONE
+  /// 자동 재시도 중
+  RETRYING
+  /// 자동 재시도로 풀리지 않음(계좌·인증·결제수단) — 후원자 조치를 기다림
+  ACTION_REQUIRED
+
+  @@map("recurring_recovery_state")
+}
+
 enum RecurringRunStatus {
   SUCCESS
   FAILED
@@ -2473,6 +2493,18 @@ model RecurringDonation {
   contentItemId  String?         @map("content_item_id")
   /// 현행 약정서 (약정을 바꿀 때마다 새 버전이 생기고 이 값이 옮겨 간다)
   agreementDocId String?         @map("agreement_doc_id")
+  /// 실패 복구 상태 (2026-11-09). 원인 분류·정책은 services/recurring-failure.ts
+  recoveryState     RecurringRecoveryState @default(NONE) @map("recovery_state")
+  /// 마지막 실패 원인 분류 (INSUFFICIENT_FUNDS · ACCOUNT_PROBLEM · AUTH_REQUIRED · PROVIDER_TEMPORARY · LIMIT_BLOCKED · NO_PAYMENT_METHOD · UNKNOWN_REASON)
+  lastFailureClass  String?   @map("last_failure_class")
+  /// 이 주기에 처음 실패한 시각(복구 시작). 성공·재개·해지하면 비운다.
+  recoveryStartedAt DateTime? @map("recovery_started_at") @db.Timestamptz(3)
+  /// 조치 필요(ACTION_REQUIRED) 기한(KST 날짜). 이 날까지 결제수단을 다시 등록하지 않으면 정지한다.
+  actionDeadlineOn  DateTime? @map("action_deadline_on") @db.Date
+  /// 일시정지 재개 예정일(KST 날짜). 정기후원 배치가 이 날 다시 시작한다.
+  resumeOn          DateTime? @map("resume_on") @db.Date
+  /// 재개 전날 안내 문자를 보낸 시각(재개 예정일당 1회). 재개 예정일을 바꾸면 비운다.
+  resumeNoticeSentAt DateTime? @map("resume_notice_sent_at") @db.Timestamptz(3)
   pausedAt       DateTime?       @map("paused_at") @db.Timestamptz(3)
   suspendedAt    DateTime?       @map("suspended_at") @db.Timestamptz(3)
   canceledAt     DateTime?       @map("canceled_at") @db.Timestamptz(3)
@@ -2485,10 +2517,13 @@ model RecurringDonation {
   campaign Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   runs     RecurringRun[]
   charges  Charge[]
+  recoveryLinks RecurringRecoveryLink[]
 
   @@index([status, nextChargeOn])
   @@index([merchantId, status])
   @@index([payerId, status])
+  @@index([status, resumeOn])
+  @@index([merchantId, recoveryState])
   @@map("recurring_donation")
 }
 
@@ -2502,6 +2537,12 @@ model RecurringRun {
   status      RecurringRunStatus
   chargeId    String?            @map("charge_id")
   reason      String?
+  /// 실패 원인 분류(실패 run 만). 2026-11-09
+  failureClass String?           @map("failure_class")
+  /// 결제사 결과 코드(payment_transaction.result_code). 원인 분류의 근거
+  resultCode   String?           @map("result_code")
+  /// 같은 주기에 실패한 뒤 성공한 run 이면 true (복구)
+  recovered    Boolean           @default(false)
   ranAt       DateTime           @default(now()) @map("ran_at") @db.Timestamptz(3)
 
   recurring RecurringDonation @relation(fields: [recurringId], references: [id], onDelete: Cascade)
@@ -2509,6 +2550,65 @@ model RecurringRun {
   @@unique([recurringId, monthKey, attempt])
   @@index([ranAt])
   @@map("recurring_run")
+}
+
+/// 정기후원 실패 안내 문자에 넣는 후원자 개인 복구 링크 (/r/recover/[토큰]). 토큰은 해시만 저장한다.
+/// 유효 기간 안에 여러 번 열 수 있고(1회용 아님), 새 링크를 만들면 같은 약정의 이전 링크는 무효(revoked_at)가 된다.
+model RecurringRecoveryLink {
+  id           String    @id
+  recurringId  String    @map("recurring_id")
+  payerId      String    @map("payer_id")
+  tokenHash    String    @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  lastOpenedAt DateTime? @map("last_opened_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recurring RecurringDonation @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@index([recurringId, revokedAt])
+  @@map("recurring_recovery_link")
+}
+
+/// (선택) 기관 소식·후원 안내 수신 동의·철회 이력. 바꾸지 않고 쌓기만 한다.
+/// consent_record 는 약관 버전(terms_version) 필수·기관 구분 없음이라 기관 단위 선택 동의를 담을 수 없어 따로 둔다.
+/// 약관 대신 화면에 보인 문구 판(wording_version)과 문구를 남긴다.
+model MarketingConsentLog {
+  id             String   @id
+  linkId         String   @map("link_id")
+  payerId        String   @map("payer_id")
+  merchantId     String   @map("merchant_id")
+  agreed         Boolean
+  /// DONATE · SIGNUP · VOLUNTEER · MY
+  source         String
+  wordingVersion String   @map("wording_version")
+  wording        String
+  ip             String?
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  link PayerMerchantLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([payerId, merchantId, createdAt])
+  @@map("marketing_consent_log")
+}
+
+/// 후원 화면에서 (선택) 소식 수신에 체크한 결제 건. 결제가 성공(charge.paid)하면 소비자가 동의로 반영한다.
+/// 웹 후원은 번호 본인 확인 전이라 결제(PIN) 성공 전에는 동의로 기록하지 않는다.
+model MarketingConsentIntent {
+  chargeId   String    @id @map("charge_id")
+  payerId    String    @map("payer_id")
+  merchantId String    @map("merchant_id")
+  source     String
+  ip         String?
+  userAgent  String?   @map("user_agent")
+  appliedAt  DateTime? @map("applied_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@map("marketing_consent_intent")
 }
 
 /// 후원자의 기부금영수증 정보. 성명·주민등록번호는 암호화 + 해시 + 마스킹 3분리 저장 (절대 규칙 6).

@@ -8,6 +8,8 @@ import { registerJourneyEngine } from './journeys/engine';
 import { registerReceiptBatchHandler } from './receipt-batch';
 import { handleDocumentSigned } from './issued-documents';
 import { chargeDonorLabel } from './charge-events';
+import { registerRecurringRecoveryConsumer } from './recurring-recovery';
+import { registerMarketingConsentConsumer } from './marketing-consent';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -158,5 +160,8 @@ export function registerDefaultConsumers() {
   // 2단계: 전자문서 봉투 완료 → 용도별 발급 문서·내부 전자서명 약정서 반영(완료 지점에서 이미 반영했으면 바뀌지 않는다)
   // 거절·만료·취소(document.closed)도 같은 반영 — 완료 지점의 바로 반영이 실패해도 재시도된다(점검 A-M7).
   registerConsumer({ name: 'purpose-document-sign', types: ['document.signed', 'document.closed'], handle: handleDocumentSigned });
+  // 2026-11-09: 결제수단 새로 등록 → 조치 필요 정기후원 바로 재시도 / 결제 성공 → 후원 화면에서 체크한 (선택) 소식 수신 동의 반영
+  registerRecurringRecoveryConsumer();
+  registerMarketingConsentConsumer();
   logger.debug?.('기본 이벤트 소비자 등록');
 }
