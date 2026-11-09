@@ -4,6 +4,7 @@ import { kstDateKey } from '@/lib/datetime';
 import { logger } from '@/lib/logger';
 import { featureContentEnabled } from '@/lib/env';
 import { PREFLIGHT_BLOCK_PREFIX } from './purpose-documents';
+import { recurringRecoveryInboxGroup } from './recurring-recovery';
 
 /**
  * 승인 대기함 — 원인별 묶음(예외 그룹) (2026-11-09 과제 C1).
@@ -393,6 +394,11 @@ function ensureDefaults() {
   def('publish', 'SNS 게시', publishGroups);
   def('esign', '전자서명 미완료', esignGroup);
   def('edoc-balance', '전자문서 잔액', edocBalanceGroup);
+  // 2026-11-09 A — 정기후원 출금 실패 중 후원자 조치가 필요한 약정(계좌·인증·결제수단).
+  def('recurring-recovery', '정기후원 복구', async (ctx) => {
+    const g = await recurringRecoveryInboxGroup(ctx.merchantId);
+    return g ? { ...g, severity: 'high' as const, actions: [] } : null;
+  });
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */
