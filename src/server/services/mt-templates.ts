@@ -82,6 +82,8 @@ export const MT_TEMPLATE = {
   VOLUNTEER_REMINDER: 'VOLUNTEER_REMINDER',
   /** 자원봉사 활동 감사 */
   VOLUNTEER_THANKS: 'VOLUNTEER_THANKS',
+  /** 기관 대표 담당자에게 보내는 주간 운영 보고 준비 안내(정보성, 2026-11-11 G) */
+  WEEKLY_REPORT: 'WEEKLY_REPORT',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -949,6 +951,13 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     defaultBody: '{사회복지기관} 오늘 함께해 주셔서 감사합니다. 누적 봉사 {안내}',
     variables: [V.merchant, V.fulfillNote],
   },
+  [MT_TEMPLATE.WEEKLY_REPORT]: {
+    label: '주간 운영 보고 안내(기관 담당자)',
+    description: '매주 월요일 09시 기관 대표 담당자에게 지난주 후원 건수와 이번 주 승인할 일 건수, 콘솔 보고 화면 링크를 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 이번 주 운영 보고가 준비되었습니다 — 지난주 후원 N건 · 이번 주 승인할 일 M건. 확인: [링크]',
+    variables: [V.merchant],
+  },
 };
 
 /** 관리 화면 카드 순서. */
@@ -1095,4 +1104,13 @@ export function tplVolunteerThanks(input: { merchantName: string; totalHours: nu
   const hours = Math.round(input.totalHours * 10) / 10;
   const text = `[기브싸인] ${input.merchantName} 오늘 함께해 주셔서 감사합니다. 누적 봉사 ${hours}시간입니다.`;
   return { code: MT_TEMPLATE.VOLUNTEER_THANKS, text, masked: text };
+}
+
+/** 주간 운영 보고 준비 안내 — 기관 대표 담당자 대상(후원자에게 보내지 않는다). 콘솔 링크(로그인 필요)라 결제·보안 링크가 아니다. */
+export function tplWeeklyReport(input: { merchantName: string; donationCount: number; approvalCount: number; link: string }): TemplateOutput {
+  const text = withLink(
+    `[기브싸인] ${input.merchantName} 이번 주 운영 보고가 준비되었습니다 — 지난주 후원 ${formatNumber(input.donationCount)}건 · 이번 주 승인할 일 ${formatNumber(input.approvalCount)}건. 확인:`,
+    input.link,
+  );
+  return { code: MT_TEMPLATE.WEEKLY_REPORT, text, masked: maskLink(text) };
 }

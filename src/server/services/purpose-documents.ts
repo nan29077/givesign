@@ -42,10 +42,15 @@ export const DOCUMENT_PURPOSES = [
   'IMPACT_REPORT',
   /** 후원금 수입·사용 연 1회 통보 — 정보성, 서명 없음 (2026-11-09 3차 H2, 재무·회계 규칙 제41조의5 — 법령 서식과 대조 필요) */
   'ANNUAL_DONATION_NOTICE',
+  /**
+   * 초상권 이용 동의서(2026-11-11 G). 콘텐츠 소재에 얼굴이 나온 봉사자·직원·행사 참가자에게 받는다 — 서명.
+   * 자동 발송 경로가 없다(전자문서 센터에서 직접 보낸다). 소재는 이 용도의 서명 요청(보냈거나 완료)과 연결해야 콘텐츠에 쓸 수 있다.
+   */
+  'PORTRAIT_CONSENT',
 ] as const;
 
 /** 저니·소비자가 자동으로 보내지 않는 용도(기관이 전자문서 센터에서 직접 보낸다) */
-export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE'];
+export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE', 'PORTRAIT_CONSENT'];
 export type DocumentPurpose = (typeof DOCUMENT_PURPOSES)[number];
 
 export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
@@ -59,6 +64,7 @@ export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
   RECURRING_CHANGE: '정기후원 변경·해지 신청서',
   IMPACT_REPORT: '후원금 사용 결과 보고',
   ANNUAL_DONATION_NOTICE: '후원금 수입·사용 연간 통보',
+  PORTRAIT_CONSENT: '초상권 이용 동의서',
 };
 
 /** 머지 필드 값. 기관명·대표자·발급일은 모듈이 채운다. 금액은 원 단위 정수. */

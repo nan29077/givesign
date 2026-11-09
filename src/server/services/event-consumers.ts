@@ -12,6 +12,7 @@ import { registerRecurringRecoveryConsumer } from './recurring-recovery';
 import { registerMarketingConsentConsumer } from './marketing-consent';
 import { registerOfflineDepositConsumers } from './deposits';
 import { registerImpactLegalHandlers } from './impact-legal-approvals';
+import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -169,5 +170,7 @@ export function registerDefaultConsumers() {
   registerOfflineDepositConsumers();
   // 2026-11-09 3차 H: 사업 결과 보고·연 1회 통보 대량 발송 승인(QUEUED → 배치)
   registerImpactLegalHandlers();
+  // 2026-11-11 G: 주간 운영 계획 제안 승인(캘린더 요일 추가 · 주제 → 검토 대기 콘텐츠). 게시·발송을 만들지 않는다.
+  registerWeeklyPlanApprovalHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

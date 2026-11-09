@@ -293,6 +293,8 @@ export async function saveContentSettingAction(_p: StudioActionState, f: FormDat
         kinds: list(f, 'calendarKind').filter((k): k is ContentKind => KINDS.includes(k as ContentKind)),
         platforms: list(f, 'calendarPlatform').filter((p): p is SocialPlatform => PLATFORMS.includes(p as SocialPlatform)),
         autoSchedule: Boolean(f.get('autoSchedule')),
+        // 2안 비교(A/B) 체크칸이 있는 폼에서만 바꾼다(2026-11-11 G)
+        ...(f.get('abTestField') ? { abTestEnabled: Boolean(f.get('abTestEnabled')) } : {}),
       },
     });
     revalidatePath('/studio/content');

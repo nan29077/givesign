@@ -61,6 +61,19 @@ const JOURNEY_STEP_KIND: Record<string, RelationalKind> = {
   'year-end-letter': 'YEAR_END_THANKS',
 };
 
+/**
+ * 기관 담당자 대상 정보성 안내(2026-11-11 G). 후원자에게 가는 안내가 아니므로 (기관, 후원자) 7일 상한·묶음 대기열(sendRelational —
+ * 후원자 행 기준)에 넣지 않는다. 발송 키 대신 원천 행의 조건부 선점(weekly_plan.report_claimed_at)으로 한 번만 보낸다.
+ * 알림톡 정보성 템플릿(ALIMTALK_TEMPLATES)에 있고, 승인 전이면 문자 대체 규칙 그대로다.
+ */
+export const STAFF_INFO_TEMPLATES: Record<string, string> = {
+  WEEKLY_REPORT: '주간 운영 보고 안내',
+};
+
+export function isStaffInfoTemplate(code: string | null | undefined): boolean {
+  return Boolean(code && Object.hasOwn(STAFF_INFO_TEMPLATES, code));
+}
+
 export function kindOfTemplate(code: string | null | undefined): RelationalKind | null {
   return code ? (TEMPLATE_KIND[code] ?? null) : null;
 }

@@ -28,7 +28,10 @@ export type ApprovalKind =
   | 'AI_DRAFT'
   // 2026-11-09 3차 H — 대량 정보성 문서 발송(승인 대기함 확인 후 배치가 나눠 보냄)
   | 'IMPACT_REPORT_SEND'
-  | 'ANNUAL_NOTICE_SEND';
+  | 'ANNUAL_NOTICE_SEND'
+  // 2026-11-11 G: 주간 운영 계획 제안 — 승인해도 캘린더 설정·검토 대기 콘텐츠만 만든다(게시·발송 없음)
+  | 'WEEKLY_PLAN_SLOT'
+  | 'WEEKLY_PLAN_TOPIC';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -40,6 +43,8 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   AI_DRAFT: 'AI 초안 검토',
   IMPACT_REPORT_SEND: '후원금 사용 결과 보고 발송',
   ANNUAL_NOTICE_SEND: '후원금 연간 통보 발송',
+  WEEKLY_PLAN_SLOT: '주간 계획 — 콘텐츠 슬롯 추가',
+  WEEKLY_PLAN_TOPIC: '주간 계획 — 콘텐츠 주제 제안',
 };
 
 export interface ApprovalRow {

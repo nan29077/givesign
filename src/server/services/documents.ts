@@ -415,7 +415,7 @@ export const DOCUMENT_PRESETS: DocumentPreset[] = [
     requireSignature: true,
   },
   {
-    key: 'PORTRAIT_CONSENT', category: '동의서',
+    key: 'PORTRAIT_CONSENT', purpose: 'PORTRAIT_CONSENT', category: '동의서',
     signers: [{ role: 'PARTICIPANT', label: '본인' }],
     name: '초상권 이용 동의서',
     description: '활동 사진·영상을 기관 소식지·홈페이지에 쓰기 전 동의를 받는 서식',

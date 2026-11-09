@@ -41,6 +41,8 @@ export const ALIMTALK_TEMPLATES: MtTemplateCode[] = [
   MT_TEMPLATE.RECURRING_RESUME_GUIDE,
   MT_TEMPLATE.VOLUNTEER_REMINDER,
   MT_TEMPLATE.VOLUNTEER_THANKS,
+  // 2026-11-11 G: 기관 대표 담당자에게 보내는 주간 운영 보고 준비 안내(정보성). 링크는 로그인이 필요한 콘솔 화면이다.
+  MT_TEMPLATE.WEEKLY_REPORT,
 ];
 
 export function alimtalkTemplateOptions() {

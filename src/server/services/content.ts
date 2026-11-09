@@ -28,6 +28,7 @@ import { recordAiUsage } from './ai-usage';
 import { adaptCaption, captionProblem, composeFromVariant, LINK_TOKEN, postToText, type PlatformPost } from './content-captions';
 import { ownedPostingId } from './volunteer-postings';
 import { CONTENT_REJECT_REASON_LABEL } from '@/lib/content-review';
+import { contentWinHints } from './content-performance';
 
 /**
  * 콘텐츠 자동 생성 → 검토 → 승인 → (SNS 게시) 파이프라인.
@@ -106,6 +107,7 @@ export async function getContentSetting(merchantId: string) {
   return row ?? {
     merchantId, tone: 'WARM', bannedWords: [] as string[], autoApprove: false, monthlyLimit: 30, hashtags: [] as string[],
     calendarEnabled: false, weeklyCount: 3, days: [1, 3, 5], postHour: 19, kinds: [] as ContentKind[], platforms: [] as SocialPlatform[], autoSchedule: false,
+    abTestEnabled: false,
     updatedAt: new Date(0),
   };
 }
@@ -118,6 +120,8 @@ export interface CalendarSettingInput {
   kinds: ContentKind[];
   platforms: SocialPlatform[];
   autoSchedule: boolean;
+  /** 2안 비교(A/B) — 주지 않으면 바꾸지 않는다(2026-11-11 G) */
+  abTestEnabled?: boolean;
 }
 
 export async function saveContentSetting(
@@ -138,6 +142,7 @@ export async function saveContentSetting(
         kinds: [...new Set(c.kinds.filter((k) => CONTENT_KINDS.includes(k)))],
         platforms: [...new Set(c.platforms.filter((p) => Object.hasOwn(PLATFORM_LABEL, p)))],
         autoSchedule: c.autoSchedule,
+        ...(typeof c.abTestEnabled === 'boolean' ? { abTestEnabled: c.abTestEnabled } : {}),
       }
     : {};
   const data = { tone, bannedWords: banned, autoApprove: false, hashtags: tags, ...calendar };
@@ -391,6 +396,8 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
     // 수정 요청 한 줄·반려 이유 학습(2026-11-09). LLM 공급자만 문장에 반영하고 mock 은 무시한다(요청은 콘텐츠 메모로 남는다).
     brief.revisionRequest = item.revisionRequest ?? null;
     brief.avoid = await contentAvoidHints(item.merchantId);
+    // 최근 90일 성과 상위 요소(게시 10건 이상일 때만) — 프롬프트 "잘된 것"(2026-11-11 G). mock 은 저장·표시만.
+    brief.wins = await contentWinHints(item.merchantId);
     const kind = item.kind;
     let cost = 0;
 
@@ -655,6 +662,11 @@ export async function approveContent(merchantId: string, id: string, userId: str
   if (!item.regNoIncluded) {
     throw new ContentError('기부금품 모집등록번호가 없어 승인할 수 없습니다. 기관 정보에 모집등록번호를 넣고 콘텐츠를 다시 만들어 주세요.');
   }
+  // 연결한 소재(얼굴 소재는 초상권 동의서 필요, 수혜자 소재 금지)를 승인 때 다시 확인한다(2026-11-11 G).
+  if (item.assetIds?.length) {
+    const problem = await (await import('./content-assets')).contentAssetsProblem(merchantId, item.assetIds);
+    if (problem) throw new ContentError(problem);
+  }
   // 검토 대기일 때만 조건부로 바꾼다 — 두 사람이 동시에 눌러도 승인·이벤트·예약은 한 번(2026-11-09).
   const claimed = await prisma.contentItem.updateMany({ where: { id, merchantId, status: 'REVIEW' }, data: { status: 'APPROVED', approvedBy: userId, approvedAt: new Date() } });
   if (claimed.count === 0) throw new ContentError('이미 다른 담당자가 처리한 콘텐츠입니다.');
@@ -678,6 +690,8 @@ export async function approveContent(merchantId: string, id: string, userId: str
   } else {
     await autoScheduleSlotItem(id, now);
   }
+  // 2안 비교 묶음이면 두 안이 모두 승인됐을 때 나눠 예약한다(승인되지 않은 안은 예약하지 않음 — 2026-11-11 G).
+  if (approved.variantGroupId) await (await import('./content-variants')).afterVariantDecision(id, now);
   return prisma.contentItem.findUniqueOrThrow({ where: { id } });
 }
 
