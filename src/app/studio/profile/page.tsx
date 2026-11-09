@@ -1,4 +1,6 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { scanCandidates } from '@/server/services/onboarding';
 import { Badge, Card, CardTitle, DataRow, EmptyState, Field, Input, Notice, SectionTitle, Table, Td, Th } from '@/components/ui';
 import { PageHeader } from '@/components/layout/console-shell';
 import { ActionForm } from '@/components/studio/action-form';
@@ -14,8 +16,14 @@ import { OrgLogo, isCustomLogo } from '@/components/brand/org-logo';
 
 export const dynamic = 'force-dynamic';
 
-export default async function StudioSettingsProfilePage() {
+export default async function StudioSettingsProfilePage({ searchParams }: { searchParams: Promise<{ scan?: string }> }) {
   const { merchantId, email, avatarIndex } = await requireMerchant();
+  // 서류 자동 읽기 후보(2026-11-12 4차 I2) — 입력칸만 채운다(저장은 담당자)
+  const { scan } = await searchParams;
+  const scanned = scan ? await scanCandidates(merchantId, scan).catch(() => null) : null;
+  const prefill = scanned
+    ? { businessNo: scanned.businessNo?.value, representativeName: scanned.representative?.value, address: scanned.address?.value, name: scanned.name?.value }
+    : null;
 
   const merchant = await prisma.merchantProfile.findUnique({
     where: { id: merchantId },
@@ -84,13 +92,14 @@ export default async function StudioSettingsProfilePage() {
           </Card>
         </section>
 
-        <section>
+        <section id="org-info">
           <SectionTitle
             title="기관 정보 (기부금영수증 발급 주체)"
             description="고유번호·대표자·소재지는 기부금영수증 서식에 그대로 인쇄됩니다. 공익법인 지정 여부가 확인돼야 영수증을 발급할 수 있습니다."
           />
           <Card>
-            <OrganizationInfoForm action={saveOrganizationInfoAction} merchant={merchant} />
+            <p className="mb-3 text-[12.5px] text-ink-500">고유번호증·사업자등록증 사진으로 채우려면 <Link href="/studio/start#org-doc" className="font-bold text-brand-700 underline">서류로 채우기</Link></p>
+            <OrganizationInfoForm action={saveOrganizationInfoAction} merchant={merchant} prefill={prefill} />
           </Card>
         </section>
 

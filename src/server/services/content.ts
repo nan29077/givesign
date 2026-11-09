@@ -702,6 +702,8 @@ export async function approveContent(merchantId: string, id: string, userId: str
 export async function autoScheduleSlotItem(itemId: string, now = new Date(), opts: { at?: Date } = {}): Promise<SocialPlatform[]> {
   const slot = await prisma.contentSlot.findFirst({ where: { itemId } });
   if (!slot) return [];
+  // 캠페인 기간이 줄거나 종료돼 보류된 슬롯은 자동 예약하지 않는다(2026-11-12 4차 I — 보류 상태 유지)
+  if (slot.status === 'HELD') return [];
   const note = async (status: string, text: string | null) =>
     prisma.contentSlot.update({ where: { id: slot.id }, data: { status, note: text?.slice(0, 300) ?? null } }).catch(() => undefined);
   const item = await prisma.contentItem.findUnique({ where: { id: itemId }, select: { status: true, kind: true, merchantId: true } });

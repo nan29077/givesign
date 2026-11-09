@@ -10,7 +10,7 @@ import { monthRange } from './monthly-notice';
  * 실패한 시도도 공급자가 과금하므로 ok=false 로 남긴다. 기록 실패가 업무를 막지 않는다.
  */
 
-export type AiFeature = 'content_script' | 'campaign_draft' | 'thanks_draft' | 'inquiry_draft' | 'content_insight' | 'impact_report' | 'weekly_report';
+export type AiFeature = 'content_script' | 'campaign_draft' | 'thanks_draft' | 'inquiry_draft' | 'content_insight' | 'impact_report' | 'weekly_report' | 'org_doc_ocr';
 
 export const AI_FEATURE_LABEL: Record<AiFeature, string> = {
   content_script: '콘텐츠 대본',
@@ -20,6 +20,7 @@ export const AI_FEATURE_LABEL: Record<AiFeature, string> = {
   content_insight: '콘텐츠 성과 요약',
   impact_report: '사업 결과 보고 초안',
   weekly_report: '주간 운영 보고 문장',
+  org_doc_ocr: '기관 서류 자동 읽기',
 };
 
 export async function recordAiUsage(input: {

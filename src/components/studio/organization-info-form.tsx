@@ -18,13 +18,23 @@ export const ORG_TYPE_LABEL: Record<OrganizationType, string> = {
 export function OrganizationInfoForm({
   action,
   merchant: m,
+  prefill,
 }: {
   action: (prev: StudioActionState, f: FormData) => Promise<StudioActionState>;
   merchant: MerchantProfile;
+  /** 서류 자동 읽기 후보(2026-11-12 4차 I2) — 입력칸만 채운다. 저장은 담당자가 [기관 정보 저장] 으로 */
+  prefill?: { businessNo?: string; representativeName?: string; address?: string; name?: string } | null;
 }) {
   const ready = issuerReadiness(m);
   return (
     <>
+      {prefill ? (
+        <div className="mb-4">
+          <Notice tone="warning" title="서류에서 읽은 값으로 입력칸을 채웠습니다">
+            아직 저장되지 않았습니다. 서류와 한 번 더 대조하고 고친 뒤 [기관 정보 저장] 을 눌러 주세요.{prefill.name ? ` 서류의 기관 이름: ${prefill.name} (표시명은 위 프로필 수정에서 바꿉니다)` : ''}
+          </Notice>
+        </div>
+      ) : null}
       {!ready.ok ? (
         <div className="mb-4">
           <Notice tone="warning" title="기부금영수증을 발급하려면 다음 정보가 필요합니다">{ready.missing.join(' · ')}</Notice>
@@ -45,13 +55,13 @@ export function OrganizationInfoForm({
             </Select>
           </Field>
           <Field label="고유번호(사업자등록번호)" hint="000-00-00000" required>
-            <Input name="businessNo" defaultValue={m.businessNo ?? ''} placeholder="123-82-00001" inputMode="numeric" />
+            <Input name="businessNo" defaultValue={prefill?.businessNo ?? m.businessNo ?? ''} placeholder="123-82-00001" inputMode="numeric" />
           </Field>
           <Field label="대표자 성명" required>
-            <Input name="representativeName" maxLength={30} defaultValue={m.representativeName ?? ''} />
+            <Input name="representativeName" maxLength={30} defaultValue={prefill?.representativeName ?? m.representativeName ?? ''} />
           </Field>
           <Field label="소재지" required>
-            <Input name="address" maxLength={200} defaultValue={m.address ?? ''} />
+            <Input name="address" maxLength={200} defaultValue={prefill?.address ?? m.address ?? ''} />
           </Field>
           <Field label="후원 담당자">
             <Input name="contactName" maxLength={30} defaultValue={m.contactName ?? ''} />

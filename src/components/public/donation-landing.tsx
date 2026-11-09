@@ -13,6 +13,7 @@ import {
   type CampaignWithStats,
 } from '@/server/services/fundraising';
 import { campaignProgress, campaignStatusLabel, daysLeft, readCampaignCards } from '@/lib/fundraising';
+import { campaignEnded } from '@/server/services/campaign-after-end';
 import { CampaignCardNews } from '@/components/public/campaign-card-news';
 import { normalizeMerchantCode } from '@/lib/id';
 import { formatNumber, formatWon } from '@/lib/money';
@@ -111,6 +112,9 @@ function Landing({
   const openCampaigns = campaigns.filter((c) => c.open);
   const closedCampaigns = campaigns.filter((c) => c.status === 'CLOSED');
   const campaignCards = readCampaignCards(campaign?.cardNews);
+  // 종료 후 처리 방침(2026-11-12 4차 I): 끝난 캠페인 상세에서 GENERAL 은 "기관 일반 후원으로 처리" 를 밝히고, REJECT 는 후원 버튼 대신 안내만 보인다.
+  const ended = campaign ? campaignEnded(campaign) : false;
+  const rejectAfterEnd = Boolean(campaign && ended && campaign.afterEndPolicy === 'REJECT');
 
   const logoUrl = page.logoUrl || org.avatarUrl || null;
   const shellOrg = { code: org.code, displayName: org.displayName, logoUrl };
@@ -174,10 +178,19 @@ function Landing({
 
         {campaign && !campaign.open ? (
           <p className="mt-3 rounded-2xl bg-ink-50 px-4 py-3 text-[12.5px] text-ink-600">
-            {campaign.status === 'CLOSED' ? '모금이 끝난 캠페인입니다. 기관 일반 후원으로 참여하실 수 있습니다.' : '모금 기간이 아닙니다.'}
+            {rejectAfterEnd
+              ? '모금이 끝난 캠페인입니다. 이 캠페인으로는 더 이상 후원을 받지 않습니다. 다른 캠페인이나 기관 일반 후원은 후원페이지에서 직접 골라 주세요.'
+              : ended
+                ? '모금이 끝난 캠페인입니다. 지금 후원하시면 이 캠페인이 아니라 기관 일반 후원으로 처리됩니다. 다른 캠페인을 지정하시려면 후원페이지에서 직접 골라 주세요.'
+                : '모금 기간이 아닙니다.'}
           </p>
         ) : null}
 
+        {rejectAfterEnd ? (
+          <Link href={`/donate/${org.code}`} className="mt-4 flex h-12 items-center justify-center rounded-2xl border border-ink-200 bg-white text-[13.5px] font-extrabold text-ink-900 hover:bg-ink-50">
+            {org.displayName} 후원페이지로
+          </Link>
+        ) : (
         <div className="mt-4 grid grid-cols-3 gap-2">
           {smsHref ? (
             <MethodButton href={smsHref} color={color} icon={<MessageSquareText size={17} strokeWidth={1.8} />} label="문자" external />
@@ -187,6 +200,7 @@ function Landing({
           <MethodButton href={webHref} color={color} icon={<Phone size={17} strokeWidth={1.8} />} label="웹 후원" />
           <MethodButton href={recurringHref} color={color} icon={<Repeat size={17} strokeWidth={1.8} />} label="정기후원" />
         </div>
+        )}
         {featureVolunteerEnabled() ? (
           <Link href={`/my/volunteer/apply?merchant=${org.code}`} className="mt-2 flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-ink-200 bg-white text-[13.5px] font-extrabold text-ink-900 hover:bg-ink-50">
             <HandHeart size={16} strokeWidth={1.7} /> 자원봉사 신청
@@ -217,7 +231,7 @@ function Landing({
           <>
             {campaignCards.length ? <section><div className="mb-5 flex items-end justify-between gap-3"><div><p className="text-[11px] font-bold tracking-[0.15em] text-ink-400">CAMPAIGN STORY</p><h2 className="mt-1 text-xl font-black text-ink-900">한 장씩 만나는 변화의 이야기</h2></div><span className="shrink-0 text-xs text-ink-400">총 {campaignCards.length}장</span></div><CampaignCardNews cards={campaignCards} /></section> : null}
             {campaign.story || !campaignCards.length ? <TextSection title="함께 만드는 변화" body={campaign.story || page.intro || '캠페인 소개를 준비하고 있습니다.'} /> : null}
-            {campaignCards.length ? <div className="rounded-2xl bg-[#f1f6ed] p-6 text-center"><p className="text-lg font-black text-ink-900">이 변화에 함께해 주세요</p><p className="mt-2 text-sm text-ink-500">소중한 후원이 이웃의 일상에 닿을 수 있도록</p><Link href={webHref} className="mt-5 inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-bold text-white" style={{ background: color }}><HeartHandshake size={17} />{campaign.open ? '이 캠페인 후원하기' : '기관 일반 후원하기'}</Link></div> : null}
+            {campaignCards.length && !rejectAfterEnd ? <div className="rounded-2xl bg-[#f1f6ed] p-6 text-center"><p className="text-lg font-black text-ink-900">이 변화에 함께해 주세요</p><p className="mt-2 text-sm text-ink-500">소중한 후원이 이웃의 일상에 닿을 수 있도록</p><Link href={webHref} className="mt-5 inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-bold text-white" style={{ background: color }}><HeartHandshake size={17} />{campaign.open ? '이 캠페인 후원하기' : '기관 일반 후원하기'}</Link></div> : null}
             {campaign.beneficiary ? <TextSection title="지원 대상" body={campaign.beneficiary} /> : null}
             {campaign.usagePlan ? <TextSection title="후원금 사용 계획" body={campaign.usagePlan} /> : null}
             {campaign.status === 'CLOSED' && campaign.resultReport ? <TextSection title="결과 보고" body={campaign.resultReport} /> : null}

@@ -92,7 +92,7 @@ export async function recordActivityAction(_p: StudioActionState, f: FormData) {
 // ---------------------------------------------------------------------------
 
 export interface ImportActionState extends StudioActionState {
-  preview?: { rows: ImportPreviewRow[]; newCount: number; duplicateCount: number; errorCount: number; truncated: boolean };
+  preview?: { rows: ImportPreviewRow[]; newCount: number; duplicateCount: number; candidateCount?: number; errorCount: number; truncated: boolean };
 }
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -112,7 +112,7 @@ export async function supporterImportAction(_p: ImportActionState, f: FormData):
   try {
     if (text(f, 'intent') !== 'commit') {
       const preview = await previewSupporterImport(user.merchantId, csv);
-      return { ok: true, message: `새로 등록 ${preview.newCount}명 · 중복 ${preview.duplicateCount}명 · 오류 ${preview.errorCount}행`, preview };
+      return { ok: true, message: `새로 등록 ${preview.newCount}명 · 중복 ${preview.duplicateCount}명${preview.candidateCount ? ` · 중복 후보 ${preview.candidateCount}명(확인 필요)` : ''} · 오류 ${preview.errorCount}행`, preview };
     }
     const r = await commitSupporterImport({
       merchantId: user.merchantId,
@@ -121,10 +121,15 @@ export async function supporterImportAction(_p: ImportActionState, f: FormData):
       csv,
       consentConfirmed: Boolean(f.get('consentConfirmed')),
       consentBasis: text(f, 'consentBasis'),
+      // 2026-11-12 4차 I: 미리보기에서 중복 후보를 확인한 화면은 체크한 후보 줄만 등록한다
+      candidateLines: f.get('candidateMode') ? f.getAll('includeLine').map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0) : undefined,
     });
     await writeAudit({ action: 'SUPPORTER_IMPORT', targetType: 'merchant', targetId: user.merchantId, after: { fileName: file.name, ...r } }).catch(() => undefined);
     revalidatePath('/studio/supporters');
-    return { ok: true, message: `명단 ${r.accepted}명을 등록했습니다. (중복 ${r.duplicates} · 오류 ${r.errors})` };
+    return {
+      ok: true,
+      message: `명단 ${r.accepted}명을 등록했습니다. (같은 번호 ${r.sameNumber} · 중복 후보 건너뜀 ${r.candidatesSkipped}${r.candidatesAdded ? ` · 후보 중 등록 ${r.candidatesAdded}` : ''} · 오류 ${r.errors} · 기존 후원자와 연결 ${r.linkedToDonor}) 가져온 분들께 문자를 보내지 않았습니다.`,
+    };
   } catch (e) {
     if (e instanceof ImportError) return { ok: false, message: e.message };
     logger.error('명단 업로드 실패', { message: (e as Error).message });

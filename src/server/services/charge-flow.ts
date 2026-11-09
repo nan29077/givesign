@@ -12,6 +12,7 @@ import { getMtAdapter, decideMessageType } from '@/server/adapters/mt';
 import { getPaymentAdapter, MockPaymentTimeout } from '@/server/adapters/payment';
 import { filterContent, normalizeKeyword, normalizeText, splitKeyword, type BannedWordRule } from './content-filter';
 import { donationMeta, matchCampaignKeyword } from './fundraising';
+import { campaignThanksText, endedCampaignRejectingSafe } from './campaign-after-end';
 import { resolveAlimtalkRoute, sendAlimtalk } from './alimtalk';
 import { emitMerchantEvent } from './webhooks';
 import { emitChargePaid } from './charge-events';
@@ -808,6 +809,19 @@ async function processMoRow(
   // (4-1) 캠페인 키워드. 문자 맨 앞에 모금 중인 캠페인의 키워드가 있으면 지정후원으로 잡고
   // 키워드는 메시지에서 떼어 낸다. 키워드가 없거나 모금이 끝났으면 기관 일반 후원이다.
   const campaignMatch = await matchCampaignKeyword(merchant.id, routed.body);
+  // (4-2) 끝난 캠페인 중 "종료 후 받지 않기"(REJECT)를 고른 캠페인 키워드면 결제를 만들지 않고 안내만 보낸다(2026-11-12 4차 I).
+  // 기본(GENERAL)·판단 실패는 예전처럼 기관 일반 후원으로 처리된다.
+  if (!campaignMatch.campaign) {
+    const ended = await endedCampaignRejectingSafe(merchant.id, routed.body);
+    if (ended) {
+      await prisma.moInboundMessage.update({
+        where: { id: moRow.id },
+        data: { result: 'BLOCKED', resultDetail: `CAMPAIGN_ENDED: 종료 후 후원을 받지 않는 캠페인(${ended.code})`, processedAt: new Date() },
+      });
+      await sendMt({ phone: inbound.fromNumber, template: tpl.tplCampaignEnded(merchant.displayName, ended.title), merchantId: merchant.id });
+      return { result: 'BLOCKED', moMessageId: moRow.id, message: '모금이 끝난 캠페인 키워드입니다. 후원으로 처리하지 않고 안내 문자만 보냈습니다.' };
+    }
+  }
   const messageBody = campaignMatch.campaign ? campaignMatch.rest : routed.body;
 
   const bannedWords = await loadBannedWords(merchant.id);
@@ -1656,7 +1670,8 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
       message: charge.message,
       cumulative: link?.totalAmount ?? charge.amount,
       // 사회복지기관이 스튜디오에서 설정한 감사 문자 본문. 없으면 기본 문구가 쓰인다.
-      custom: charge.merchant.thanksMtMessage,
+      // 캠페인에 감사 문구를 따로 정했으면 그 문구가 먼저다(2026-11-12 4차 I — 없거나 읽지 못하면 예전 그대로).
+      custom: (await campaignThanksText(charge.campaignId)) ?? charge.merchant.thanksMtMessage,
     }),
     chargeId,
     charge.merchantId,

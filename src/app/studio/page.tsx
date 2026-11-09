@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/layout/console-shell';
 import { BannerStrip } from '@/components/public/banner-strip';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { OnboardingChecklist } from '@/components/studio/onboarding-checklist';
+import { OnboardingPrompt } from '@/components/studio/onboarding-prompt';
 import { InboxBanner } from '@/components/studio/inbox-banner';
 import { NextActionBanner } from '@/components/studio/next-action-banner';
 import { ChargeCardGrid } from '@/components/studio/charge-cards';
@@ -170,6 +171,8 @@ export default async function StudioDashboardPage() {
 
         {/* 0) 신규 사회복지기관 온보딩 체크리스트 — 모두 완료되면 스스로 사라진다 */}
         <OnboardingChecklist merchantId={merchantId} />
+        {/* 0-a) 도입 체크리스트(2026-11-12 4차 I) — 다 끝났거나 숨기면 사라진다 */}
+        <OnboardingPrompt merchantId={merchantId} />
 
         {/* 0-0) 승인 대기함 — 자동화가 준비한 일·담당자가 처리할 일(모바일에서도 첫 화면에 보이게) */}
         <InboxBanner merchantId={merchantId} />
