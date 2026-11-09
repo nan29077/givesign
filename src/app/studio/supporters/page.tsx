@@ -119,7 +119,11 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
                   {consented(r) ? <Badge tone="success" className="ml-1.5">소식 수신 동의</Badge> : null}
                 </Td>
                 <Td><Badge tone={roleTone[r.role]}>{ROLE_LABEL[r.role]}</Badge></Td>
-                <Td className="tabular-nums">{r.donationCount ? <><span className="font-semibold text-ink-900">{formatWon(r.totalAmount)}</span> <span className="text-ink-400">· {r.donationCount}회</span></> : <span className="text-ink-300">-</span>}</Td>
+                <Td className="tabular-nums">
+                  {r.donationCount ? <><span className="font-semibold text-ink-900">{formatWon(r.totalAmount)}</span> <span className="text-ink-400">· {r.donationCount}회</span></> : r.offlineCount ? null : <span className="text-ink-300">-</span>}
+                  {/* 계좌이체(입금 맞추기 확정분)는 출처를 나눠 따로 적는다 */}
+                  {r.offlineCount ? <span className="block text-[12px] text-ink-500">계좌이체 {formatWon(r.offlineAmount)} · {r.offlineCount}회</span> : null}
+                </Td>
                 <Td className="whitespace-nowrap tabular-nums">{r.lastDonatedAt ? formatKst(r.lastDonatedAt, false) : <span className="text-ink-300">-</span>}</Td>
                 <Td>{r.recurring ? <Badge tone={r.recurring.status === 'ACTIVE' ? 'brand' : 'warning'}>매월 {r.recurring.dayOfMonth}일 {formatWon(r.recurring.amount)}</Badge> : <span className="text-ink-300">-</span>}</Td>
                 <Td>{r.volunteer ? <span className="text-[12.5px]"><Badge tone={r.volunteer.status === 'APPROVED' ? 'success' : 'neutral'}>{r.volunteer.status === 'APPROVED' ? '활동 중' : r.volunteer.status === 'RECEIVED' ? '접수' : '기록'}</Badge> <span className="tabular-nums text-ink-500">{(r.volunteer.minutes / 60).toFixed(1)}시간</span></span> : <span className="text-ink-300">-</span>}</Td>

@@ -341,3 +341,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 주간 승인 `/studio/content/review`(이번 주·다음 주, KST 월~일, 지난 대기는 이번 주에), 일괄 승인은 항목마다 `approveContent`(승인 불가는 이유와 함께 건너뜀, 50건 상한). 반려(이유 분류+메모) → `ARCHIVED`, 수정 요청 한 줄 → 새 판(`revision_of/root_id/request`, 이전 판 보관, 슬롯 이어받음, 판 묶음당 하루 5회, advisory lock). 메모·요청은 실명·연락처 거절 후 `maskForLlm` 값만 저장. mock 이면 요청은 메모로만("AI 공급자 연결 후 문장 반영").
 - 반려·수정 이유는 `content_feedback` 에 쌓고 최근 20개를 `contentAvoidHints` 로 LLM 프롬프트 "피해야 할 것" 에 넣는다(로그 금지). 사전 점검(`contentPrecheck`)은 기존 검사(`contentDraftViolation`·`captionProblem`·실명/연락처 패턴)만 부른다.
 - 알림 배치 `/api/cron/content-review`(15분): 월요일 09시 이후 그 주 대기 N건(기관·주 1회), 슬롯 하루 전·3시간 전 미승인(콘텐츠·슬롯 시각·시점 1회) — `content_review_alert` 키와 알림을 한 트랜잭션. 기관 담당자 문자·알림톡 정보성 경로가 없어 콘솔 알림만.
+
+## 2026-11-09 입금 자동 대사 (기관 통장 거래내역)
+
+테스트 `tests/deposits-2026-11-09.test.ts`, 샘플 `tests/fixtures/bank-*-2026-11-09.*`. 화면 `/studio/deposits`(사이드바 "입금 맞추기").
+
+- 기관 통장으로 바로 들어온 계좌이체·CMS 는 **기브싸인이 받은 돈이 아니다.** 확정분은 `offline_donation` 에만 남기고 `charge`·정산 원장·수수료·캠페인 모금액(절대 규칙 10)·후원 내역 숫자에 넣지 않는다. 화면은 "기브싸인 결제" 와 "계좌이체" 를 나눠 보이고 합쳐 한 숫자로 바꾸지 않는다(`SupporterRow.offlineAmount`, 대시보드 `OfflineMonthStrip`).
+- 파일 읽기는 `src/lib/bank-statement.ts`(열 자동 인식·값 읽기·이름 키) + `bank-statement-file.ts`(CSV UTF-8/CP949 = `decodeCsvBytes`, XLSX 는 node:zlib 로 첫 시트만, `.xls` 거절). 모르는 열은 저장 없이 `NEEDS_MAPPING` → 열 고르기. 2MB·입금 5,000건. 출금 행 버림. **계좌번호 원문 저장 금지** — 계좌 열을 읽지 않고 이름·적요의 긴 숫자는 `maskLongDigits`. 파일 자체도 저장하지 않는다.
+- 중복: 같은 파일 = `bank_statement_import (merchant, file_hash)` 유니크, 같은 입금 = `bank_deposit (merchant, tx_hash)` — (기관, 거래일시, 금액, 입금자 키, 잔액, 파일 안 같은 값 순번) SHA-256. 같은 날 같은 사람·금액은 둘 다 남기고 `duplicate_warning`(자동 확정 안 함).
+- 맞추기 규칙은 `classifyDeposit` 한 곳. 후보 = 그 기관과 관계있는 후원자(결제·정기 약정·봉사·명단·계좌이체·약정, 병합은 대상으로, 탈퇴 제외) + 후원자 계정 없는 명단 행. 자동 확정은 **이름 일치 1명 + 같은 금액 확정 입금 2회↑ 또는 같은 금액 계좌이체 약정**만. 확인 필요/모름은 사람이 확정한다. 확정할 후보는 입금 행에 저장된 후보 중에서만(`confirmDeposits`), 새 후원자 연결은 이름·휴대폰(같은 번호 후원자 재사용, 표시 이름은 비워 두고 기관 명단에만 이름).
+- 확정 = 입금 `UNMATCHED/SUGGESTED → MATCHED` 조건부 + `offline_donation` + `offline.received`(dedupe `offline.received:{입금 id}`) 한 트랜잭션. 입금당 CONFIRMED 1건(부분 유니크). 되돌리기 = `REVERTED`(행 보존) + 입금 다시 확인 필요 + `offline.reverted`. 다시 확정해도 감사 이벤트는 다시 나지 않는다.
+- 소비자: `offline-alert`(같은 묶음 id 여러 건이면 알림 1건, kv 선점), 후원 감사 저니는 `includeOffline` 값을 켰을 때만(기본 끔), 발송 직전 `context.offlineDonationId` 가 CONFIRMED 인지 재확인, `journey-offline-revert` 가 진행 중 실행 취소.
+- **계좌이체 약정**(`offline_pledge`, 기관·후원자당 1건)은 매칭 근거와 "이번 달 미입금"(약정일+3일) 표시에만 쓴다. 출금·결제·문자를 만들지 않는다.
+- **영수증**: `merchant_profile.receipt_include_offline`(기본 끔)일 때만 `receiptCandidates`·`issueReceipt`·연간 준비·홈택스 명세·후원자 미발급 요약에 확정 계좌이체를 넣는다. 끔이면 결과가 예전과 완전히 같다(테스트로 비교). 영수증 items 의 계좌이체 줄은 `offlineDonationId`·`source:'OFFLINE'`, `chargeCount` 는 결제+계좌이체 건수. 발급된 영수증에 묶인 계좌이체를 되돌리면 **자동 VOID 하지 않고** "정정 필요"(`offlineReceiptCorrections`) — 무효 처리(`voidReceipt` 가 묶음을 풀어 줌) 후 재발급은 확정분만.
+- 승인 대기함 묶음 `offline-deposits`("입금 확인 필요 N건", `depositsInboxGroup`). 권한은 기관 콘솔 계정(`requireMerchant`, 기관당 계정 1개 — 별도 금전 권한 없음), 업로드·확정·무시·되돌리기·약정·설정 변경은 감사로그(`OFFLINE_*`, `RECEIPT_INCLUDE_OFFLINE_CHANGE`). 은행 계좌 직접 조회 연동은 하지 않았다(5차, 어댑터+mock 예정).

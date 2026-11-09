@@ -23,6 +23,7 @@ import {
   QrCode,
   Inbox,
   Workflow,
+  Landmark,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
@@ -64,11 +65,12 @@ export type ConsoleIconName =
   | 'products' | 'orders' | 'apidocs' | 'documents'
   | 'campaigns' | 'recurring' | 'receipts' | 'donors' | 'building'
   | 'supporters' | 'volunteers' | 'content' | 'channels' | 'notices' | 'agreements' | 'qr'
-  | 'inbox' | 'journeys';
+  | 'inbox' | 'journeys' | 'deposits';
 
 const CONSOLE_ICONS = {
   inbox: Inbox,
   journeys: Workflow,
+  deposits: Landmark,
   activity: Activity,
   admins: UserCog,
   audit: ClipboardList,
