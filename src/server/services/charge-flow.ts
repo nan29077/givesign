@@ -25,6 +25,7 @@ import * as tpl from './mt-templates';
 import { calculateFees, postChargeSettlement } from './settlement';
 import { notifySuperAdmins } from './notifications';
 import { recordChargeStatusStep, recordFunnelStep } from './funnel';
+import { prefersSmsOnly } from './outbound/preferred-channel';
 import type { ChargeStatus, MoProcessResult, PaymentMode, PaymentTxStatus } from '@/generated/prisma/enums';
 import type { TemplateOutput } from './mt-templates';
 
@@ -83,7 +84,9 @@ async function sendMtDetailed(input: {
   // 기관이 API 로 직접 보내는 문자는 기관이 검수받은 문자 템플릿이라 알림톡으로 바꾸지 않는다.
   // 알림톡이 실패하면 아래 문자 경로로 그대로 대체 발송한다(fallback=true 로 기록).
   let fallback = false;
-  const route = input.merchantSent ? null : await resolveAlimtalkRoute(input.merchantId, template.code).catch(() => null);
+  let route = input.merchantSent ? null : await resolveAlimtalkRoute(input.merchantId, template.code).catch(() => null);
+  // 후원자가 문자만 받겠다고 했으면 알림톡을 쓰지 않는다(preferred_channel, 2026-11-09 D2-4). 알림톡 경로가 있을 때만 조회한다.
+  if (route && (await prefersSmsOnly(input.phone))) route = null;
   // 발송 이력 행은 **발송 전에** 만든다(문자 경로와 같은 순서). 보낸 뒤에 만들면 생성이 실패했을 때
   // "보냈지만 기록 없는" 건이 생기고, 예외가 호출부로 번져 월간 안내 등이 실패로 집계된다.
   // 알림톡이 실패하면 같은 행을 문자 대체 발송(fallback=true)으로 바꿔 이어 쓴다.
