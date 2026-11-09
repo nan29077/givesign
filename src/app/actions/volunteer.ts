@@ -12,6 +12,7 @@ import { applyVolunteer, withdrawVolunteer, VolunteerError } from '@/server/serv
 import { completeESign } from '@/server/services/agreements';
 import { mockESignPageAllowed } from '@/server/adapters/esign';
 import type { DonorActionState } from '@/app/actions/donor';
+import { marketingChecked, recordMarketingConsentIfChecked } from '@/server/services/marketing-consent';
 
 /**
  * 후원자(마이페이지) — 자원봉사 신청 · 철회 · 월간 안내 수신 설정.
@@ -57,6 +58,10 @@ export async function applyVolunteerAction(_prev: DonorActionState, f: FormData)
       postingId: text(f, 'postingId') || null,
       shiftId: text(f, 'shiftId') || null,
       meta: { ip: clientIpFrom((n) => h.get(n)) ?? undefined, userAgent: h.get('user-agent') ?? undefined },
+    });
+    await recordMarketingConsentIfChecked(marketingChecked(f.get('marketingConsent')), {
+      payerId: ctx.payerId, merchantId: merchant.id, source: 'VOLUNTEER', wordingTail: '신청할 수 있습니다',
+      ip: clientIpFrom((n) => h.get(n)), userAgent: h.get('user-agent'),
     });
     revalidatePath('/my/volunteer');
     return { ok: true, message: '자원봉사 신청이 접수되었습니다. 기관이 확인한 뒤 일정을 안내해 드립니다.', redirectTo: '/my/volunteer' };

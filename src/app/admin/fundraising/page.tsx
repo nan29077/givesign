@@ -3,6 +3,7 @@ import { requireAdmin } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { campaignStats } from '@/server/services/fundraising';
 import { recurringStatusLabel, recurringDebitAllowed } from '@/server/services/recurring';
+import { failureClassLabel } from '@/server/services/recurring-failure';
 import { doneeVerified, issuerReadiness, receiptStatusLabel } from '@/server/services/receipts';
 import { ActionButton } from '@/components/admin/action-form';
 import { revokeDesignatedDoneeAction, verifyDesignatedDoneeAction } from '@/app/actions/admin/fundraising';
@@ -118,7 +119,7 @@ async function RecurringTab() {
       ) : null}
       {rows.length === 0 ? <EmptyState title="정기후원 약정이 없습니다" /> : (
         <Table>
-          <thead><tr><Th>기관</Th><Th>후원자</Th><Th>상태</Th><Th>금액</Th><Th>출금일</Th><Th>다음 출금</Th><Th>누적</Th><Th>실패</Th></tr></thead>
+          <thead><tr><Th>기관</Th><Th>후원자</Th><Th>상태</Th><Th>금액</Th><Th>출금일</Th><Th>다음 출금</Th><Th>누적</Th><Th>실패 원인</Th><Th>실패</Th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
@@ -129,6 +130,7 @@ async function RecurringTab() {
                 <Td>{r.dayOfMonth}일</Td>
                 <Td className="tabular-nums">{r.status === 'ACTIVE' ? r.nextChargeOn.toISOString().slice(0, 10) : '-'}</Td>
                 <Td className="tabular-nums">{formatWon(r.totalAmount)} ({r.successCount}회)</Td>
+                <Td className="whitespace-nowrap text-[12px]">{failureClassLabel(r.lastFailureClass)}</Td>
                 <Td className="text-[12px] text-ink-500">{r.failCount ? `${r.failCount}회 · ${r.lastFailure ?? ''}` : '-'}</Td>
               </tr>
             ))}

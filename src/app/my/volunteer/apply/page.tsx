@@ -12,6 +12,7 @@ import { dayLabel, slotLabel } from '@/server/services/agreements';
 import { PickOrgNotice } from '@/components/my/pick-org-notice';
 import { getPublicPosting } from '@/server/services/volunteer-postings';
 import { dateKeyOf, shiftWhenLabel, weekdayCode } from '@/lib/volunteer-schedule';
+import { MarketingConsentField } from '@/components/public/marketing-consent-field';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,6 +126,7 @@ export default async function VolunteerApplyPage({ searchParams }: { searchParam
           <Checkbox name="safetyPledge" label="안전 수칙을 지키고 담당자 안내에 따라 활동하겠습니다. (필수)" />
           <Checkbox name="agree" label={`${terms?.title ?? '자원봉사 개인정보 수집·이용 동의'} (필수)`} description="신청 내용은 신청서로 보관되며 마이페이지에서 열람할 수 있습니다." />
           {terms ? <details className="rounded-xl bg-ink-50 p-3 text-[12px] leading-relaxed text-ink-600"><summary className="cursor-pointer font-bold">동의 내용 보기</summary><p className="mt-2 whitespace-pre-line">{terms.content}</p></details> : null}
+          <MarketingConsentField merchantName={merchant.displayName} tail="신청할 수 있습니다" className="mt-4" />
         </DonorActionForm>
       </Card>
     </div>

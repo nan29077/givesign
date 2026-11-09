@@ -17,6 +17,18 @@ import { currentTermsDoc } from './terms';
 import * as tpl from './mt-templates';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import type { ChargeStatus, RecurringDonation } from '@/generated/prisma/client';
+import {
+  RECURRING_FAILURE_POLICY,
+  RECURRING_FAILURE_CLASSES,
+  TEMPORARY_FREE_STREAK,
+  actionDeadline,
+  classifyChargeFailure,
+  needsPayerAction,
+  retryDateFor,
+  type PayerNotice,
+  type RecurringFailureClass,
+} from './recurring-failure';
+import { issueRecoveryLink } from './recurring-recovery-link';
 
 /**
  * 정기후원.
@@ -29,7 +41,10 @@ import type { ChargeStatus, RecurringDonation } from '@/generated/prisma/client'
  *          키가 이미 있으면 "이미 처리"로 넘기지 않고, 그 키가 가리키는 결제 건의 실제 상태를 확인한다.
  *  - 결과 미확인: 결제사 타임아웃 등으로 결과를 모르면 실행 기록을 PENDING 으로 남기고 그 약정은
  *          관리자 대사(payment-reconcile)로 결과가 확정될 때까지 새 결제를 만들지 않는다.
- *  - 실패: 3일 뒤 재시도, 한 주기 안 실패 3회면 SUSPENDED. 건너뜀(SKIPPED)은 실패 횟수에 넣지 않는다.
+ *  - 실패: 원인을 분류해(recurring-failure.ts) 원인별 정책으로 처리한다. 모르는 원인(UNKNOWN_REASON)은 예전처럼
+ *          3일 뒤 재시도, 한 주기 안 실패 3회면 SUSPENDED. 건너뜀(SKIPPED)은 실패 횟수에 넣지 않는다.
+ *          계좌·인증·결제수단 문제는 자동 재시도하지 않고 조치 필요(ACTION_REQUIRED)로 기다린다(2026-11-09).
+ *  - 일시정지 재개 예정일(resume_on): 배치가 그날 다시 시작하고, 전날 안내 문자를 한 번 보낸다.
  *  - 실결제사(헥토)에서 PIN 없는 빌키 출금은 금융사 승인이 필요하다. ALLOW_RECURRING_DEBIT 가
  *    켜지지 않으면 mock 결제사가 아닌 한 실행하지 않고 SKIPPED 로 남긴다. (절대 규칙 2·7)
  */
@@ -347,6 +362,14 @@ export async function updateRecurringDonation(
   return updated;
 }
 
+/** 복구 상태를 처음으로 되돌리는 값(성공·재개 때) */
+const CLEAR_RECOVERY = {
+  recoveryState: 'NONE' as const,
+  recoveryStartedAt: null,
+  actionDeadlineOn: null,
+  lastFailureClass: null,
+};
+
 export async function setRecurringStatus(
   payerId: string,
   id: string,
@@ -359,7 +382,8 @@ export async function setRecurringStatus(
   const now = new Date();
   if (action === 'PAUSE') {
     if (row.status !== 'ACTIVE') throw new Error('진행 중인 정기후원만 일시정지할 수 있습니다.');
-    return prisma.recurringDonation.update({ where: { id }, data: { status: 'PAUSED', pausedAt: now } });
+    // 날짜를 정하지 않은 일시정지는 후원자가 다시 시작할 때까지 멈춘다(재개 예정일 없음).
+    return prisma.recurringDonation.update({ where: { id }, data: { status: 'PAUSED', pausedAt: now, resumeOn: null, resumeNoticeSentAt: null } });
   }
   if (action === 'RESUME') {
     if (row.status !== 'PAUSED' && row.status !== 'SUSPENDED') throw new Error('일시정지·정지 상태만 재개할 수 있습니다.');
@@ -372,6 +396,7 @@ export async function setRecurringStatus(
       data: {
         status: 'ACTIVE', pausedAt: null, suspendedAt: null, failCount: 0, lastFailure: null,
         nextChargeOn: dateCol(next), cycleMonth: next.slice(0, 7),
+        ...CLEAR_RECOVERY, resumeOn: null, resumeNoticeSentAt: null,
       },
     });
     await emitDomainEventSafe({
@@ -382,7 +407,10 @@ export async function setRecurringStatus(
   }
   const canceled = await prisma.recurringDonation.update({
     where: { id },
-    data: { status: 'CANCELED', canceledAt: now, cancelReason: (reason ?? '').trim().slice(0, 200) || null },
+    data: {
+      status: 'CANCELED', canceledAt: now, cancelReason: (reason ?? '').trim().slice(0, 200) || null,
+      recoveryState: 'NONE', actionDeadlineOn: null, resumeOn: null, resumeNoticeSentAt: null,
+    },
   });
   await emitDomainEventSafe({
     merchantId: row.merchantId, type: 'recurring.canceled', subjectType: 'recurring', subjectId: id, payerId,
@@ -400,7 +428,7 @@ export async function suspendRecurringForPayer(payerId: string, reason: string) 
   const now = new Date();
   const r = await prisma.recurringDonation.updateMany({
     where: { id: { in: targets.map((t) => t.id) }, status: { in: ['ACTIVE', 'PAUSED'] } },
-    data: { status: 'SUSPENDED', suspendedAt: now, lastFailure: reason },
+    data: { status: 'SUSPENDED', suspendedAt: now, lastFailure: reason, recoveryState: 'NONE', actionDeadlineOn: null, resumeOn: null },
   });
   for (const t of targets) {
     await emitDomainEventSafe({
@@ -422,6 +450,118 @@ export async function revertRecurringTotals(chargeId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// 날짜를 정해 쉬어 가기(재개 예정일) — 2026-11-09
+// ---------------------------------------------------------------------------
+
+/** 재개 예정일은 오늘부터 이 날 수 안에서만 고른다. */
+export const PAUSE_MAX_DAYS = 180;
+
+/**
+ * 그 날(dateKey)부터 따져 다음 출금일. 그 달 출금일이 그 날 이후(같은 날 포함)면 그 달, 지났으면 다음 달.
+ * 이미 출금(성공)한 주기면 그다음 달로 넘긴다.
+ */
+async function scheduleFromDate(recurringId: string, day: number, dateKey: string): Promise<string> {
+  let next = cycleDate(dateKey.slice(0, 7), day);
+  if (next < dateKey) next = nextMonthDate(day, dateKey);
+  if (await cycleSucceeded(recurringId, next.slice(0, 7))) next = nextMonthDate(day, next);
+  return next;
+}
+
+/**
+ * 재개 예정일을 정해 쉬어 가기(후원자 본인). 진행 중이거나 이미 쉬고 있는 약정만.
+ * 재개 예정일에 정기후원 배치가 다시 시작하고, 그 전날 안내 문자를 한 번 보낸다.
+ */
+export async function pauseRecurringUntil(payerId: string, id: string, resumeOn: string, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(resumeOn) || Number.isNaN(new Date(`${resumeOn}T00:00:00Z`).getTime())) {
+    throw new Error('다시 시작할 날짜를 확인해 주세요.');
+  }
+  const today = kstDateKey(now);
+  if (resumeOn <= today) throw new Error('다시 시작할 날짜는 내일 이후로 골라 주세요.');
+  if (resumeOn > addDaysKey(today, PAUSE_MAX_DAYS)) throw new Error(`다시 시작할 날짜는 오늘부터 ${PAUSE_MAX_DAYS}일 안으로 골라 주세요.`);
+  const row = await prisma.recurringDonation.findFirst({ where: { id, payerId } });
+  if (!row) throw new Error('정기후원을 찾을 수 없습니다.');
+  if (row.status !== 'ACTIVE' && row.status !== 'PAUSED') throw new Error('진행 중이거나 쉬고 있는 정기후원만 쉬어 갈 수 있습니다.');
+  const r = await prisma.recurringDonation.updateMany({
+    where: { id, payerId, status: { in: ['ACTIVE', 'PAUSED'] } },
+    data: { status: 'PAUSED', pausedAt: row.pausedAt ?? now, resumeOn: dateCol(resumeOn), resumeNoticeSentAt: null },
+  });
+  if (r.count === 0) throw new Error('정기후원 상태가 바뀌었습니다. 화면을 새로 고쳐 주세요.');
+  return { resumeOn, nextDate: await scheduleFromDate(id, row.dayOfMonth, resumeOn) };
+}
+
+/**
+ * 재개 예정일이 된 약정을 다시 시작한다(정기후원 배치 안). 조건부 갱신이라 겹쳐 돌아도 한 번만 재개된다.
+ * 결제수단이 없으면 자동으로 재개하지 않는다(재개 예정일만 지우고 일시정지 유지 — 본인이 등록 후 다시 시작).
+ */
+export async function resumeScheduledPauses(now = new Date()): Promise<number> {
+  const today = kstDateKey(now);
+  const due = await prisma.recurringDonation.findMany({
+    where: { status: 'PAUSED', resumeOn: { lte: dateCol(today) } },
+    select: { id: true, payerId: true, merchantId: true, dayOfMonth: true, resumeOn: true },
+    orderBy: { id: 'asc' },
+    take: 500,
+  });
+  let resumed = 0;
+  for (const r of due) {
+    try {
+      const token = await prisma.paymentMethodToken.findFirst({ where: { payerId: r.payerId, status: 'ACTIVE' }, select: { id: true } });
+      if (!token) {
+        await prisma.recurringDonation.updateMany({ where: { id: r.id, status: 'PAUSED', resumeOn: r.resumeOn }, data: { resumeOn: null } });
+        logger.warn('재개 예정일이 되었지만 결제수단이 없어 일시정지를 유지합니다', { recurringId: r.id });
+        continue;
+      }
+      const next = await scheduleFromDate(r.id, r.dayOfMonth, today);
+      const res = await prisma.recurringDonation.updateMany({
+        where: { id: r.id, status: 'PAUSED', resumeOn: r.resumeOn },
+        data: {
+          status: 'ACTIVE', pausedAt: null, failCount: 0, lastFailure: null, ...CLEAR_RECOVERY,
+          resumeOn: null, resumeNoticeSentAt: null, nextChargeOn: dateCol(next), cycleMonth: next.slice(0, 7),
+        },
+      });
+      if (res.count === 0) continue;
+      resumed += 1;
+      await emitDomainEventSafe({
+        merchantId: r.merchantId, type: 'recurring.resumed', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
+        dedupeKey: `recurring.resumed:${r.id}:auto:${r.resumeOn!.toISOString().slice(0, 10)}`, payload: { from: 'PAUSED', auto: true },
+      });
+    } catch (e) {
+      logger.error('정기후원 자동 재개 실패', { recurringId: r.id, message: (e as Error).message });
+    }
+  }
+  return resumed;
+}
+
+/** 재개 전날 안내(정보성, 재개 예정일당 1회). 발송 전에 조건부로 선점하고, 보내지 못하면 선점을 푼다. */
+export async function sendResumeNotices(now = new Date()): Promise<number> {
+  const tomorrow = addDaysKey(kstDateKey(now), 1);
+  const rows = await prisma.recurringDonation.findMany({
+    where: { status: 'PAUSED', resumeOn: dateCol(tomorrow), resumeNoticeSentAt: null },
+    include: { merchant: { select: { displayName: true } } },
+    orderBy: { id: 'asc' },
+    take: 500,
+  });
+  let sent = 0;
+  for (const r of rows) {
+    const claimedAt = new Date();
+    const claim = await prisma.recurringDonation.updateMany({
+      where: { id: r.id, status: 'PAUSED', resumeOn: dateCol(tomorrow), resumeNoticeSentAt: null },
+      data: { resumeNoticeSentAt: claimedAt },
+    });
+    if (claim.count === 0) continue;
+    const next = await scheduleFromDate(r.id, r.dayOfMonth, tomorrow);
+    const ok = await sendMtForPayer(
+      r.payerId,
+      tpl.tplRecurringResumeSoon({ merchantName: r.merchant.displayName, amount: r.amount, resumeOn: tomorrow, nextDate: next }),
+      null,
+      r.merchantId,
+    ).catch(() => false);
+    if (ok) sent += 1;
+    else await prisma.recurringDonation.updateMany({ where: { id: r.id, resumeNoticeSentAt: claimedAt }, data: { resumeNoticeSentAt: null } });
+  }
+  return sent;
+}
+
+// ---------------------------------------------------------------------------
 // 실행 배치
 // ---------------------------------------------------------------------------
 
@@ -435,6 +575,10 @@ export interface RecurringRunSummary {
   skipped: number;
   pending: number;
   suspended: number;
+  /** 재개 예정일이 되어 다시 시작한 약정 수 */
+  resumed: number;
+  /** 재개 전날 안내를 보낸 수 */
+  resumeNoticed: number;
   /** 시간 예산을 넘겨 다음 실행으로 넘긴 건이 있는가 */
   truncated: boolean;
   details: Array<{ id: string; status: RecurringOutcome; reason?: string; chargeId?: string }>;
@@ -453,9 +597,19 @@ export async function runRecurringDonations(now = new Date(), budgetMs = BATCH_B
   const today = kstDateKey(now);
   const started = Date.now();
   const summary: RecurringRunSummary = {
-    dateKey: today, checked: 0, succeeded: 0, failed: 0, skipped: 0, pending: 0, suspended: 0, truncated: false, details: [],
+    dateKey: today, checked: 0, succeeded: 0, failed: 0, skipped: 0, pending: 0, suspended: 0, resumed: 0, resumeNoticed: 0, truncated: false, details: [],
   };
   const allowed = recurringDebitAllowed();
+
+  // 재개 예정일이 된 일시정지를 먼저 다시 시작한다(오늘이 출금일이면 아래에서 바로 출금된다). 실패가 출금을 막지 않는다.
+  summary.resumed = await resumeScheduledPauses(now).catch((e) => {
+    logger.error('정기후원 자동 재개 단계 실패', { message: (e as Error).message });
+    return 0;
+  });
+  summary.resumeNoticed = await sendResumeNotices(now).catch((e) => {
+    logger.error('정기후원 재개 전날 안내 단계 실패', { message: (e as Error).message });
+    return 0;
+  });
 
   // id 순 커서로 끝까지 훑는다. 건너뛴 약정(날짜를 그대로 두는 경우)이 같은 페이지를 다시 채워
   // 무한 반복하지 않도록 오프셋이 아니라 커서를 쓴다.
@@ -553,9 +707,13 @@ async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amou
       totalAmount: { increment: amount },
       cycleMonth: nextCycle,
       nextChargeOn: dateCol(cycleDate(nextCycle, r.dayOfMonth)),
+      ...CLEAR_RECOVERY,
     },
   });
   if (updated.count === 0) return;
+  await markRecoveredIfFailedBefore(r, cycleMonth, amount).catch((e) =>
+    logger.error('정기후원 복구 기록 실패', { recurringId: r.id, message: (e as Error).message }),
+  );
   const after = await prisma.recurringDonation.findUnique({ where: { id: r.id }, select: { successCount: true, totalAmount: true } });
   if (after) {
     await emitDomainEventSafe({
@@ -564,6 +722,27 @@ async function markCycleSucceeded(r: RecurringDonation, cycleMonth: string, amou
       payload: { count: after.successCount, totalAmount: after.totalAmount, amount },
     });
   }
+}
+
+/**
+ * 같은 주기에 실패가 있었는데 성공했다 = 복구. 그 주기의 성공 run 에 recovered=true, recurring.recovered 이벤트 1회.
+ * markCycleSucceeded 가 주기를 넘긴(조건부 갱신이 성공한) 경우에만 부른다.
+ */
+async function markRecoveredIfFailedBefore(r: RecurringDonation, cycleMonth: string, amount: bigint) {
+  const failures = await prisma.recurringRun.count({ where: { recurringId: r.id, monthKey: cycleMonth, status: 'FAILED' } });
+  if (failures === 0) return;
+  const success = await prisma.recurringRun.findFirst({
+    where: { recurringId: r.id, monthKey: cycleMonth, status: 'SUCCESS' },
+    orderBy: { attempt: 'desc' },
+    select: { id: true, chargeId: true },
+  });
+  if (!success) return;
+  await prisma.recurringRun.update({ where: { id: success.id }, data: { recovered: true } });
+  await emitDomainEventSafe({
+    merchantId: r.merchantId, type: 'recurring.recovered', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
+    dedupeKey: `recurring.recovered:${r.id}:${cycleMonth}`,
+    payload: { cycle: cycleMonth, failures, amount, chargeId: success.chargeId, lastFailureClass: r.lastFailureClass },
+  });
 }
 
 async function postponeOneDay(r: RecurringDonation, today: string, note: string) {
@@ -634,12 +813,37 @@ async function runOne(
       continue;
     }
     // 실패 확정: 실패 기록으로 바꾸고 그 주기의 멱등키를 풀어 재시도를 허용한다.
-    await prisma.recurringRun.update({ where: { id: run.id }, data: { status: 'FAILED', reason: run.reason ?? '결제 실패 확정' } });
+    // 원인은 기록만 한다(이 경로의 횟수 처리는 예전 그대로 — 대사로 확정된 실패는 대부분 원인을 모른다).
+    const classified = run.chargeId ? await classifyChargeFailure(run.chargeId).catch(() => null) : null;
+    await prisma.recurringRun.update({
+      where: { id: run.id },
+      data: { status: 'FAILED', reason: run.reason ?? '결제 실패 확정', failureClass: classified?.failureClass ?? 'UNKNOWN_REASON', resultCode: classified?.resultCode ?? null },
+    });
     await prisma.idempotencyKey.deleteMany({ where: { scope: 'charge', key: `recurring:${r.id}:${run.monthKey}` } });
     // 이 주기의 실패라면 약정의 실패 횟수에도 반영한다(아래 (4) 의 판정 근거).
     if (run.monthKey === cycle) {
       await prisma.recurringDonation.update({ where: { id: r.id }, data: { failCount: { increment: 1 } } });
       r.failCount += 1;
+    }
+  }
+
+  // (3.5) 조치 필요(계좌·인증·결제수단 문제). 자동 재시도하지 않는다.
+  //  - 실패 뒤 결제수단을 새로 등록(재인증)했으면 실패 횟수를 0 으로 돌리고 지금 출금을 시도한다
+  //    (등록 이벤트 소비자가 다음 출금일을 오늘로 당겨 둔다 — 소비자가 늦어도 여기서 다시 확인한다).
+  //  - 아니면 기한까지 기다리고, 기한이 지나면 정지한다(정지 문자·이벤트는 예전 정지 경로와 같다).
+  if (r.recoveryState === 'ACTION_REQUIRED') {
+    if (await paymentMethodRenewedSince(r)) {
+      await prisma.recurringDonation.update({ where: { id: r.id }, data: { recoveryState: 'RETRYING', actionDeadlineOn: null, failCount: 0 } });
+      r.failCount = 0;
+    } else {
+      const deadline = r.actionDeadlineOn ? r.actionDeadlineOn.toISOString().slice(0, 10) : ctx.today;
+      if (deadline > ctx.today) {
+        await prisma.recurringDonation.update({ where: { id: r.id }, data: { nextChargeOn: dateCol(deadline) } });
+        return { status: 'SKIPPED', reason: '결제수단 조치 대기' };
+      }
+      const cls = (RECURRING_FAILURE_CLASSES as readonly string[]).includes(r.lastFailureClass ?? '') ? (r.lastFailureClass as RecurringFailureClass) : 'UNKNOWN_REASON';
+      await suspendAfterFailure(r, cycle, { failCount: r.failCount, lastFailure: r.lastFailure ?? '결제수단 조치 기한 지남', failureClass: cls, chargeId: null });
+      return { status: 'FAILED', reason: '결제수단 조치 기한 지남', suspended: true };
     }
   }
 
@@ -652,7 +856,7 @@ async function runOne(
   const failures = Math.min(failedRuns, r.failCount);
   if (failures >= RECURRING_MAX_ATTEMPTS) {
     const suspendedAt = new Date();
-    await prisma.recurringDonation.update({ where: { id: r.id }, data: { status: 'SUSPENDED', suspendedAt, failCount: failures } });
+    await prisma.recurringDonation.update({ where: { id: r.id }, data: { status: 'SUSPENDED', suspendedAt, failCount: failures, recoveryState: 'NONE', actionDeadlineOn: null } });
     await sendMtForPayer(r.payerId, tpl.tplRecurringSuspended({ merchantName: r.merchant.displayName, amount: r.amount }), null, r.merchantId).catch(() => undefined);
     await emitDomainEventSafe({
       merchantId: r.merchantId, type: 'recurring.suspended', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
@@ -772,31 +976,136 @@ async function runOne(
   }
 
   // 실패 확정: 멱등키를 지워 재시도가 새 결제 건을 만들 수 있게 한다. 실패한 결제 건은 이력으로 남긴다.
-  await prisma.recurringRun.update({ where: { id: run.id }, data: { status: 'FAILED', reason: paid.message } });
+  // 원인을 분류해 실행 기록에 남기고, 원인별 정책(recurring-failure.ts 표)으로 다음 시도를 정한다.
+  const { failureClass, resultCode } = await classifyChargeFailure(chargeId).catch(() => ({ failureClass: 'UNKNOWN_REASON' as const, resultCode: null }));
+  await prisma.recurringRun.update({ where: { id: run.id }, data: { status: 'FAILED', reason: paid.message, failureClass, resultCode } });
   await prisma.idempotencyKey.deleteMany({ where: { scope: 'charge', key: idemKey } });
 
-  const failCount = failures + 1;
-  if (failCount >= RECURRING_MAX_ATTEMPTS) {
+  return applyFailurePolicy(r, { cycle, today: ctx.today, failures, failureClass, message: paid.message, chargeId });
+}
+
+/** 결제 실패 후 원인별 처리. UNKNOWN_REASON 은 예전과 똑같다(3일 뒤, 3회면 정지, 같은 문자). */
+async function applyFailurePolicy(
+  r: DueRow,
+  f: { cycle: string; today: string; failures: number; failureClass: RecurringFailureClass; message: string; chargeId: string },
+): Promise<{ status: RecurringOutcome; reason?: string; chargeId?: string; suspended?: boolean }> {
+  const policy = RECURRING_FAILURE_POLICY[f.failureClass];
+  const nextCycleDate = cycleDate(nextCycleOf(f.cycle), r.dayOfMonth);
+  const recoveryStartedAt = r.recoveryStartedAt ?? new Date();
+
+  // 자동 재시도해도 소용없는 원인: 조치 필요로 표시하고 기한까지 기다린다(이번 주기 안).
+  if (needsPayerAction(f.failureClass)) {
+    const deadline = actionDeadline(f.today, nextCycleDate);
     await prisma.recurringDonation.update({
       where: { id: r.id },
-      data: { status: 'SUSPENDED', suspendedAt: new Date(), failCount, lastFailure: paid.message },
+      data: {
+        failCount: f.failures + 1, lastFailure: f.message, lastFailureClass: f.failureClass,
+        recoveryState: 'ACTION_REQUIRED', recoveryStartedAt, actionDeadlineOn: dateCol(deadline), nextChargeOn: dateCol(deadline),
+      },
     });
-    await sendMtForPayer(r.payerId, tpl.tplRecurringSuspended({ merchantName: r.merchant.displayName, amount: r.amount }), chargeId, r.merchantId).catch(() => undefined);
-    return { status: 'FAILED', reason: paid.message, chargeId, suspended: true };
+    await notifyRecurringFailure(r, policy.notice, { date: deadline, reason: f.message, chargeId: f.chargeId });
+    return { status: 'FAILED', reason: f.message, chargeId: f.chargeId };
   }
 
-  const retry = addDaysKey(ctx.today, RECURRING_RETRY_DAYS);
+  let counted = policy.counts === true;
+  if (policy.counts === 'AFTER_FREE_STREAK') counted = (await temporaryStreak(r.id, f.cycle)) > TEMPORARY_FREE_STREAK;
+  const failCount = f.failures + (counted ? 1 : 0);
+  if (counted && failCount >= RECURRING_MAX_ATTEMPTS) {
+    await suspendAfterFailure(r, f.cycle, { failCount, lastFailure: f.message, failureClass: f.failureClass, chargeId: f.chargeId });
+    return { status: 'FAILED', reason: f.message, chargeId: f.chargeId, suspended: true };
+  }
+
+  const retry = retryDateFor(f.failureClass, f.today, nextCycleDate) ?? addDaysKey(f.today, RECURRING_RETRY_DAYS);
   await prisma.recurringDonation.update({
     where: { id: r.id },
-    data: { failCount, lastFailure: paid.message, nextChargeOn: dateCol(retry) },
+    data: {
+      failCount, lastFailure: f.message, lastFailureClass: f.failureClass,
+      recoveryState: 'RETRYING', recoveryStartedAt, actionDeadlineOn: null, nextChargeOn: dateCol(retry),
+    },
   });
-  await sendMtForPayer(
-    r.payerId,
-    tpl.tplRecurringFailed({ merchantName: r.merchant.displayName, amount: r.amount, reason: paid.message, retryDate: retry }),
-    chargeId,
-    r.merchantId,
-  ).catch(() => undefined);
-  return { status: 'FAILED', reason: paid.message, chargeId };
+  await notifyRecurringFailure(r, policy.notice, { date: retry, reason: f.message, chargeId: f.chargeId });
+  return { status: 'FAILED', reason: f.message, chargeId: f.chargeId };
+}
+
+/** 이 주기의 마지막 실행부터 거슬러 연속된 결제사 일시 오류 수(건너뜀·확인 대기 기록은 건너뛰고 센다). */
+async function temporaryStreak(recurringId: string, cycle: string): Promise<number> {
+  const runs = await prisma.recurringRun.findMany({
+    where: { recurringId, monthKey: cycle, status: { in: ['FAILED', 'SUCCESS'] } },
+    orderBy: { attempt: 'desc' },
+    take: 20,
+    select: { status: true, failureClass: true },
+  });
+  let n = 0;
+  for (const run of runs) {
+    if (run.status === 'FAILED' && run.failureClass === 'PROVIDER_TEMPORARY') n += 1;
+    else break;
+  }
+  return n;
+}
+
+/** 조치 필요로 바뀐 뒤 결제수단을 새로 등록(재인증)했는가 */
+async function paymentMethodRenewedSince(r: RecurringDonation): Promise<boolean> {
+  const lastAction = await prisma.recurringRun.findFirst({
+    where: {
+      recurringId: r.id,
+      status: 'FAILED',
+      failureClass: { in: RECURRING_FAILURE_CLASSES.filter((c) => needsPayerAction(c)) },
+    },
+    orderBy: { ranAt: 'desc' },
+    select: { ranAt: true },
+  });
+  const since = lastAction?.ranAt ?? r.recoveryStartedAt ?? new Date(0);
+  const token = await prisma.paymentMethodToken.findFirst({
+    where: { payerId: r.payerId, status: 'ACTIVE', registeredAt: { gt: since } },
+    select: { id: true },
+  });
+  return Boolean(token);
+}
+
+/** 실패로 정지. 정지 문자 + recurring.suspended(주기당 1회, (4) 경로와 같은 키) */
+async function suspendAfterFailure(
+  r: DueRow,
+  cycle: string,
+  f: { failCount: number; lastFailure: string; failureClass: RecurringFailureClass; chargeId: string | null },
+) {
+  await prisma.recurringDonation.update({
+    where: { id: r.id },
+    data: {
+      status: 'SUSPENDED', suspendedAt: new Date(), failCount: f.failCount, lastFailure: f.lastFailure,
+      lastFailureClass: f.failureClass, recoveryState: 'NONE', actionDeadlineOn: null,
+    },
+  });
+  await sendMtForPayer(r.payerId, tpl.tplRecurringSuspended({ merchantName: r.merchant.displayName, amount: r.amount }), f.chargeId, r.merchantId).catch(() => undefined);
+  // 예전에는 3번째 실패로 정지될 때 이 이벤트가 빠져 재개 안내 저니가 시작되지 않았다(2026-11-09 함께 고침).
+  await emitDomainEventSafe({
+    merchantId: r.merchantId, type: 'recurring.suspended', subjectType: 'recurring', subjectId: r.id, payerId: r.payerId,
+    dedupeKey: `recurring.suspended:${r.id}:${cycle}`, payload: { reason: 'PAYMENT_FAILED', failures: f.failCount, failureClass: f.failureClass },
+  });
+}
+
+/** 원인별 후원자 안내 문자. 일시 오류(NONE)는 보내지 않는다. 복구 링크를 만들지 못하면 마이페이지 주소로 안내한다. */
+async function notifyRecurringFailure(r: DueRow, notice: PayerNotice, x: { date: string; reason: string; chargeId: string }) {
+  if (notice === 'NONE') return;
+  const merchantName = r.merchant.displayName;
+  let template: tpl.TemplateOutput;
+  if (notice === 'GENERIC') {
+    template = tpl.tplRecurringFailed({ merchantName, amount: r.amount, reason: x.reason, retryDate: x.date });
+  } else {
+    const link = await issueRecoveryLink(r.id, r.payerId).catch((e) => {
+      logger.error('정기후원 복구 링크 생성 실패', { recurringId: r.id, message: (e as Error).message });
+      return null;
+    });
+    const url = link?.url ?? `${env.baseUrl}/my/recurring`;
+    template =
+      notice === 'INSUFFICIENT'
+        ? tpl.tplRecurringInsufficient({ merchantName, amount: r.amount, retryDate: x.date, link: url })
+        : notice === 'ACCOUNT'
+          ? tpl.tplRecurringAccountProblem({ merchantName, amount: r.amount, deadline: x.date, link: url })
+          : notice === 'AUTH'
+            ? tpl.tplRecurringAuthRequired({ merchantName, amount: r.amount, deadline: x.date, link: url })
+            : tpl.tplRecurringNoMethod({ merchantName, amount: r.amount, deadline: x.date, link: url });
+  }
+  await sendMtForPayer(r.payerId, template, x.chargeId, r.merchantId).catch(() => undefined);
 }
 
 export const recurringStatusLabel = {

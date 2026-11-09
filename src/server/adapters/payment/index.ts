@@ -228,6 +228,10 @@ export const mockPaymentAdapter: PaymentAdapter = {
     if (tail === 999) {
       return { ok: false, code: 'M0001', message: '잔액 부족 또는 출금 불가 계좌입니다.' };
     }
+    // 정기후원 실패 원인별 복구 검수용(2026-11-09, services/recurring-failure.ts 의 mock 코드표).
+    if (tail === 991) return { ok: false, code: 'M0002', message: '[MOCK] 해지·정지된 계좌입니다.' };
+    if (tail === 992) return { ok: false, code: 'M0003', message: '[MOCK] 추가 인증이 필요합니다.' };
+    if (tail === 993) return { ok: false, code: 'M0004', message: '[MOCK] 결제사 점검 중입니다.' };
     if (tail === 888 || tail === 777 || tail === 666) {
       timeoutOrders.set(req.orderNo, tail === 888 ? 'APPROVED' : tail === 777 ? 'FAILED' : 'UNKNOWN');
       if (tail === 888 || tail === 666) {

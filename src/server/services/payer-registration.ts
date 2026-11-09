@@ -8,6 +8,7 @@ import { resolveSecureLink, consumeSecureLink } from './secure-link';
 import { validatePayerName } from './payer-name';
 import { currentTermsList } from './terms';
 import { suspendRecurringForPayer } from './recurring';
+import { emitDomainEventSafe } from './events';
 import type { ConsentType, PaymentMethodKind } from '@/generated/prisma/enums';
 
 /**
@@ -241,6 +242,16 @@ export async function completeRegistration(input: {
 
   // 링크는 1회만 사용 가능
   await consumeSecureLink(ctx.linkId, input.ip, input.userAgent);
+
+  // 후속(조치 필요 정기후원 재시도 당기기 등)은 소비자로만 붙인다. 기록 실패가 등록 결과를 바꾸지 않는다.
+  await emitDomainEventSafe({
+    merchantId: ctx.merchantId ?? '',
+    type: 'payment_method.registered',
+    subjectType: 'payment_method',
+    subjectId: token.id,
+    payerId: ctx.payerId,
+    payload: { method: token.method },
+  });
 
   return {
     tokenId: token.id,

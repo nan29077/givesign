@@ -4,11 +4,12 @@ import { prisma } from '@/server/db';
 import { Badge, Card, EmptyState } from '@/components/ui';
 import { DonorActionForm } from '@/components/my/donor-action-form';
 import { toggleNoticeOptOutAction } from '@/app/actions/volunteer';
+import { toggleMarketingConsentAction } from '@/app/actions/marketing-consent';
 import { formatKst } from '@/lib/datetime';
 
 export const dynamic = 'force-dynamic';
 
-/** 내 약정서·신청서 + 기관별 월간 안내 수신 설정 */
+/** 내 약정서·신청서 + 기관별 월간 안내 수신 설정 + 기관별 (선택) 소식·후원 안내 수신 동의 */
 export default async function MyAgreementsPage() {
   const { payerId } = await requirePayerContext('/my/agreements');
   if (!payerId) return <EmptyState title={NO_PAYER_TITLE} description={NO_PAYER_DESC} />;
@@ -49,6 +50,30 @@ export default async function MyAgreementsPage() {
             </li>
           ))}
           {links.length === 0 ? <li className="py-3 text-[13px] text-ink-400">후원한 기관이 아직 없습니다.</li> : null}
+        </ul>
+      </Card>
+      <Card>
+        <h2 className="text-[16px] font-black text-ink-900">기관 소식·후원 안내 받기 (선택 동의)</h2>
+        <p className="mt-1 text-[13px] text-ink-500">
+          후원할 때 선택해서 동의한 기관별 소식·후원 안내 수신 동의입니다. 위의 &lsquo;월간 후원 안내&rsquo;(내 후원 내역 알림)와는 따로 관리되며, 언제든 끄고 켤 수 있습니다. 동의하지 않아도 후원·영수증·출금 안내는 그대로 받습니다.
+        </p>
+        <ul className="mt-3 divide-y divide-ink-100">
+          {links.map((l) => {
+            const agreed = Boolean(l.marketingConsentAt && !l.marketingConsentWithdrawnAt);
+            return (
+              <li key={l.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span className="text-[14px] font-semibold">
+                  {l.merchant.displayName} {agreed ? <Badge tone="success">동의</Badge> : <Badge>동의 안 함</Badge>}
+                  {agreed && l.marketingConsentAt ? <span className="ml-1 text-[11.5px] font-normal text-ink-400">{formatKst(l.marketingConsentAt, false)}부터</span> : null}
+                </span>
+                <DonorActionForm action={toggleMarketingConsentAction} submitLabel={agreed ? '동의 철회' : '동의하기'} size="sm" variant="secondary">
+                  <input type="hidden" name="merchantId" value={l.merchant.id} />
+                  <input type="hidden" name="agree" value={agreed ? '0' : '1'} />
+                </DonorActionForm>
+              </li>
+            );
+          })}
+          {links.length === 0 ? <li className="py-3 text-[13px] text-ink-400">이어진 기관이 아직 없습니다.</li> : null}
         </ul>
       </Card>
     </div>

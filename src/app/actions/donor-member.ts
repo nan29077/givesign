@@ -17,6 +17,7 @@ import {
   withdrawDonorMember,
 } from '@/server/services/donor-members';
 import { logger } from '@/lib/logger';
+import { syncDonorMemberMarketing } from '@/server/services/marketing-consent';
 
 /**
  * 기관 후원페이지 회원 액션. 모든 액션은 폼의 기관 코드로 기관을 다시 찾고,
@@ -127,6 +128,8 @@ export async function donorPhoneConfirmAction(_prev: DonorPhoneState, f: FormDat
   if (!org || !member) return { ok: false, message: '로그인이 필요합니다.' };
   try {
     const masked = await confirmDonorPhoneOtp(member, s(f, 'otp'));
+    // 가입 때 체크한 (선택) 소식 수신 동의를 번호가 확인된 후원자에게 옮긴다(실패해도 인증은 유지).
+    await syncDonorMemberMarketing(member.id).catch((e) => logger.error('후원 회원 소식 수신 동의 연결 실패', { message: (e as Error).message }));
     revalidatePath(`/donate/${org.code}/my`);
     return { ok: true, linked: true, phoneMasked: masked, message: `${masked} 번호를 인증했습니다. 이 번호로 보낸 ${org.displayName} 후원 내역이 표시됩니다.` };
   } catch (e) {

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { HeartHandshake, MessageSquareText, Phone, Receipt, Repeat, ShieldCheck } from 'lucide-react';
+import { BellRing, HeartHandshake, MessageSquareText, Phone, Receipt, Repeat, ShieldCheck } from 'lucide-react';
 import { DonorShell } from '@/components/public/donor-shell';
 import { DonorPhoneLinkForm, DonorWithdrawForm } from '@/components/public/donor-auth-forms';
 import { GeneratedAvatar } from '@/components/profile/generated-avatar';
@@ -10,6 +10,9 @@ import { recurringStatusLabel } from '@/server/services/recurring';
 import { formatNumber, formatWon } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
 import { loadDonorContext } from '../_shell';
+import { DonorActionForm } from '@/components/my/donor-action-form';
+import { donorMarketingToggleAction } from '@/app/actions/marketing-consent';
+import { donorMemberMarketingState } from '@/server/services/marketing-consent';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: '후원 회원 마이페이지', robots: { index: false } };
@@ -27,7 +30,7 @@ export default async function DonorMyPage({ params, searchParams }: { params: Pr
   const base = `/donate/${ctx.org.code}`;
   if (!ctx.viewer) redirect(`${base}/login?next=${encodeURIComponent(`${base}/my`)}`);
   const me = ctx.viewer;
-  const data = await donorMemberOverview(me);
+  const [data, marketing] = await Promise.all([donorMemberOverview(me), donorMemberMarketingState(me.id)]);
 
   return (
     <DonorShell org={ctx.shellOrg} viewer={me} active="my" color={ctx.color} backgroundUrl={ctx.backgroundUrl}>
@@ -121,6 +124,21 @@ export default async function DonorMyPage({ params, searchParams }: { params: Pr
             <p className="mt-2 text-[11.5px] text-ink-400">영수증 원본은 발급 때 받은 문자 링크에서 열람·출력할 수 있습니다.</p>
           </section>
         ) : null}
+
+        <section className="rounded-[24px] border border-ink-100 bg-white p-5">
+          <h2 className="flex items-center gap-2 text-[15px] font-black text-ink-900"><BellRing size={17} strokeWidth={1.7} /> 소식·후원 안내 받기 (선택)</h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-500">
+            {ctx.org.displayName}의 소식과 후원 안내를 문자·알림톡으로 받을지 정합니다. 지금은 <b>{marketing.agreed ? '동의함' : '동의 안 함'}</b> 상태입니다.
+            출금·영수증 안내나 매월 받는 후원 내역 안내와는 별개이며, 언제든 바꿀 수 있습니다.
+            {!marketing.linkedPayerId ? ' 휴대폰 인증으로 후원 내역이 이어지면 같은 설정이 후원자 정보에도 반영됩니다.' : ''}
+          </p>
+          <div className="mt-3">
+            <DonorActionForm action={donorMarketingToggleAction} submitLabel={marketing.agreed ? '동의 철회' : '동의하기'} size="sm" variant="secondary">
+              <input type="hidden" name="code" value={ctx.org.code} />
+              <input type="hidden" name="agree" value={marketing.agreed ? '0' : '1'} />
+            </DonorActionForm>
+          </div>
+        </section>
 
         <section className="rounded-[24px] border border-ink-100 bg-white p-5">
           <h2 className="flex items-center gap-2 text-[15px] font-black text-ink-900"><ShieldCheck size={17} strokeWidth={1.7} /> 계정</h2>

@@ -57,7 +57,7 @@ export default async function MyRecurringPage() {
                 <span className="ml-auto text-[18px] font-black tabular-nums text-ink-900">{formatWon(r.amount)}<span className="text-[12px] font-bold text-ink-400"> / 매월 {r.dayOfMonth}일</span></span>
               </div>
               <p className="text-[12.5px] text-ink-500">
-                {r.status === 'ACTIVE' ? `다음 출금 ${r.nextChargeOn.toISOString().slice(0, 10)}` : r.status === 'SUSPENDED' ? `출금 실패로 멈춤 — ${r.lastFailure ?? ''}` : r.status === 'PAUSED' ? `${formatKst(r.pausedAt, false)} 부터 일시정지` : `${formatKst(r.canceledAt, false)} 해지`}
+                {r.status === 'ACTIVE' ? `다음 출금 ${r.nextChargeOn.toISOString().slice(0, 10)}` : r.status === 'SUSPENDED' ? `출금 실패로 멈춤 — ${r.lastFailure ?? ''}` : r.status === 'PAUSED' ? `${formatKst(r.pausedAt, false)} 부터 일시정지${r.resumeOn ? ` · ${r.resumeOn.toISOString().slice(0, 10)} 다시 시작` : ''}` : `${formatKst(r.canceledAt, false)} 해지`}
                 {' · '}누적 {formatWon(r.totalAmount)} ({r.successCount}회) · 시작 {formatKst(r.createdAt, false)}
               </p>
 

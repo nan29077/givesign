@@ -9,6 +9,7 @@ import {
   checkWebPinChargeStatus,
   type WebPinState,
 } from '@/app/actions/web-charge-pin';
+import { MarketingConsentField } from '@/components/public/marketing-consent-field';
 
 /**
  * 후원 페이지 PC 웹 결제 패널 — 결제사 PIN 인증 흐름.
@@ -376,6 +377,7 @@ export function WebChargePinPanel({
                   required
                   className={inputClass}
                 />
+                <MarketingConsentField merchantName={merchantName} />
                 <button type="submit" disabled={startPending || !composeValid} className={ctaClass}>
                   <Send size={17} strokeWidth={1.8} />
                   {startPending ? 'PIN 링크 발송 중...' : 'PIN 입력 링크 문자로 받기'}

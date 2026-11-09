@@ -14,6 +14,7 @@ import {
 import { deleteReceiptProfile, rotateReceiptToken, upsertReceiptProfile } from '@/server/services/receipts';
 import { normalizeMerchantCode } from '@/lib/id';
 import { currentAttribution } from '@/server/attribution';
+import { marketingChecked, recordMarketingConsentIfChecked } from '@/server/services/marketing-consent';
 
 /**
  * 후원자(마이페이지) — 정기후원 · 기부금영수증 액션.
@@ -83,6 +84,8 @@ export async function createRecurringAction(_prev: DonorActionState, f: FormData
       contentItemId: attribution?.contentItemId ?? null,
     });
     if (!r.ok) return { ok: false, message: r.message };
+    // (선택) 소식 수신 동의 — 체크했을 때만 기록, 체크하지 않으면 기존 동의를 그대로 둔다.
+    await recordMarketingConsentIfChecked(marketingChecked(f.get('marketingConsent')), { payerId: ctx.payerId, merchantId: merchant.id, source: 'DONATE', ...meta });
     revalidatePath('/my/recurring');
     return { ok: true, message: `정기후원이 등록되었습니다. 첫 출금은 ${r.firstDate} 입니다.`, redirectTo: '/my/recurring' };
   } catch (e) {

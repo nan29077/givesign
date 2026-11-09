@@ -14,6 +14,7 @@ import { createWebCharge } from '@/server/services/web-charge';
 import { sendMt } from '@/server/services/charge-flow';
 import { expirePinSessionIfStale } from '@/server/services/pin-authorization';
 import * as tpl from '@/server/services/mt-templates';
+import { marketingChecked, recordMarketingIntent } from '@/server/services/marketing-consent';
 
 /**
  * 결제 페이지 PC 웹 결제 — PIN 인증 흐름 서버 액션.
@@ -190,6 +191,8 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
   }
 
   await setPinCookie(result.chargeId);
+  // (선택) 소식 수신 동의: 번호 본인 확인 전이라 결제 건에 의사로만 남기고, PIN 결제가 성공하면 동의로 반영한다.
+  await recordMarketingIntent(marketingChecked(formData.get('marketingConsent')), { chargeId: result.chargeId, source: 'DONATE' });
   logger.info('결제 페이지 웹 결제 PIN 링크 발송', { phone: masked, chargeId: result.chargeId });
 
   return {
