@@ -447,7 +447,7 @@ export async function createEnvelope(input: CreateEnvelopeInput) {
     if (needBody || needPdf) {
       const m = await prisma.merchantProfile.findUnique({ where: { id: input.merchantId }, select: { displayName: true, representativeName: true } });
       const values: MergeValues = {
-        기관명: m?.displayName ?? null, 대표자: m?.representativeName ?? null, 발급일: kstDateKey(), 후원자명: signers[0]!.name, ...(input.merge ?? {}),
+        기관명: m?.displayName ?? null, 대표자: m?.representativeName ?? null, 발급일: kstDateKey(), 후원자명: signers[0]!.name, 연락처: maskPhone(signers[0]!.phone), ...(input.merge ?? {}),
       };
       if (needBody) body = renderMergeText(body, values).text;
       if (needPdf) {
@@ -772,6 +772,20 @@ export type SignerLoad =
       closed: boolean;
     };
 
+const SIGNER_INCLUDE = {
+  envelope: {
+    include: {
+      merchant: { select: { displayName: true, code: true, avatarUrl: true } },
+      signers: { orderBy: { order: 'asc' }, select: { id: true, order: true, role: true, nameMasked: true, status: true, signedAt: true } },
+    },
+  },
+} as const;
+
+/** 문서 묶음 서명 화면(4차 J2)이 서명자를 id 로 읽는다. 본인확인 증표(accessProof)는 그대로 요구한다. */
+async function findSignerById(signerId: string) {
+  return prisma.eDocSigner.findUnique({ where: { id: signerId }, include: SIGNER_INCLUDE });
+}
+
 async function findSigner(token: string) {
   if (!/^[A-Za-z0-9_-]{20,128}$/.test(token)) return null;
   return prisma.eDocSigner.findUnique({
@@ -788,7 +802,15 @@ async function findSigner(token: string) {
 }
 
 export async function loadSigner(token: string): Promise<SignerLoad> {
-  const signer = await findSigner(token);
+  return loadFoundSigner(await findSigner(token));
+}
+
+/** 문서 묶음(4차 J2): 서명자 id 로 읽는다. 링크 토큰 대신 묶음 본인확인 뒤 서버가 만든 증표로 서명한다. */
+export async function loadSignerById(signerId: string): Promise<SignerLoad> {
+  return loadFoundSigner(await findSignerById(signerId));
+}
+
+function loadFoundSigner(signer: Awaited<ReturnType<typeof findSigner>>): SignerLoad {
   if (!signer) return { ok: false, reason: '유효하지 않은 서명 링크입니다. 가장 최근에 받은 문자의 링크를 열어 주세요.' };
   const e = signer.envelope;
   const isPrimary = e.signers[0]?.id === signer.id;
@@ -909,6 +931,10 @@ function documentHashOf(
 
 export async function signAsSigner(input: {
   token: string;
+  /** 문서 묶음 서명(4차 J2): 토큰 대신 서명자 id. proof 는 그대로 검사한다. */
+  signerId?: string;
+  /** 문서 묶음: 문서마다 "서명 완료" 문자를 보내지 않는다(묶음이 끝나면 한 번 보낸다) */
+  quietSigner?: boolean;
   proof: string | undefined;
   values: Record<string, string>;
   signature: string | null;
@@ -916,7 +942,7 @@ export async function signAsSigner(input: {
   ip?: string;
   userAgent?: string;
 }) {
-  const loaded = await loadSigner(input.token);
+  const loaded = input.signerId ? await loadSignerById(input.signerId) : await loadSigner(input.token);
   if (!loaded.ok) throw new EDocError(loaded.reason);
   const { signer: s, snapshot, isPrimary } = loaded;
   if (!checkAccessProof(s.id, s.tokenHash, input.proof)) throw new EDocError('본인확인이 만료되었습니다. 인증번호를 다시 받아 주세요.');
@@ -984,7 +1010,7 @@ export async function signAsSigner(input: {
   try {
     const e = await prisma.eDocEnvelope.findUniqueOrThrow({ where: { id: s.envelopeId }, include: { merchant: { select: { userId: true, displayName: true } }, signers: true } });
     if (outcome.completed) {
-      for (const x of e.signers) {
+      for (const x of input.quietSigner ? [] : e.signers) {
         await sendMtDetailed({ phone: decrypt(x.phoneEnc), template: tplEDocCompleted({ merchantName: e.merchant.displayName, title: e.title }), merchantId: e.merchantId }).catch(() => undefined);
       }
       await notifyUser({ userId: e.merchant.userId, title: '전자문서 서명이 완료되었습니다', body: `「${e.title}」 서명자 ${e.signers.length}명이 모두 서명했습니다.`, linkUrl: `/studio/e-documents/${e.id}` });
@@ -1003,8 +1029,8 @@ export async function signAsSigner(input: {
   return outcome;
 }
 
-export async function declineAsSigner(input: { token: string; proof: string | undefined; reason: string; ip?: string; userAgent?: string }) {
-  const loaded = await loadSigner(input.token);
+export async function declineAsSigner(input: { token: string; signerId?: string; proof: string | undefined; reason: string; ip?: string; userAgent?: string }) {
+  const loaded = input.signerId ? await loadSignerById(input.signerId) : await loadSigner(input.token);
   if (!loaded.ok) throw new EDocError(loaded.reason);
   const s = loaded.signer;
   if (!checkAccessProof(s.id, s.tokenHash, input.proof)) throw new EDocError('본인확인이 만료되었습니다. 인증번호를 다시 받아 주세요.');

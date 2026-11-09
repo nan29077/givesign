@@ -14,6 +14,7 @@ import { registerOfflineDepositConsumers } from './deposits';
 import { registerImpactLegalHandlers } from './impact-legal-approvals';
 import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
 import { registerCampaignSetupHandlers } from './campaign-setup';
+import { registerDocumentBundleHandlers } from './document-bundle-approvals';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -175,5 +176,7 @@ export function registerDefaultConsumers() {
   registerWeeklyPlanApprovalHandlers();
   // 2026-11-12 4차 I: 캠페인 목표 달성 → 감사·결과 안내 준비 승인 요청(campaign-goal-followup), 승인 → 결과 보고 초안만(발송 없음)
   registerCampaignSetupHandlers();
+  // 2026-11-12 4차 J: 문서 묶음 대량 발송 승인 · 충전 뒤 멈춘 서명 문서 재시도 · 묶음 상태 · (기관이 켰을 때만) 약정 → 묶음
+  registerDocumentBundleHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

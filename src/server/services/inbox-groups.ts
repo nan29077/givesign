@@ -411,6 +411,8 @@ function ensureDefaults() {
   def('campaign-result-report', '결과 보고 작성', async (ctx) => (await import('./campaign-setup')).resultReportInboxGroup(ctx.merchantId, ctx.now));
   // 2026-11-12 4차 K4 — 문자로 접수한 문의 중 담당자 답변이 필요한 것
   def('inquiry-reply', '답변이 필요한 문의', async (ctx) => (await import('./inquiry-auto')).inquiryReplyInboxGroup(ctx.merchantId, ctx.now));
+  // 2026-11-12 4차 J — 멈춘 문서 묶음 발송(잔액 부족·발송 전 점검)
+  def('document-bundles', '문서 묶음', async (ctx) => (await import('./document-bundles')).bundlesInboxGroup(ctx.merchantId, ctx.now));
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */

@@ -34,6 +34,8 @@ export interface OcrResult {
   lines: OcrLine[];
   /** 공급자 토큰 사용량(비용 기록용). mock 은 0 */
   usage?: { inputTokens: number; outputTokens: number };
+  /** mock 공급자 결과(글자를 읽지 않았다) — 4차 J 서식 인식이 화면 표시에 쓴다 */
+  mock?: boolean;
 }
 
 export interface OcrInfo extends AdapterInfo {
@@ -76,14 +78,14 @@ export function ocrConfig() {
 export const mockOcrAdapter: OcrAdapter = {
   info: () => ({ provider: 'mock', mode: 'mock', missingCredentials: [], model: 'mock' }),
   async recognize() {
-    return { lines: [], usage: { inputTokens: 0, outputTokens: 0 } };
+    return { lines: [], usage: { inputTokens: 0, outputTokens: 0 }, mock: true };
   },
 };
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
 const OCR_PROMPT = [
-  '이 문서(사업자등록증 또는 고유번호증)에 인쇄된 글자를 줄 단위로 그대로 옮겨라. 고치거나 추측해 채우지 않는다.',
+  '이 문서(사업자등록증·고유번호증 또는 기관 서식)에 인쇄된 글자를 줄 단위로 그대로 옮겨라. 고치거나 추측해 채우지 않는다.',
   '각 줄의 위치는 그 쪽 안의 비율 좌표(0~1, 왼쪽 위 기준)로 적는다. 쪽 번호는 1부터.',
   '출력은 설명·코드 블록 없이 JSON 객체 하나: {"lines": [{"text": "줄 글자", "page": 1, "x": 0.1, "y": 0.2, "w": 0.5, "h": 0.03, "confidence": 0.95}]}',
 ].join('\n');

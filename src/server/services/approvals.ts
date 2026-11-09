@@ -33,7 +33,9 @@ export type ApprovalKind =
   | 'WEEKLY_PLAN_SLOT'
   | 'WEEKLY_PLAN_TOPIC'
   // 2026-11-12 4차 I: 캠페인 목표 달성 → 감사·결과 안내 초안 준비(승인해도 초안만 — 발송 없음)
-  | 'CAMPAIGN_GOAL_FOLLOWUP';
+  | 'CAMPAIGN_GOAL_FOLLOWUP'
+  // 2026-11-12 4차 J: 업무별 문서 묶음 대량 발송(확인 화면에서 이용요금 예측을 본 뒤 승인 → 배치가 나눠 보냄)
+  | 'BUNDLE_SEND';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -48,6 +50,7 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   WEEKLY_PLAN_SLOT: '주간 계획 — 콘텐츠 슬롯 추가',
   WEEKLY_PLAN_TOPIC: '주간 계획 — 콘텐츠 주제 제안',
   CAMPAIGN_GOAL_FOLLOWUP: '캠페인 목표 달성 — 감사·결과 안내 준비',
+  BUNDLE_SEND: '문서 묶음 발송',
 };
 
 export interface ApprovalRow {

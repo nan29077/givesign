@@ -20,7 +20,7 @@ import type { DocumentTemplate } from '@/generated/prisma/client';
  */
 
 /** 서명을 받아야 하는 용도(전자문서 센터 봉투로 보낸다). 나머지는 열람 링크로 보낸다. */
-export const SIGNATURE_PURPOSES: readonly DocumentPurpose[] = ['SUPPORT_AGREEMENT', 'VOLUNTEER_APPLICATION', 'RECURRING_CHANGE', 'PORTRAIT_CONSENT'];
+export const SIGNATURE_PURPOSES: readonly DocumentPurpose[] = ['SUPPORT_AGREEMENT', 'VOLUNTEER_APPLICATION', 'RECURRING_CHANGE', 'PORTRAIT_CONSENT', 'PRIVACY_CONSENT', 'DEBIT_CONSENT'];
 
 export function purposeNeedsSignature(purpose: DocumentPurpose): boolean {
   return SIGNATURE_PURPOSES.includes(purpose);
@@ -151,6 +151,7 @@ export function mergeValuesFromContext(ctx: MergeContext, issuer: IssuerMerge, i
     보고내용: ctx.reportBody ?? null,
     참여내역: ctx.participation ?? null,
     사용요약: ctx.usageSummary ?? null,
+    연락처: ctx.phoneMasked ?? null,
   };
 }
 

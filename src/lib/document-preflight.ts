@@ -58,6 +58,9 @@ export const PURPOSE_REQUIRED_FIELDS: Record<string, readonly string[]> = {
   // 2026-11-09 3차 H — 정보성 안내
   IMPACT_REPORT: ['후원자명', '기관명', '보고내용'],
   ANNUAL_DONATION_NOTICE: ['후원자명', '기관명', '귀속연도'],
+  // 2026-11-12 4차 J — 묶음 문서(동의서)
+  PRIVACY_CONSENT: ['후원자명', '기관명'],
+  DEBIT_CONSENT: ['후원자명', '기관명', '금액'],
 };
 
 /** 정보성 안내 용도(후원 권유 문구 검사 대상, 2026-11-09 3차 H). 다른 용도의 점검 결과는 바뀌지 않는다. */
@@ -288,6 +291,7 @@ export function stressSampleValues(issuedAt = new Date()): Record<string, string
     귀속연도: String(new Date(issuedAt.getTime() + 9 * 3_600_000).getUTCFullYear() - 1),
     영수증번호: 'GIV-8K2M-2026-000123',
     배정: '매주 토요일 오전 9시~12시 · 무료 급식소 배식 지원 및 설거지',
+    연락처: '010-****-5678',
   };
 }
 

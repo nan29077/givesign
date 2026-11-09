@@ -8,6 +8,7 @@ import { edocRoleLabel } from '@/server/services/edoc';
 import { walletOverview } from '@/server/services/edoc-billing';
 import { newId } from '@/lib/id';
 import { composeTemplates } from '../_data';
+import { RecipientsForecastField } from '@/components/studio/edoc-forecast';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +48,10 @@ export default async function BulkEDocPage() {
               </Field>
             </div>
             <Field label="받는 분 목록" required hint="이름, 휴대폰 — 한 줄에 한 명. 엑셀에서 두 열을 복사해 붙여 넣어도 됩니다(탭 구분). 최대 200명.">
-              <Textarea name="recipients" rows={10} required placeholder={'홍길동, 010-1234-5678\n김나눔, 010-2345-6789'} className="font-mono text-[13px]" />
+              <RecipientsForecastField
+                wallet={{ monthlyLeft: o.monthlyLeft, trialLeft: o.wallet.trialRemaining, balance: o.wallet.balance, perDocument: o.plan.perDocument }}
+                placeholder={'홍길동, 010-1234-5678\n김나눔, 010-2345-6789'}
+              />
             </Field>
             <Field label="안내 문구" hint="서명 화면 위쪽에 보입니다.">
               <Textarea name="message" rows={2} maxLength={300} />

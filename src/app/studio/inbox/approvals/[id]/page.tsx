@@ -12,6 +12,8 @@ import { receiptBatchPreview } from '@/server/services/receipt-batch-preview';
 import { decideApprovalAction } from '@/app/actions/journeys';
 import { infoSendPreview } from '@/server/services/impact-legal-approvals';
 import { InfoSendConfirm } from '@/components/studio/impact/info-send-confirm';
+import { bundleSendPreview } from '@/server/services/document-bundle-approvals';
+import { BundleSendConfirm } from '@/components/studio/bundle-send-confirm';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +28,9 @@ export default async function ReceiptBatchConfirmPage({ params }: { params: Prom
   // 2026-11-09 3차 H: 사업 결과 보고·연간 통보 발송은 같은 주소의 확인 화면(대상 수·표본·비용)
   const info = await infoSendPreview(merchantId, id);
   if (info) return <InfoSendConfirm p={info} />;
+  // 2026-11-12 4차 J: 문서 묶음 대량 발송 — 대상 수·이용요금 예측
+  const bundle = await bundleSendPreview(merchantId, id);
+  if (bundle) return <BundleSendConfirm p={bundle} />;
   const p = await receiptBatchPreview(merchantId, id);
   if (!p) notFound();
   const pending = p.approval.status === 'PENDING';

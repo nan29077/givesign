@@ -33,7 +33,7 @@ export const DOMAIN_EVENT_TYPES = [
   'charge.paid',
   /** 환불 완료 — refund.ts(같은 트랜잭션). 소비자: journey-refund(진행 중 저니 취소) */
   'charge.refunded',
-  /** 정기후원 약정 — recurring.ts. 소비자: merchant-alert·supporter-link */
+  /** 정기후원 약정 — recurring.ts. 소비자: merchant-alert·supporter-link·recurring-bundle(기관이 정기후원 신청 묶음을 켰을 때만, 4차 J) */
   'recurring.pledged',
   /** 정기후원 조건 변경 — recurring.ts. 기록만(약정서 새 판은 업무 함수가 직접 만든다) */
   'recurring.changed',
@@ -67,7 +67,7 @@ export const DOMAIN_EVENT_TYPES = [
   'content.published',
   /** 약정서 전자서명 완료 — agreements.ts. 소비자: merchant-alert */
   'agreement.signed',
-  /** 전자문서 봉투 완료 — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign */
+  /** 전자문서 봉투 완료 — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign·bundle-status(문서 묶음 상태, 4차 J) */
   'document.signed',
   /** 연초: 지난해 후원자 중 영수증 정보 미등록자(영수증 배치가 낸다). 소비자: journeys */
   'receipt.info_needed',
@@ -75,7 +75,7 @@ export const DOMAIN_EVENT_TYPES = [
   'volunteer.shift_reminder_due',
   /** 매월 발급 기관: 지난해 결제 건이 모두 영수증에 묶임(영수증 배치, 1~2월). 소비자: journeys(연말 감사장) */
   'receipt.year_closed',
-  /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign */
+  /** 전자서명 봉투가 서명 없이 끝남(거절·만료·취소) — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign·bundle-status(4차 J) */
   'document.closed',
   /** 같은 주기에 실패한 뒤 출금 성공(복구) — recurring.ts, dedupe recurring.recovered:{id}:{cycle}. 기록만(복구 현황 집계는 recurring_run.recovered) */
   'recurring.recovered',
@@ -91,6 +91,11 @@ export const DOMAIN_EVENT_TYPES = [
   'offline.received',
   /** 계좌이체 후원 확정 취소(되돌리기) — deposits.ts(같은 트랜잭션). 소비자: journey-offline-revert(진행 중 감사 저니 취소) */
   'offline.reverted',
+  /**
+   * 전자문서 이용요금 충전·정액 승인(2026-11-12 4차 J3) — edoc-billing.ts approveBillingRequest(같은 트랜잭션), dedupe edoc.balance_added:{신청 id}.
+   * 소비자: edoc-balance-retry(잔액 부족으로 멈춘 서명 문서 발송 — 저니 문서 단계·문서 묶음 — 를 오래된 것부터 지금 잔액만큼 다시 시도)
+   */
+  'edoc.balance_added',
 ] as const;
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
 
