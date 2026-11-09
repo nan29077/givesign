@@ -1,6 +1,7 @@
 'use server';
 
 import { headers } from 'next/headers';
+import { revokeMarketingConsents } from '@/server/services/marketing-consent-revoke';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
@@ -357,6 +358,8 @@ export async function withdrawAccount(_prev: PayerActionState, formData: FormDat
           userAgent: meta.userAgent,
         });
         receiptProfileRemoved = r.removed;
+        // (선택) 소식 수신 동의도 모든 기관에서 철회한다(2026-11-13 5차 L4 — 탈퇴자에게 관계 안내가 나가지 않게, 이력 남김)
+        await revokeMarketingConsents(tx, { payerId: withdrawing.id, source: 'WITHDRAW', ip: meta.ip, userAgent: meta.userAgent });
       }
       // 후원자 프로필은 남기고 계정 연결만 끊는다 (거래 이력 보존)
       await tx.payerProfile.updateMany({

@@ -70,6 +70,24 @@ export const STAFF_INFO_TEMPLATES: Record<string, string> = {
   WEEKLY_REPORT: '주간 운영 보고 안내',
 };
 
+/**
+ * 광고성(PROMOTIONAL, 2026-11-13 5차 L4) — 관계 확장 안내. 정보성(관계·정보형)과 **따로 센다**:
+ * 7일 상한(RELATIONAL_WEEKLY_CAP)·발송 대기열(sendRelational)에 넣지 않고, 관계 안내 서비스(relationship-messages.ts)가
+ * 동의자·기관 승인·후원자당 월 1회·야간(21~8시) 금지·정보성 안내와 같은 날 겹치지 않기를 따로 지킨다. 알림톡으로 보내지 않는다(문자만).
+ */
+export const PROMOTIONAL_TEMPLATES: Record<string, string> = {
+  RELATIONSHIP_MESSAGE: '관계 확장 안내(광고)',
+};
+
+export function isPromotionalTemplate(code: string | null | undefined): boolean {
+  return Boolean(code && Object.hasOwn(PROMOTIONAL_TEMPLATES, code));
+}
+
+/** 같은 날 겹치지 않게 볼 정보성 발송 이력의 템플릿 코드(관계·정보형 문자 + 열람 문서 안내 + 묶음 발송) */
+export function informationalTemplateCodes(): string[] {
+  return [...Object.keys(TEMPLATE_KIND), 'DOCUMENT_ISSUED', OUTBOUND_BUNDLE_TEMPLATE];
+}
+
 export function isStaffInfoTemplate(code: string | null | undefined): boolean {
   return Boolean(code && Object.hasOwn(STAFF_INFO_TEMPLATES, code));
 }

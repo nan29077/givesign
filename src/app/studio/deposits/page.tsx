@@ -18,6 +18,7 @@ import {
 } from '@/app/actions/deposits';
 import { depositOverview, loadMatchContext, offlineMonthTotal, pledgeStatusThisMonth } from '@/server/services/deposits';
 import { formatKst, kstMonthKey } from '@/lib/datetime';
+import { bankFeedStatus } from '@/server/services/bank-feed';
 import { formatNumber, formatWon } from '@/lib/money';
 
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,7 @@ export default async function StudioDepositsPage() {
     .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
     .slice(0, 500);
   const missing = pledges.filter((p) => p.status === 'MISSING');
+  const feed = await bankFeedStatus(merchantId).catch(() => null); // 5차 L3 계좌 자동 조회 상태
 
   return (
     <>
@@ -74,6 +76,18 @@ export default async function StudioDepositsPage() {
           <Link href="/studio/journeys" className="font-bold underline">자동 안내</Link> 의 &quot;계좌이체 확인분에도 보내기&quot; 를 켰을 때만 나갑니다(기본 끔).
         </Notice>
       </div>
+
+      {feed ? (
+        <div className="mb-4">
+          <Notice tone="neutral" title="계좌 거래내역 자동 조회">
+            {!feed.enabled || feed.mock
+              ? '연동 안 됨 — 오픈뱅킹·펌뱅킹 계약 전이라 거래내역 파일을 올려 주세요. 연동되면 하루 한 번 자동으로 가져와 같은 규칙으로 맞춥니다.'
+              : feed.link?.enabled
+                ? `마지막 조회 ${feed.link.lastSyncedAt ? formatKst(feed.link.lastSyncedAt, false) : '-'} · ${feed.link.lastMessage ?? feed.link.lastResult ?? ''}`
+                : '이 기관은 자동 조회가 연결되지 않았습니다. 관리자에게 연결을 요청해 주세요.'}
+          </Notice>
+        </div>
+      ) : null}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="확인 필요" value={`${formatNumber(suggested.length)}건`} tone={suggested.length ? 'warning' : 'neutral'} sub="후보가 있는 입금" />

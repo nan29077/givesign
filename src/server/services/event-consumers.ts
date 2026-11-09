@@ -15,6 +15,8 @@ import { registerImpactLegalHandlers } from './impact-legal-approvals';
 import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
 import { registerCampaignSetupHandlers } from './campaign-setup';
 import { registerDocumentBundleHandlers } from './document-bundle-approvals';
+import { registerDocumentTimestampConsumer } from './document-timestamp';
+import { registerRelationshipHandlers } from './relationship-messages';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -178,5 +180,8 @@ export function registerDefaultConsumers() {
   registerCampaignSetupHandlers();
   // 2026-11-12 4차 J: 문서 묶음 대량 발송 승인 · 충전 뒤 멈춘 서명 문서 재시도 · 묶음 상태 · (기관이 켰을 때만) 약정 → 묶음
   registerDocumentBundleHandlers();
+  // 2026-11-13 5차 L: 완료 문서 시점확인 자리(mock = 시점확인 미연동 기록만) · 관계 확장 안내 승인(전역 스위치 꺼짐 기본)
+  registerDocumentTimestampConsumer();
+  registerRelationshipHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }
