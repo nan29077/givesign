@@ -23,6 +23,9 @@ process.env.ESIGN_PROVIDER = 'mock';
 process.env.CONTENT_PROVIDER = 'mock';
 // 저니 야간 보류는 시각에 따라 결과가 달라지므로 기본으로 끄고, 야간 테스트만 명시적으로 켠다.
 process.env.JOURNEY_QUIET_HOURS = 'off';
+// 통합 발송 관리(2026-11-09 D2): 정보성 안내 묶음 대기 시간은 운영 기본 10분이다. 테스트는 기본으로 0(쌓자마자 그 후원자 대기분을 보냄)으로 두고,
+// 묶음·대기 테스트만 명시적으로 늘린다. 스위치(OUTBOUND_COORDINATOR)는 지정하지 않으면 운영과 같은 on — off 모드는 환경변수로 전체를 다시 돌려 확인한다.
+process.env.OUTBOUND_COALESCE_MINUTES ??= '0';
 
 // 내장 DB(PGlite)는 단일 세션 위에 여러 연결을 다중화(multiplex)한다.
 // 연결 풀이 2개 이상이면 동시 요청의 트랜잭션·prepared statement 가 서로 섞여
