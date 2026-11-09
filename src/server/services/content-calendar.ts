@@ -179,6 +179,8 @@ export async function fillNextSlot(merchantId: string, now = new Date()) {
       where: { id: slot.id },
       data: { itemId: item.id, status, note: item.status === 'FAILED' ? (item.error ?? '생성 실패').slice(0, 300) : item.status === 'REVIEW' ? '검토 대기 — 승인하면 슬롯 시각으로 예약합니다(자동 예약 켬일 때).' : null },
     });
+    // 2안 비교(A/B)를 켠 기관이면 같은 슬롯에 캡션만 다른 B안을 만든다(공급자 호출 없음 · 각각 승인 필요 — 2026-11-11 G).
+    if (item.status === 'REVIEW') await (await import('./content-variants')).createVariantB(item.id).catch((e) => logger.warn('2안 비교 B안 생성 실패', { merchantId, message: (e as Error).message }));
     return { slot: await prisma.contentSlot.findUniqueOrThrow({ where: { id: slot.id } }), reason: null };
   } catch (e) {
     const message = e instanceof ContentError ? e.message : '생성 중 오류가 발생했습니다.';

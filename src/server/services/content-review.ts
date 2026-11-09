@@ -265,6 +265,8 @@ export async function rejectContent(merchantId: string, id: string, userId: stri
     await tx.contentSlot.updateMany({ where: { merchantId, itemId: id }, data: { status: 'ARCHIVED', note: `반려됨 — ${label}` } });
     await tx.contentFeedback.create({ data: { id: newId(), merchantId, itemId: id, kind: 'REJECT', reasonCode: code, note, createdBy: userId } });
   });
+  // 2안 비교에서 한쪽을 반려하면 승인된 다른 안만 진행한다(2026-11-11 G). 실패해도 반려 결과는 그대로.
+  await (await import('./content-variants')).afterVariantDecision(id);
 }
 
 /** 콘텐츠(수정 요청 판 묶음)의 오늘(KST) 수정 요청 횟수 */
@@ -311,6 +313,9 @@ export async function requestContentRevision(merchantId: string, id: string, use
           revisionOf: old.id,
           revisionRootId: rootId,
           revisionRequest: request,
+          // 2안 비교 묶음은 새 판이 이어받는다(2026-11-11 G)
+          variantGroupId: old.variantGroupId,
+          variantLabel: old.variantLabel,
         },
       });
       await tx.contentSlot.updateMany({ where: { merchantId, itemId: old.id }, data: { itemId: freshId, status: 'GENERATING', note: '수정 요청으로 다시 만드는 중' } });

@@ -26,6 +26,7 @@ import { rejectContentAction, reviseContentAction } from '@/app/actions/content-
 import { contentPrecheck } from '@/server/services/content-review';
 import { getContentAdapter } from '@/server/adapters/content';
 import { CONTENT_REJECT_REASON_LABEL, CONTENT_REJECT_REASONS, CONTENT_REVISION_MAX_LEN, CONTENT_REVISIONS_PER_DAY, PAST_SLOT_CHOICE_LABEL } from '@/lib/content-review';
+import { ContentAssetPanel } from '@/components/studio/content-asset-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -289,6 +290,8 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
           </Card>
         </div>
       </div>
+      {/* 소재 연결·초상권 동의서 상태 · 2안 비교 표시 (2026-11-11 G) */}
+      <ContentAssetPanel merchantId={merchantId} itemId={item.id} status={item.status} assetIds={item.assetIds ?? []} variantLabel={item.variantLabel} variantGroupId={item.variantGroupId} />
     </div>
   );
 }

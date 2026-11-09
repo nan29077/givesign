@@ -74,6 +74,8 @@ export default async function StudioContentPage({ searchParams }: { searchParams
         action={
           <div className="flex flex-wrap gap-2">
             <LinkButton href="/studio/content/review" size="sm">주간 승인{c('REVIEW') ? ` (${c('REVIEW')})` : ''}</LinkButton>
+            <LinkButton href="/studio/content/performance" variant="secondary" size="sm">성과</LinkButton>
+            <LinkButton href="/studio/content/assets" variant="secondary" size="sm">소재</LinkButton>
             <LinkButton href="/studio/channels" variant="secondary" size="sm">SNS 채널 연결</LinkButton>
           </div>
         }
@@ -164,6 +166,8 @@ export default async function StudioContentPage({ searchParams }: { searchParams
                   ))}
                 </div>
               </Field>
+              <input type="hidden" name="abTestField" value="1" />
+              <Checkbox name="abTestEnabled" defaultChecked={setting.abTestEnabled} label="2안 비교(A/B)" description="슬롯마다 캡션만 다른 B안을 함께 만듭니다(추가 비용 없음, 월 생성 건수에는 들어갑니다). 두 안을 모두 승인하면 두 플랫폼이나 두 시각에 나눠 게시하고 클릭으로 비교합니다. 한쪽만 승인하면 그 안만 게시합니다." />
               <Checkbox name="autoSchedule" defaultChecked={setting.autoSchedule} label="승인되면 슬롯 시각으로 자동 예약" description="담당자가 승인하는 순간 슬롯 시각으로 예약합니다(슬롯이 아직 미래일 때). 슬롯 시각이 지난 뒤 승인하면 다음 빈 슬롯 · 지금 · 승인만 중에서 고릅니다. SNS 자동 게시가 열려 있어야 합니다." />
             </div>
           </ActionForm></div>

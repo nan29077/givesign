@@ -38,10 +38,15 @@ export const DOCUMENT_PURPOSES = [
    * 이 서식은 기관이 서면 변경·해지 신청을 따로 받을 때 전자문서 센터에서 직접 보내는 용도로만 쓴다.
    */
   'RECURRING_CHANGE',
+  /**
+   * 초상권 이용 동의서(2026-11-11 G). 콘텐츠 소재에 얼굴이 나온 봉사자·직원·행사 참가자에게 받는다 — 서명.
+   * 자동 발송 경로가 없다(전자문서 센터에서 직접 보낸다). 소재는 이 용도의 서명 요청(보냈거나 완료)과 연결해야 콘텐츠에 쓸 수 있다.
+   */
+  'PORTRAIT_CONSENT',
 ] as const;
 
 /** 저니·소비자가 자동으로 보내지 않는 용도(기관이 전자문서 센터에서 직접 보낸다) */
-export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE'];
+export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE', 'PORTRAIT_CONSENT'];
 export type DocumentPurpose = (typeof DOCUMENT_PURPOSES)[number];
 
 export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
@@ -53,6 +58,7 @@ export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
   VOLUNTEER_CONFIRMATION: '자원봉사 활동 확인서',
   VOLUNTEER_THANKS: '자원봉사 감사장',
   RECURRING_CHANGE: '정기후원 변경·해지 신청서',
+  PORTRAIT_CONSENT: '초상권 이용 동의서',
 };
 
 /** 머지 필드 값. 기관명·대표자·발급일은 모듈이 채운다. 금액은 원 단위 정수. */

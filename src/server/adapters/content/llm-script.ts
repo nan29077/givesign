@@ -73,6 +73,7 @@ export function buildScriptPrompt(b: ContentBrief, kind: ContentKind) {
     `[분위기] ${TONE_LABEL[b.tone]}`,
     `[금지어] ${b.bannedWords.length ? b.bannedWords.join(', ') : '(없음)'}`,
     b.avoid?.length ? `[피해야 할 것 — 이 기관 담당자가 예전에 반려·수정 요청한 이유] ${b.avoid.map((a) => a.slice(0, 80)).join(' / ')}` : null,
+    b.wins?.length ? `[잘된 것 — 이 기관 최근 90일 게시 성과 상위 요소, 참고만 하고 숫자를 대본에 쓰지 않는다] ${b.wins.map((w) => w.slice(0, 80)).join(' / ')}` : null,
     b.revisionRequest ? `[담당자 수정 요청 — 이번 판에 반영] ${b.revisionRequest.slice(0, 100)}` : null,
     '',
     `[만들 것] ${rule.describe}`,

@@ -15,6 +15,7 @@ import { formatSlot, WEEKDAY_LABEL } from '@/server/services/content-calendar';
 import { contentPlatformsFor, contentPrecheck, reviewWeeks, type PrecheckRow, type ReviewEntry } from '@/server/services/content-review';
 import { CONTENT_REJECT_REASON_LABEL, CONTENT_REJECT_REASONS, CONTENT_REVISION_MAX_LEN, CONTENT_REVISIONS_PER_DAY } from '@/lib/content-review';
 import { bulkApproveContentAction, rejectContentAction, reviseContentAction } from '@/app/actions/content-review';
+import { assetStatusForItems, CONSENT_STATE_LABEL, type AssetUsability } from '@/server/services/content-assets';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,8 @@ export default async function ContentReviewPage() {
   const checks = new Map<string, PrecheckRow[]>(
     await Promise.all(shown.map(async (e) => [e.item.id, await contentPrecheck(e.item, setting)] as const)),
   );
+  // 소재를 쓴 콘텐츠는 초상권 동의서 상태를 함께 보여 준다(2026-11-11 G)
+  const assets = await assetStatusForItems(merchantId, shown.map((e) => ({ id: e.item.id, assetIds: e.item.assetIds ?? [] })));
   const mock = getContentAdapter().info().mode === 'mock';
   const hasPastDue = shown.some((e) => e.pastDue);
 
@@ -76,7 +79,7 @@ export default async function ContentReviewPage() {
                     <p className="mb-1.5 text-[13px] font-bold text-ink-600">{dayLabel(d.dayKey)}</p>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {d.entries.map((e) => (
-                        <ReviewCard key={e.item.id} entry={e} checks={checks.get(e.item.id) ?? []} platforms={contentPlatformsFor(e.item.kind, setting.platforms)} mock={mock} />
+                        <ReviewCard key={e.item.id} entry={e} checks={checks.get(e.item.id) ?? []} platforms={contentPlatformsFor(e.item.kind, setting.platforms)} mock={mock} assets={assets.get(e.item.id) ?? []} />
                       ))}
                     </div>
                   </div>
@@ -92,7 +95,7 @@ export default async function ContentReviewPage() {
   );
 }
 
-function ReviewCard({ entry, checks, platforms, mock }: { entry: ReviewEntry; checks: PrecheckRow[]; platforms: string[]; mock: boolean }) {
+function ReviewCard({ entry, checks, platforms, mock, assets = [] }: { entry: ReviewEntry; checks: PrecheckRow[]; platforms: string[]; mock: boolean; assets?: AssetUsability[] }) {
   const { item } = entry;
   const blocked = checks.some((c) => c.blocking && !c.ok);
   const failed = checks.filter((c) => !c.ok).length;
@@ -118,6 +121,7 @@ function ReviewCard({ entry, checks, platforms, mock }: { entry: ReviewEntry; ch
             <Badge>{CONTENT_KIND_SHORT[item.kind]}</Badge>
             {entry.pastDue ? <Badge tone="danger">게시 시각 지남</Badge> : null}
             {item.revisionRequest ? <Badge tone="brand">수정 요청 판</Badge> : null}
+            {item.variantLabel ? <Badge tone="brand">2안 비교 {item.variantLabel}안</Badge> : null}
           </div>
           <Link href={`/studio/content/${item.id}`} className="mt-1 block line-clamp-2 text-[13.5px] font-bold text-ink-900">{item.title}</Link>
           <p className="mt-0.5 line-clamp-2 text-[12px] text-ink-500">{captionHead(item.caption)}</p>
@@ -128,6 +132,18 @@ function ReviewCard({ entry, checks, platforms, mock }: { entry: ReviewEntry; ch
           <p className="mt-0.5 text-[11.5px] text-ink-400">{platforms.map((p) => PLATFORM_LABEL[p as keyof typeof PLATFORM_LABEL] ?? p).join(' · ')}</p>
         </div>
       </div>
+
+      {assets.length ? (
+        <ul className="space-y-1 rounded-lg bg-ink-50 px-3 py-2 text-[12px] text-ink-600">
+          {assets.map((u) => (
+            <li key={u.asset.id}>
+              소재 · {u.asset.hasFace ? CONSENT_STATE_LABEL[u.consent] : '얼굴 없음'}
+              {u.usable ? null : <span className="ml-1 font-bold text-danger-500">사용 불가 — {u.reasons[0]}</span>}
+              {u.warnings.map((w) => <span key={w} className="ml-1 text-warning-500">{w}</span>)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {item.revisionRequest ? (
         <p className="rounded-lg bg-ink-50 px-3 py-2 text-[12px] text-ink-600">

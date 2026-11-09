@@ -35,6 +35,8 @@ export interface ContentBrief {
   revisionRequest?: string | null;
   /** 기관의 반려·수정 요청 이유 요약 — 프롬프트 "피해야 할 것"(2026-11-09) */
   avoid?: string[];
+  /** 기관의 최근 90일 성과 상위 요소 — 프롬프트 "잘된 것"(2026-11-11 G, 게시 10건 이상일 때만) */
+  wins?: string[];
 }
 
 /** 장면(카드) 한 장의 글. 그림은 서버가 그린다. */
