@@ -8,6 +8,7 @@ import { addDays, formatKst, kstStartOfDay } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
 import { foldMergedSums } from '@/server/services/payer-merge';
+import { offlineTotalsByPayer } from '@/server/services/deposits';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
   });
   const { sums, mergedCount } = await foldMergedSums(rawSums);
   const payerIds = sums.map((s) => s.payerId!).filter(Boolean);
-  const [payers, recurring, profiles, members, memberCount] = await Promise.all([
+  const [payers, recurring, profiles, members, memberCount, offline] = await Promise.all([
     prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, phoneHash: true } }),
     prisma.recurringDonation.findMany({ where: { merchantId, payerId: { in: payerIds }, status: { in: ['ACTIVE', 'PAUSED', 'SUSPENDED'] } }, select: { payerId: true, status: true, amount: true, dayOfMonth: true } }),
     prisma.payerReceiptProfile.findMany({ where: { payerId: { in: payerIds } }, select: { payerId: true } }),
@@ -51,7 +52,10 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
       select: { id: true, name: true, email: true, phoneHash: true, phoneMasked: true, phoneVerifiedAt: true, marketingAgreed: true, createdAt: true, lastLoginAt: true },
     }),
     prisma.donorMember.count({ where: { merchantId, status: 'ACTIVE' } }),
+    // 기관 통장 계좌이체 확정분(입금 맞추기). 결제 누적과 합치지 않고 따로 보여 준다(2026-11-09 E).
+    offlineTotalsByPayer(merchantId),
   ]);
+  const offlineOnly = [...offline.keys()].filter((id) => !payerIds.includes(id)).length;
   const memberPhones = new Set(members.map((m) => m.phoneHash).filter(Boolean));
   const pm = new Map(payers.map((p) => [p.id, p]));
   const rm = new Map(recurring.map((r) => [r.payerId, r]));
@@ -99,6 +103,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
         <StatTile label="영수증 정보 등록" value={`${formatNumber(receiptReady.size)}명`} sub="기부금영수증 발급 가능" />
       </div>
       <p className="-mt-2 mb-4 text-[12.5px] text-ink-500">
+        {offlineOnly ? <>계좌이체만 한 후원자 <Link href="/studio/supporters" className="font-bold underline">{formatNumber(offlineOnly)}명</Link>은 후원자·봉사자 화면에 있습니다. · </> : null}
         후원페이지 회원 <strong className="text-ink-800">{formatNumber(memberCount)}명</strong> · 아래 표의 <Badge tone="brand">회원</Badge> 표시는 휴대폰을 인증해 후원 내역이 연결된 회원입니다.
       </p>
 
@@ -146,7 +151,10 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
                   {r.lapsed ? <Badge tone="warning" className="ml-2">휴면</Badge> : null}
                   {r.merged ? <Badge tone="neutral" className="ml-2">병합됨</Badge> : null}
                 </Td>
-                <Td className="font-semibold tabular-nums text-ink-900">{formatWon(r.total)}</Td>
+                <Td className="font-semibold tabular-nums text-ink-900">
+                  {formatWon(r.total)}
+                  {offline.get(r.payerId) ? <span className="block text-[11.5px] font-normal text-ink-500">계좌이체 {formatWon(offline.get(r.payerId)!.amount)} · {offline.get(r.payerId)!.count}회</span> : null}
+                </Td>
                 <Td className="tabular-nums">{formatNumber(r.count)}회</Td>
                 <Td className="whitespace-nowrap tabular-nums">{formatKst(r.first, false)}</Td>
                 <Td className="whitespace-nowrap tabular-nums">{formatKst(r.last, false)}</Td>

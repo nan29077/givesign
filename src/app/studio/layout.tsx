@@ -46,6 +46,8 @@ function buildGroups(pending: {
         // 자동화가 준비한 일·담당자가 처리할 일을 한 곳에(콘텐츠 검토·봉사 신청·자동 안내 승인·영수증 일괄 발급 …)
         { href: '/studio/inbox', label: '승인 대기함', icon: 'inbox', badge: pending.inbox },
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
+        // 기관 통장 계좌이체·CMS 입금을 거래내역 파일로 후원자와 맞춘다(2026-11-09 E)
+        { href: '/studio/deposits', label: '입금 맞추기', icon: 'deposits' },
         { href: '/studio/supporters', label: '후원자·봉사자', icon: 'supporters' },
         // 기관 후원 회원(후원페이지 로그인 회원)과 후원자별 상세 분석
         { href: '/studio/donors', label: '후원자 관리·회원', icon: 'donors' },

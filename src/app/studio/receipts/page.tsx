@@ -10,6 +10,7 @@ import { issuerReadiness, receiptCandidates, receiptStatusLabel, DONATION_CODES 
 import { formatKst } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
+import { OfflineReceiptNotice } from '@/components/studio/deposits/offline-receipt-notice';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +76,8 @@ export default async function StudioReceiptsPage({ searchParams }: { searchParam
           </Notice>
         </div>
       ) : null}
+
+      <OfflineReceiptNotice merchantId={merchantId} year={year} />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label={`${year}년 발급 영수증`} value={`${formatNumber(issuedValid.length)}장`} tone="brand" sub={`합계 ${formatWon(issuedTotal)}`} />

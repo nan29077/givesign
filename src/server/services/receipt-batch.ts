@@ -113,6 +113,12 @@ export async function emitYearClosedForMonthly(taxYear: number) {
       where: { merchantId: m.id, isTest: false, status: { in: PAID_STATUSES }, receiptId: null, paidAt: { gte: start, lt: end }, payerId: { not: null } },
     });
     const unfinished = new Set(open.map((o) => o.payerId));
+    // 계좌이체 후원을 영수증에 넣는 기관(2026-11-09 E 설정)은 묶이지 않은 확정 계좌이체도 "아직 남음" 이다.
+    const openOffline = await prisma.offlineDonation.groupBy({
+      by: ['payerId'],
+      where: { merchantId: m.id, status: 'CONFIRMED', receiptId: null, donatedAt: { gte: start, lt: end }, merchant: { receiptIncludeOffline: true } },
+    });
+    for (const o of openOffline) unfinished.add(o.payerId);
     const byPayer = new Map<string, typeof receipts>();
     for (const r of receipts) byPayer.set(r.payerId, [...(byPayer.get(r.payerId) ?? []), r]);
     for (const [payerId, list] of byPayer) {

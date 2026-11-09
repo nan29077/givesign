@@ -166,20 +166,27 @@ export const JOURNEYS: JourneyDef[] = [
     label: '후원 감사',
     group: '후원',
     description: '일시후원이 확인되면 감사장을 보내고, 다음 날 영수증 정보 등록 방법을 안내합니다(이미 등록했거나 올해 안내했으면 생략). 감사 문자는 결제 직후 따로 나갑니다.',
-    triggers: ['charge.paid'],
+    // offline.received(계좌이체 확정, 2026-11-09 E)는 기관이 '계좌이체 확인분에도 보내기' 를 켰을 때만 실행을 만든다(기본 끔).
+    triggers: ['charge.paid', 'offline.received'],
     triggerLabel: '일시후원 결제 완료',
     defaultEnabled: true,
     params: [
       { key: 'minAmount', label: '감사장 기준 금액', type: 'number', default: 50000, min: 0, max: 100_000_000, unit: '원', hint: '이 금액 이상이거나 이 기관 첫 후원이면 감사장을 보냅니다. 0 이면 모든 후원.' },
       { key: 'receiptInfoDelayDays', label: '영수증 정보 안내까지', type: 'number', default: 1, min: 0, max: 30, unit: '일' },
+      { key: 'includeOffline', label: '계좌이체 확인분에도 보내기', type: 'boolean', default: false, hint: '입금 맞추기에서 확정한 통장 계좌이체에도 감사장·안내를 보냅니다. 기본은 끔(계좌이체 후원자에게 갑자기 문자가 가지 않게).' },
     ],
-    accept: (ev) => ev.payload.recurring !== true && ev.payload.isTest !== true,
+    accept: (ev, params) =>
+      ev.type === 'offline.received'
+        ? params.includeOffline === true && ev.payload.recurring !== true
+        : ev.payload.recurring !== true && ev.payload.isTest !== true,
     buildContext: (ev) => ({
       amount: String(ev.payload.amount ?? '0'),
       campaignId: str(ev.payload.campaignId),
       channel: str(ev.payload.channel),
       // 보내기 직전 결제가 아직 성공 상태인지 엔진이 다시 본다(환불된 후원에는 감사장·안내를 보내지 않음 — 점검 A-M3).
       chargeId: ev.subjectType === 'charge' ? ev.subjectId : null,
+      // 계좌이체 확정에서 시작한 실행: 보내기 직전 확정 취소(되돌리기) 여부를 엔진이 다시 본다.
+      offlineDonationId: ev.subjectType === 'offline_donation' ? ev.subjectId : null,
     }),
     steps: [
       documentStep({

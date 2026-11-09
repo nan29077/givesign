@@ -234,6 +234,25 @@ export async function eligibleCharges(merchantId: string, payerId: string, taxYe
   });
 }
 
+/**
+ * 기관 설정: 계좌이체 후원(offline_donation 확정분)을 영수증 합산에 넣는가(2026-11-09 E, 기본 끔).
+ * 끔이면 아래 함수들은 예전과 완전히 같은 결과를 낸다(계좌이체 표를 읽지 않는다).
+ */
+export async function receiptIncludesOffline(merchantId: string): Promise<boolean> {
+  const m = await prisma.merchantProfile.findUnique({ where: { id: merchantId }, select: { receiptIncludeOffline: true } });
+  return m?.receiptIncludeOffline === true;
+}
+
+/** 영수증에 넣을 계좌이체 후원(확정·미발급·그해). 설정이 꺼져 있으면 빈 목록. */
+export async function eligibleOfflineDonations(merchantId: string, payerId: string, taxYear: number) {
+  if (!(await receiptIncludesOffline(merchantId))) return [];
+  return prisma.offlineDonation.findMany({
+    where: { merchantId, payerId, status: 'CONFIRMED', receiptId: null, donatedAt: yearRange(taxYear) },
+    orderBy: { donatedAt: 'asc' },
+    select: { id: true, donatedAt: true, amount: true },
+  });
+}
+
 /** 기관 콘솔용: 연도별 후원자별 미발급 합계와 발급 가능 여부(영수증 정보 등록 여부). */
 export async function receiptCandidates(merchantId: string, taxYear: number) {
   const groups = await prisma.charge.groupBy({
@@ -242,6 +261,24 @@ export async function receiptCandidates(merchantId: string, taxYear: number) {
     _sum: { amount: true },
     _count: { _all: true },
   });
+  // 계좌이체 후원 합산(기관 설정을 켰을 때만). 결제 건이 없는 후원자도 후보가 된다.
+  if (await receiptIncludesOffline(merchantId)) {
+    const offline = await prisma.offlineDonation.groupBy({
+      by: ['payerId'],
+      where: { merchantId, status: 'CONFIRMED', receiptId: null, donatedAt: yearRange(taxYear) },
+      _sum: { amount: true },
+      _count: { _all: true },
+    });
+    for (const o of offline) {
+      const g = groups.find((x) => x.payerId === o.payerId);
+      if (g) {
+        g._sum.amount = (g._sum.amount ?? 0n) + (o._sum.amount ?? 0n);
+        g._count._all += o._count._all;
+      } else {
+        groups.push({ payerId: o.payerId, _sum: { amount: o._sum.amount ?? 0n }, _count: { _all: o._count._all } } as (typeof groups)[number]);
+      }
+    }
+  }
   const payerIds = groups.map((g) => g.payerId!).filter(Boolean);
   const [payers, profiles] = await Promise.all([
     prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, onboardingStatus: true } }),
@@ -322,23 +359,26 @@ export interface IssueReceiptInput {
 }
 
 export async function issueReceipt(input: IssueReceiptInput) {
-  const [merchant, payer, profile, charges] = await Promise.all([
+  const [merchant, payer, profile, charges, offline] = await Promise.all([
     prisma.merchantProfile.findUnique({ where: { id: input.merchantId } }),
     prisma.payerProfile.findUnique({ where: { id: input.payerId } }),
     prisma.payerReceiptProfile.findUnique({ where: { payerId: input.payerId } }),
     eligibleCharges(input.merchantId, input.payerId, input.taxYear),
+    // 계좌이체 후원(기관 설정 receipt_include_offline 을 켰을 때만, 끄면 빈 목록 — 2026-11-09 E)
+    eligibleOfflineDonations(input.merchantId, input.payerId, input.taxYear),
   ]);
   if (!merchant) throw new ReceiptError('기관을 찾을 수 없습니다.');
   const readiness = issuerReadiness(merchant);
   if (!readiness.ok) throw new ReceiptError(`기관 정보가 부족합니다: ${readiness.missing.join(', ')}`);
   // 후원 내역 확인을 먼저 한다. 임의의 후원자 ID 로 "후원자 없음 / 정보 미등록" 을 구분해 볼 수 없게.
-  if (charges.length === 0 || !payer) throw new ReceiptError('발급할 후원 내역이 없습니다(이미 발급됐거나 결제 성공 건이 없음).');
+  if ((charges.length === 0 && offline.length === 0) || !payer) throw new ReceiptError('발급할 후원 내역이 없습니다(이미 발급됐거나 결제 성공 건이 없음).');
   // 탈퇴한 후원자 명의로는 새로 발급하지 않는다. 이미 발급된 영수증(스냅샷)은 법정 보존 대상이라 그대로 둔다.
   if (payer.onboardingStatus === 'WITHDRAWN') throw new ReceiptError(RECEIPT_WITHDRAWN_REASON);
   if (!profile) throw new ReceiptError('후원자가 기부금영수증 정보(성명·주민등록번호)를 아직 등록하지 않았습니다.');
   if (isResidentConflict(profile.residentNoHash)) throw new ReceiptError(RECEIPT_RESIDENT_CONFLICT_REASON);
 
-  const total = charges.reduce((s, c) => s + c.amount, 0n);
+  const total = charges.reduce((s, c) => s + c.amount, 0n) + offline.reduce((s, o) => s + o.amount, 0n);
+  const itemCount = charges.length + offline.length;
   const viewToken = generateToken(24);
 
   const receipt = await prisma.$transaction(async (tx) => {
@@ -361,7 +401,7 @@ export async function issueReceipt(input: IssueReceiptInput) {
         seq,
         receiptNo,
         totalAmount: total,
-        chargeCount: charges.length,
+        chargeCount: itemCount,
         donationCode: merchant.donationCode,
         donorSnapshot: {
           legalName: profile.legalName,
@@ -377,12 +417,22 @@ export async function issueReceipt(input: IssueReceiptInput) {
           orgType: merchant.orgType,
           code: merchant.code,
         } as Prisma.InputJsonValue,
-        items: charges.map((c) => ({
-          chargeId: c.id,
-          transactionNo: c.transactionNo,
-          paidAt: c.paidAt!.toISOString(),
-          amount: c.amount.toString(),
-        })) as Prisma.InputJsonValue,
+        items: [
+          ...charges.map((c) => ({
+            chargeId: c.id,
+            transactionNo: c.transactionNo,
+            paidAt: c.paidAt!.toISOString(),
+            amount: c.amount.toString(),
+          })),
+          // 계좌이체 후원(설정을 켰을 때만 있다). paidAt 은 입금 시각 — 홈택스 명세의 기부 시작·종료일 계산에 같이 쓴다.
+          ...offline.map((o) => ({
+            offlineDonationId: o.id,
+            transactionNo: '계좌이체',
+            paidAt: o.donatedAt.toISOString(),
+            amount: o.amount.toString(),
+            source: 'OFFLINE',
+          })),
+        ] as Prisma.InputJsonValue,
         issuedBy: input.issuedBy,
         // 발급 당시 주민번호(암호문). 홈택스 명세는 이 값을 쓴다.
         residentNoEnc: profile.residentNoEnc,
@@ -400,6 +450,15 @@ export async function issueReceipt(input: IssueReceiptInput) {
     if (bound.count !== charges.length) {
       throw new ReceiptError('발급하는 사이 후원 상태가 바뀌어(환불·다른 발급) 중단했습니다. 다시 시도해 주세요.');
     }
+    if (offline.length) {
+      const boundOffline = await tx.offlineDonation.updateMany({
+        where: { id: { in: offline.map((o) => o.id) }, receiptId: null, status: 'CONFIRMED' },
+        data: { receiptId: created.id },
+      });
+      if (boundOffline.count !== offline.length) {
+        throw new ReceiptError('발급하는 사이 계좌이체 후원 상태가 바뀌어(확정 취소·다른 발급) 중단했습니다. 다시 시도해 주세요.');
+      }
+    }
     await emitDomainEvent(
       {
         merchantId: merchant.id,
@@ -408,7 +467,7 @@ export async function issueReceipt(input: IssueReceiptInput) {
         subjectId: created.id,
         payerId: payer.id,
         // receiptNo 는 연말 감사장 머지 필드(영수증번호)에 쓴다. receiptCycle 은 연말 감사장 시작 조건(YEARLY 만)이다.
-        payload: { taxYear: input.taxYear, totalAmount: total, chargeCount: charges.length, issuedBy: input.issuedBy, receiptNo, receiptCycle: merchant.receiptCycle },
+        payload: { taxYear: input.taxYear, totalAmount: total, chargeCount: itemCount, issuedBy: input.issuedBy, receiptNo, receiptCycle: merchant.receiptCycle },
       },
       tx,
     );
@@ -501,6 +560,8 @@ export async function voidReceipt(receiptId: string, reason: string, by: string)
     if (!r) throw new ReceiptError('영수증을 찾을 수 없습니다.');
     if (r.status === 'VOID') return r;
     await tx.charge.updateMany({ where: { receiptId }, data: { receiptId: null } });
+    // 계좌이체 후원도 풀어 준다(확정 취소된 건은 이것으로 "정정 필요" 표시가 사라진다 — 재발급은 확정분만 묶는다).
+    await tx.offlineDonation.updateMany({ where: { receiptId }, data: { receiptId: null } });
     return tx.donationReceipt.update({
       where: { id: receiptId },
       // 사유와 처리자를 나눠 둔다. 사유는 후원자 화면에 보이지만 처리자 ID 는 보이면 안 된다.
@@ -568,6 +629,22 @@ export async function payerReceiptOverview(payerId: string, taxYear: number) {
       _count: { _all: true },
     }),
   ]);
+  // 계좌이체 후원(그 기관이 영수증 합산 포함을 켰을 때만)
+  const offlineOn = await prisma.offlineDonation.groupBy({
+    by: ['merchantId'],
+    where: { payerId, status: 'CONFIRMED', receiptId: null, donatedAt: yearRange(taxYear), merchant: { receiptIncludeOffline: true } },
+    _sum: { amount: true },
+    _count: { _all: true },
+  });
+  for (const o of offlineOn) {
+    const u = unreceipted.find((x) => x.merchantId === o.merchantId);
+    if (u) {
+      u._sum.amount = (u._sum.amount ?? 0n) + (o._sum.amount ?? 0n);
+      u._count._all += o._count._all;
+    } else {
+      unreceipted.push({ merchantId: o.merchantId, _sum: { amount: o._sum.amount ?? 0n }, _count: { _all: o._count._all } } as (typeof unreceipted)[number]);
+    }
+  }
   const merchantIds = unreceipted.map((u) => u.merchantId);
   const merchants = await prisma.merchantProfile.findMany({
     where: { id: { in: merchantIds } },
@@ -660,7 +737,8 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
     rows += 1;
     total += r.totalAmount;
     const resident = decrypt(r.residentNoEnc);
-    const items = (r.items as unknown as Array<{ paidAt?: string }> | null) ?? [];
+    const items = (r.items as unknown as Array<{ paidAt?: string; source?: string }> | null) ?? [];
+    const hasOffline = items.some((i) => i.source === 'OFFLINE');
     const dates = items
       .map((i) => (i.paidAt ? new Date(i.paidAt) : null))
       .filter((d): d is Date => !!d && !Number.isNaN(d.getTime()))
@@ -678,7 +756,7 @@ export async function buildHometaxExport(merchantId: string, taxYear: number, cr
         dates.length ? kstYmd(dates[dates.length - 1]) : '',
         r.totalAmount.toString(),
         r.chargeCount,
-        '금전(문자후원)',
+        hasOffline ? '금전(문자후원·계좌이체)' : '금전(문자후원)',
         kstYmd(r.issuedAt),
       ]
         .map(csvCell)

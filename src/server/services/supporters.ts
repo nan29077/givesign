@@ -61,10 +61,13 @@ export interface SupporterRow {
   segments: Segment[];
   /** 관리자가 이 후원자에 병합한 다른 후원자 수(번호 변경 등). 0 이면 병합 없음. 기관 화면은 "병합됨" 표시만 한다. */
   mergedCount: number;
+  /** 기관 통장 계좌이체 확정분(입금 맞추기, 2026-11-09 E). totalAmount(기브싸인 결제)와 합치지 않고 따로 센다. */
+  offlineAmount: bigint;
+  offlineCount: number;
 }
 
 export async function listSupporters(merchantId: string, now = new Date()): Promise<SupporterRow[]> {
-  const [sums, oneTime, firstCharges, recurring, apps, acts, contacts] = await Promise.all([
+  const [sums, oneTime, firstCharges, recurring, apps, acts, contacts, offline] = await Promise.all([
     prisma.charge.groupBy({
       by: ['payerId'],
       where: { merchantId, isTest: false, status: { in: PAID_STATUSES }, payerId: { not: null } },
@@ -101,6 +104,13 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       where: { merchantId, archivedAt: null },
       select: { id: true, name: true, phoneMasked: true, role: true, tags: true, payerId: true },
     }),
+    prisma.offlineDonation.groupBy({
+      by: ['payerId'],
+      where: { merchantId, status: 'CONFIRMED' },
+      _sum: { amount: true },
+      _count: { _all: true },
+      _max: { donatedAt: true },
+    }),
   ]);
 
   // 관리자 병합(번호 변경 등): 원본 후원자 행은 대상 후원자 한 줄로 합산한다(데이터는 옮기지 않는다).
@@ -110,6 +120,7 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
   for (const a of apps) rawIds.add(a.payerId);
   for (const a of acts) rawIds.add(a.payerId);
   for (const c of contacts) if (c.payerId) rawIds.add(c.payerId);
+  for (const o of offline) rawIds.add(o.payerId);
   const merged = await mergeTargets([...rawIds]);
   const canon = (id: string) => merged.get(id) ?? id;
   const mergedCount = new Map<string, number>();
@@ -120,6 +131,7 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
   for (const r of recurring) ids.add(canon(r.payerId));
   for (const a of apps) ids.add(canon(a.payerId));
   for (const a of acts) ids.add(canon(a.payerId));
+  for (const o of offline) ids.add(canon(o.payerId));
   const payers = await prisma.payerProfile.findMany({
     where: { id: { in: [...ids] } },
     select: { id: true, displayName: true, phoneMasked: true },
@@ -165,6 +177,16 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       if (d && (!cur._max.activityDate || d > cur._max.activityDate)) cur._max.activityDate = d;
     }
   }
+  const offM = new Map<string, { amount: bigint; count: number; last: Date | null }>();
+  for (const o of offline) {
+    const k = canon(o.payerId);
+    const cur = offM.get(k) ?? { amount: 0n, count: 0, last: null };
+    cur.amount += o._sum.amount ?? 0n;
+    cur.count += o._count._all;
+    const d = o._max.donatedAt ?? null;
+    if (d && (!cur.last || d > cur.last)) cur.last = d;
+    offM.set(k, cur);
+  }
   const contactByPayer = new Map<string, (typeof contacts)[number]>();
   for (const c of contacts) if (c.payerId && !contactByPayer.has(canon(c.payerId))) contactByPayer.set(canon(c.payerId), c);
   const dormantBefore = addDays(now, -183).getTime();
@@ -177,7 +199,8 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
     const a = appM.get(id);
     const act = actM.get(id);
     const c = contactByPayer.get(id);
-    const donor = Boolean(s || r);
+    const off = offM.get(id);
+    const donor = Boolean(s || r || off);
     const vol = Boolean(a || act);
     const role: SupporterRole = donor && vol ? 'BOTH' : donor ? 'DONOR' : 'VOLUNTEER';
     const oneTimeCount = oneM.get(id) ?? 0;
@@ -185,7 +208,8 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
     const segs: Segment[] = ['all'];
     if (oneTimeCount >= 2 && !r) segs.push('repeat_no_pledge');
     if (vol && !donor) segs.push('volunteer_only');
-    if (s && !r && (last?.getTime() ?? 0) < dormantBefore) segs.push('dormant');
+    // 계좌이체 확정분이 최근에 있으면 휴면이 아니다(계좌이체가 없으면 예전 판단 그대로).
+    if (s && !r && Math.max(last?.getTime() ?? 0, off?.last?.getTime() ?? 0) < dormantBefore) segs.push('dormant');
     if (r?.status === 'ACTIVE') segs.push('recurring');
     rows.push({
       key: `p:${id}`,
@@ -204,6 +228,8 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       tags: c?.tags ?? [],
       segments: segs,
       mergedCount: mergedCount.get(id) ?? 0,
+      offlineAmount: off?.amount ?? 0n,
+      offlineCount: off?.count ?? 0,
     });
   }
   for (const c of contacts) {
@@ -225,6 +251,8 @@ export async function listSupporters(merchantId: string, now = new Date()): Prom
       tags: c.tags,
       segments: ['all', 'contact_only'],
       mergedCount: 0,
+      offlineAmount: 0n,
+      offlineCount: 0,
     });
   }
   return rows;

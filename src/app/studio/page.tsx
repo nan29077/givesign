@@ -27,6 +27,7 @@ import { ProgressBar } from '@/components/public/progress-bar';
 import { listCampaigns, merchantDonationSummary, monthlyTrend } from '@/server/services/fundraising';
 import { AutomationFunnel } from '@/components/studio/automation-funnel';
 import { receiptCandidates } from '@/server/services/receipts';
+import { OfflineMonthStrip } from '@/components/studio/deposits/offline-month-strip';
 
 export const dynamic = 'force-dynamic';
 
@@ -179,6 +180,9 @@ export default async function StudioDashboardPage() {
           <TodoTile href="/studio/supporters" label="함께한 후원자" value={donation.totalDonors} unit="명" hint={`누적 ${formatWon(donation.totalRaised)}`} />
           <TodoTile href="/studio/receipts" label="영수증 발급 대기" value={receiptPending} unit="명" hint={receiptPending ? '기부금영수증 발급' : '대기 없음'} />
         </div>
+
+        {/* 0-1-1) 이번 달 후원 — 기브싸인 결제와 계좌이체(확정분)를 나눠서(합치지 않는다, 2026-11-09 E) */}
+        <OfflineMonthStrip merchantId={merchantId} giveSignMonth={donation.monthRaised} />
 
         {/* 0-2) 자동화 깔때기 — 콘텐츠 유입 → 후원·약정·봉사 전환 → 알림톡·영수증 안내 */}
         <AutomationFunnel merchantId={merchantId} />
