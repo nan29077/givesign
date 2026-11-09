@@ -380,3 +380,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 후원 내역(`donor-history.ts`)은 연도별 합계 + 건별(출처 표시). 원천은 결제 건이고 다른 출처(2차 E 계좌이체 확정분)는 `registerDonationHistorySource(name, fn, label)` 로 붙인다(실패한 출처만 빠짐). 영수증 발급 시기 안내는 `receiptScheduleNote(receiptCycle)` 하나.
 - 받은 문서(`donor-documents.ts`)는 감사장·확인서 + 약정서(SIGNED·NONE 판만). 회원 화면은 그 기관 문서만, `/donate/[code]/my/documents/[id](/file)`·`/agreements/[id]`. 만료된 `/l/[토큰]` 은 그 기관 회원 로그인·통합 로그인으로 받은 문서에 돌아오게 안내한다. 회원 화면의 영수증 정보 저장은 후원자 단위라 재확인 뒤에만(통합 `/my/receipts` 는 기존대로).
 - 후원자 화면 새 조각(`src/components/self-service/*`)은 본문 16px 이상·큰 버튼(lg)으로 만든다.
+
+## 2026-11-09 후원금 사용 결과 보고 · 법정 서류 (3차 H)
+
+테스트 `tests/impact-legal-2026-11-09.test.ts`. 화면 `/studio/impact`(사이드바 "사업 진행·결과 보고")·`/studio/reports/legal`("법정 서류"). 마이그레이션 `20261111200000_impact_legal_reports`.
+
+- **사업 진행 기록** `impact_update`(캠페인, 비우면 기관 일반 후원 + 대상 기간) — DRAFT → 담당자 승인(항상) APPROVED → 승인 대기함 확인 후 배치 발송 SENT. 고치려면 `reopenImpactUpdate`(발송 대기·진행 중이면 거절). 사진은 자체 저장소 주소만 3장 + 수혜자 실사진·실명 금지 확인(`photo_rule_ack_at`). 공개 후원페이지 캠페인 상세 노출은 `public_visible`(기본 끔, APPROVED·SENT 만).
+- **집행 내역 = 사용 명세는 한 표** `fund_expense`(진행 기록 연결 또는 단독). 승인된 기록에 붙은 줄은 바꾸지 않는다(보고서 숫자 근거). 지우지 않고 보관.
+- **개인별 사용처를 만들지 않는다.** 보고서는 캠페인 전체 결과, 본인 기록은 머지 필드 `{{참여내역}}`(후원 N회·합계 M원)으로 따로. 판정은 `src/lib/solicitation.ts`(`personalAllocationHit`·`solicitationHit`·`numbersOutside`) 한 곳.
+- **AI 초안**(`generateImpactReport`)은 숫자를 만들지 않는다 — 허용 숫자 = 기관 입력(본문·집행 표)·원천 합계(결제 PAID + 계좌이체 확정분). 어기면 `completeJson` 1회 재요청 → 실패 시 규칙 문안(`ruleReport`). mock 이면 처음부터 규칙 문안. 집행 표·모금 합계 줄은 시스템이 붙인다. 담당자 수정본도 권유 문구·개인별 사용처는 거절.
+- **새 용도** `IMPACT_REPORT`·`ANNUAL_DONATION_NOTICE`(서명 없음, 기본 세트 서식, 머지 `보고제목·보고내용·참여내역·사용요약`). 정보성 — 권유 문구·링크 금지, 발송 전 점검이 이 두 용도에만 `SOLICITATION_TEXT` 경고(다른 용도 결과는 그대로). 발송 분류 `IMPACT_REPORT`·`ANNUAL_NOTICE`(관계·정보형) → 안내는 `sendRelational`(precounted=false, 7일 상한·묶음·야간).
+- **대량 발송 승인** `IMPACT_REPORT_SEND`·`ANNUAL_NOTICE_SEND`(`impact-legal-approvals.ts`, `execute` → QUEUED → `runQueuedApprovals`). 확인 화면은 `/studio/inbox/approvals/[id]`(대상 수·표본 3건·비용 0원). 대상 = 참여 후원자(그 캠페인 결제·진행/일시정지 약정·계좌이체 확정분), 탈퇴·차단·월간 안내 수신 거부 제외(`filterRecipients`). 문서는 `issuePurposeDocument(notify:false)` + dedupeKey `impact:{기록}:{후원자}`·`annual-notice:{기관}:{연도}:{후원자}`.
+- **연 1회 통보**는 `legal_notice_delivery (기관, 연도, 후원자)` 유니크 + 끝난 해만 + 열린 요청 있으면 새로 안 쌓음.
+- **법정 서류**(`legal-reports.ts`·`legal-report-files.ts`) — **법령 서식과 대조 필요**(재무·회계 규칙 제41조의4~7 요약, 확정 전). 수입 = 결제 PAID(환불 제외, 절대 규칙 9 기준)·계좌이체 확정분(영수증 설정 무관)·현물 ISSUED(바자회 스위치 무관), 출처 열로 구분. 공개·제출용 판은 이름 없음, 내부용(마스킹 이름·발급 대장)은 사유 필수. 내려받기는 POST `/api/studio/reports/legal` + 감사로그 `LEGAL_REPORT_DOWNLOAD`. 지정 용도 외 사용 경고(`designationWarnings`)는 판정만(막지 않음). 결산 시기(기본 2~3월, `legal_report_setting`) 승인 대기함 묶음 `legal-docs`, 결과 보고서를 내려받으면 닫힌다.
