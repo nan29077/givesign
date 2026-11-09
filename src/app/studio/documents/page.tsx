@@ -177,6 +177,11 @@ export default async function StudioDocumentsPage({
                     ) : (
                       <span className="text-[12px] text-ink-400">없음 — 첫 발송 때 기본 서식을 복사합니다</span>
                     )}
+                    {p.template ? (
+                      <Link href={`/studio/documents/${p.template.id}/preflight`} className="ml-1.5 text-[11.5px] font-bold text-ink-500 underline hover:text-ink-900">
+                        발송 전 점검
+                      </Link>
+                    ) : null}
                     {p.template?.defaultSet ? (
                       <span className="ml-1.5"><Badge tone="neutral">{p.template.unchanged ? '기본 서식 그대로' : '기본 서식에서 수정'}</Badge></span>
                     ) : p.template ? (

@@ -107,3 +107,11 @@ export interface JourneyDef {
   buildContext(event: StoredDomainEvent): JourneyContext;
   steps: StepDef[];
 }
+
+/**
+ * 단계가 고칠 일이 있어 막혔다(발송 전 점검 등). 엔진은 재시도하지 않고 실행을 바로 FAILED(막힌 일)로 둔다.
+ * 승인 대기함이 보여 주고, 기관이 고친 뒤 다시 실행한다(retryJourneyRun). (2026-11-09 C2)
+ */
+export class JourneyBlockedError extends Error {
+  readonly blocked = true;
+}

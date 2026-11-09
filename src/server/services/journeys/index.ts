@@ -4,6 +4,7 @@ export {
   advanceRun,
   advanceDueJourneyRuns,
   cancelJourneyRun,
+  retryJourneyRun,
   journeySetting,
   journeySettings,
   journeyStats,
