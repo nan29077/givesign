@@ -20,7 +20,7 @@ export const MY_TABS: MyTabDef[] = [
   { key: 'recurring', href: '/my/recurring', label: '정기후원', prefixes: ['/my/recurring', '/my/agreements'] },
   { key: 'volunteer', href: '/my/volunteer', label: '봉사', prefixes: ['/my/volunteer'] },
   { key: 'receipts', href: '/my/receipts', label: '영수증', prefixes: ['/my/receipts', '/my/documents'] },
-  { key: 'account', href: '/my/account', label: '내 정보', prefixes: ['/my/account', '/my/limits', '/my/blocks', '/my/consents'] },
+  { key: 'account', href: '/my/account', label: '내 정보', prefixes: ['/my/account', '/my/limits', '/my/blocks', '/my/consents', '/my/notifications'] },
 ];
 
 /** 기능 플래그에 맞춰 보일 탭. 자원봉사(FEATURE_VOLUNTEER)가 꺼져 있으면 봉사 탭을 뺀다. */

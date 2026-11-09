@@ -20,6 +20,7 @@ import {
   setRecurringStatus,
   updateRecurringDonation,
 } from './recurring';
+import { recordRecurringChange, termsSnapshot } from './recurring-change-log';
 
 /**
  * 정기후원 실패 복구 (2026-11-09 1차 과제 A1) — 후원자 복구 화면·기관 현황·조치 필요 묶음·결제수단 등록 소비자.
@@ -197,6 +198,7 @@ export async function changeFromRecovery(token: string, input: { dayOfMonth?: nu
   let sentence = `${koDate(next, today)} 출금부터 매월 ${updated.dayOfMonth}일 ${formatNumber(updated.amount)}원이 적용됩니다.`;
   if (updated.status === 'PAUSED') sentence = `다시 시작하면 매월 ${updated.dayOfMonth}일 ${formatNumber(updated.amount)}원이 적용됩니다.`;
   if (updated.recoveryState === 'ACTION_REQUIRED') sentence += ' 다만 결제수단을 다시 등록해야 출금할 수 있습니다.';
+  await recordRecurringChange({ recurringId: r.id, merchantId: r.merchantId, payerId: r.payerId, actor: 'DONOR', via: 'RECOVER_LINK', kind: 'CHANGE', before: termsSnapshot(r), after: termsSnapshot(updated), summary: sentence });
   return sentence;
 }
 
@@ -205,14 +207,18 @@ export async function pauseFromRecovery(token: string, resumeOn: string): Promis
   const { r } = await loadLinkedRecurring(token);
   const res = await pauseRecurringUntil(r.payerId, r.id, resumeOn);
   const today = kstDateKey();
-  return `${koDate(res.resumeOn, today)}까지 쉬고 그날 다시 시작합니다. 다음 출금 예정일은 ${koDate(res.nextDate, today)}이고, 다시 시작하기 하루 전에 문자로 알려 드립니다.`;
+  const sentence = `${koDate(res.resumeOn, today)}까지 쉬고 그날 다시 시작합니다. 다음 출금 예정일은 ${koDate(res.nextDate, today)}이고, 다시 시작하기 하루 전에 문자로 알려 드립니다.`;
+  await recordRecurringChange({ recurringId: r.id, merchantId: r.merchantId, payerId: r.payerId, actor: 'DONOR', via: 'RECOVER_LINK', kind: 'PAUSE_UNTIL', before: termsSnapshot(r), after: { ...termsSnapshot(r), status: 'PAUSED', resumeOn: res.resumeOn }, summary: sentence });
+  return sentence;
 }
 
 /** 해지(사유 선택) → 결과 문장 */
 export async function cancelFromRecovery(token: string, reason?: string): Promise<string> {
   const { r } = await loadLinkedRecurring(token);
   await setRecurringStatus(r.payerId, r.id, 'CANCEL', reason);
-  return `${r.merchant.displayName} 정기후원을 해지했습니다. 이후 출금은 일어나지 않습니다. 그동안 함께해 주셔서 감사합니다.`;
+  const sentence = `${r.merchant.displayName} 정기후원을 해지했습니다. 이후 출금은 일어나지 않습니다. 그동안 함께해 주셔서 감사합니다.`;
+  await recordRecurringChange({ recurringId: r.id, merchantId: r.merchantId, payerId: r.payerId, actor: 'DONOR', via: 'RECOVER_LINK', kind: 'CANCEL', before: termsSnapshot(r), after: { ...termsSnapshot(r), status: 'CANCELED', resumeOn: null }, summary: sentence, reason: reason ?? null });
+  return sentence;
 }
 
 // ---------------------------------------------------------------------------

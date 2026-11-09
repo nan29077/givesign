@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Landmark, MessageSquare, CreditCard, SlidersHorizontal, Ban, FileText, ChevronRight } from 'lucide-react';
+import { Landmark, MessageSquare, CreditCard, SlidersHorizontal, Ban, FileText, ChevronRight, BellRing } from 'lucide-react';
 import { Card, CardTitle, Badge, Notice, DataRow, LinkButton, SectionTitle } from '@/components/ui';
 import { RevokeForm } from '@/components/my/revoke-form';
 import { PhoneLinkForm } from '@/components/my/phone-link-form';
@@ -221,6 +221,7 @@ export default async function MyAccountPage() {
         <Card padded={false}>
           <ul>
             {[
+              { href: '/my/notifications', label: '알림 설정', desc: '안내 받는 방법·월간 안내·소식 수신 동의', icon: BellRing },
               { href: '/my/limits', label: '결제 한도', desc: '일일·월간 한도를 더 낮게 설정', icon: SlidersHorizontal },
               { href: '/my/blocks', label: '결제 차단', desc: '특정 사회복지기관 결제 차단', icon: Ban },
               { href: '/my/consents', label: '동의 이력', desc: '약관 동의 기록과 마케팅 수신', icon: FileText },

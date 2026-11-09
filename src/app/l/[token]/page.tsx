@@ -26,11 +26,19 @@ export default async function IssuedDocumentPage({ params }: { params: Promise<{
           </h1>
           <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">{loaded.reason}</p>
           {loaded.expired ? (
-            <p className="mt-2 text-[13.5px] leading-relaxed text-ink-700">
-              기브싸인 후원자 계정으로 로그인하면{' '}
-              <Link href="/my/documents" className="font-bold text-brand-700 underline">마이페이지 &gt; 받은 문서</Link>
-              에서 언제든 다시 열 수 있습니다.{loaded.merchantName ? ` 계정이 없으면 ${loaded.merchantName}에 다시 보내 달라고 요청해 주세요.` : ''}
-            </p>
+            <div className="mt-3 space-y-2">
+              <p className="text-[16px] leading-relaxed text-ink-700">로그인하면 받은 문서에서 언제든 다시 열 수 있습니다.</p>
+              {/* 로그인 후 받은 문서로 바로 돌아오게 next 를 넘긴다(2026-11-09 2차 F). 기관 후원 회원은 그 기관 로그인으로. */}
+              {loaded.merchantCode ? (
+                <Link href={`/donate/${loaded.merchantCode}/login?next=${encodeURIComponent(`/donate/${loaded.merchantCode}/my/documents`)}`} className="flex h-12 items-center justify-center rounded-xl bg-ink-900 px-4 text-[16px] font-extrabold text-white">
+                  {loaded.merchantName ?? '기관'} 후원 회원으로 로그인
+                </Link>
+              ) : null}
+              <Link href={`/login?next=${encodeURIComponent('/my/documents')}`} className="flex h-12 items-center justify-center rounded-xl border border-ink-200 bg-white px-4 text-[16px] font-extrabold text-ink-900">
+                기브싸인 후원자 계정으로 로그인
+              </Link>
+              {loaded.merchantName ? <p className="text-[14px] text-ink-500">계정이 없으면 {loaded.merchantName}에 다시 보내 달라고 요청해 주세요.</p> : null}
+            </div>
           ) : null}
           <div className="mt-3">
             <Notice tone="warning">기브싸인은 문자로 보낸 링크 외의 경로로 계좌·카드 정보나 비밀번호를 묻지 않습니다.</Notice>

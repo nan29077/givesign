@@ -5,6 +5,8 @@ import { DonorActionForm } from '@/components/my/donor-action-form';
 import { deleteReceiptProfileAction, openReceiptAction, saveReceiptProfileAction } from '@/app/actions/donor';
 import { getReceiptProfile, payerReceiptOverview, receiptStatusLabel, RECEIPT_PROFILE_DAILY_ATTEMPTS } from '@/server/services/receipts';
 import { currentTermsDoc } from '@/server/services/terms';
+import { receiptScheduleNote } from '@/server/services/receipt-schedule';
+import { prisma } from '@/server/db';
 import { formatKst } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
 
@@ -31,6 +33,9 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
   const years = [nowYear, nowYear - 1, nowYear - 2];
   const year = years.includes(Number(sp.year)) ? Number(sp.year) : nowYear;
   const [profile, overview, terms] = await Promise.all([getReceiptProfile(payerId), payerReceiptOverview(payerId, year), currentTermsDoc('RECEIPT_ISSUANCE')]);
+  // 발급 일정 안내(기관 설정 기준, 2026-11-09 2차 F)
+  const cycles = await prisma.merchantProfile.findMany({ where: { id: { in: overview.pending.map((p) => p.merchantId) } }, select: { id: true, receiptCycle: true } });
+  const cycleOf = new Map(cycles.map((c) => [c.id, c.receiptCycle]));
 
   return (
     <div className="space-y-4">
@@ -101,6 +106,7 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
                 <span className="font-semibold text-ink-900">{p.merchantName}</span>
                 <span className="tabular-nums">{formatWon(p.amount)} · {p.count}건</span>
                 {!p.issuerReady ? <Badge tone="neutral">기관 영수증 정보 준비 중</Badge> : !profile ? <Badge tone="warning">내 정보 등록 필요</Badge> : <Badge tone="brand">발급 대기</Badge>}
+                {year === nowYear ? <span className="w-full text-[13px] text-ink-500">{receiptScheduleNote(cycleOf.get(p.merchantId)).text}</span> : null}
               </div>
             ))}
           </div>

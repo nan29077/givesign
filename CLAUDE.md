@@ -367,3 +367,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **`OUTBOUND_COORDINATOR=off`** 면 대기열 없이 지금 경로 그대로(이미 쌓인 것만 배치가 보낸다). 테스트 기본은 묶음 대기 0(`tests/setup.ts`), 묶음 테스트만 늘린다.
 - **선호 채널** `payer_profile.preferred_channel`(ALIMTALK 기본·SMS) — `sendMtDetailed` 의 알림톡 경로 결정에서만 반영(화면은 2차 F).
 - **알림톡 결과 미확인(UNKNOWN)** 은 그대로 자동 재발송 없음. 닫을 때 본문 암호문을 `resend_body_enc`(14일)로 옮기고, `/studio/journeys` 목록의 "문자로 다시 보내기"가 `manual_resent_at` 조건부 선점으로 1회 보낸다(새 이력 행, `manual_resend_id`). 같은 화면에 최근 30일 안내 5단계(요청→접수→전달→열람→완료, `outbound/stage-stats.ts` — 열람·완료는 기존 기록만 잇고 없으면 "-")와 대기열 현황.
+
+## 2026-11-09 후원자 셀프서비스
+
+테스트 `tests/self-service-2026-11-09.test.ts`.
+
+- **정기후원 관리 한 화면**은 통합 `/my/recurring` 과 기관 후원 회원 `/donate/[code]/my/recurring` 이 같은 서비스(`donor-self-service.ts`)를 쓴다. 범위: MY = 계정에 연결된 후원자의 모든 기관, MEMBER = 회원이 휴대폰 인증한 번호의 후원자 중 **그 기관 약정만**(다른 기관 id 는 "찾을 수 없음"). 바꾸는 일은 기존 함수(`updateRecurringDonation`·`pauseRecurringUntil`·`setRecurringStatus`)만 부른다 — 금액 범위·하루 3회·약정서 새 판 그대로. 복구 링크(`/r/recover`)는 1차 규칙 그대로(그 약정 1건, 재확인 없음).
+- **변경 결과 문장은 `describeRecurringChange(before, after, now)`(`recurring-change-text.ts`, 순수 함수) 한 곳.** 저장 전 미리보기와 저장 후 확인이 같은 문장이다. 날짜 규칙을 바꾸면 recurring.ts 갱신 규칙과 이 함수를 함께 바꾼다. 결과 미확인(PENDING) 실행이 있으면 금액·출금일 변경은 보류(셀프서비스 경로만 — 기존 함수는 그대로), 정지·해지는 안내 문장과 함께 허용.
+- **변경·정지·재개·해지는 로그인 + 휴대폰 재확인 1회(10분)** — `self-service-stepup.ts`(대상 USER/MEMBER, 이미 연결된 번호로만 발송, 번호 해시와 묶음, 번호가 바뀌면 무효). 옛 액션 `updateRecurringAction`(금액·출금일이 바뀔 때)·`setRecurringStatusAction` 도 같은 재확인을 요구한다. 같은 약정 동시 변경은 `kv.setnx` 잠금으로 1건만.
+- **변경 이력 `recurring_change_log`**(actor `DONOR`·via `MY/MEMBER/RECOVER_LINK`·kind·전후 스냅샷·문장·사유). 기록 실패는 변경을 되돌리지 않는다(`recordRecurringChange` 안전 래퍼). 후원자 화면 카드와 기관 `/studio/recurring` "최근 변경 이력"(누가: "후원자 본인")에 보인다.
+- **알림 설정 한 곳**: `/my/notifications`·`/donate/[code]/my/settings` — 연락 선호 `payer_profile.preferred_channel`(`ALIMTALK_FIRST|SMS_ONLY`, 기본 알림톡 우선, 2차 D 와 같은 정의 — 마이그레이션은 `ADD COLUMN IF NOT EXISTS`) · 월간 안내 수신 거부(`notice_opt_out_at`) · (선택) 소식 수신 동의(1차 함수). 발송 경로가 선호값을 읽는 것은 D 의 몫이다. 결제 링크·인증번호는 항상 문자.
+- 후원 내역(`donor-history.ts`)은 연도별 합계 + 건별(출처 표시). 원천은 결제 건이고 다른 출처(2차 E 계좌이체 확정분)는 `registerDonationHistorySource(name, fn, label)` 로 붙인다(실패한 출처만 빠짐). 영수증 발급 시기 안내는 `receiptScheduleNote(receiptCycle)` 하나.
+- 받은 문서(`donor-documents.ts`)는 감사장·확인서 + 약정서(SIGNED·NONE 판만). 회원 화면은 그 기관 문서만, `/donate/[code]/my/documents/[id](/file)`·`/agreements/[id]`. 만료된 `/l/[토큰]` 은 그 기관 회원 로그인·통합 로그인으로 받은 문서에 돌아오게 안내한다. 회원 화면의 영수증 정보 저장은 후원자 단위라 재확인 뒤에만(통합 `/my/receipts` 는 기존대로).
+- 후원자 화면 새 조각(`src/components/self-service/*`)은 본문 16px 이상·큰 버튼(lg)으로 만든다.

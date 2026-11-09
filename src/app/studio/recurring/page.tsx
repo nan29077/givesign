@@ -9,6 +9,7 @@ import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
 import { failureClassLabel } from '@/server/services/recurring-failure';
 import { RECOVERY_STATE_LABEL, recurringRecoveryStats, type RecoveryPeriodStats } from '@/server/services/recurring-recovery';
+import { changeActorLabel, changeKindLabel, changeViaLabel, merchantRecurringChanges } from '@/server/services/recurring-change-log';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,8 @@ export default async function StudioRecurringPage({ searchParams }: { searchPara
     recurringRecoveryStats(merchantId),
   ]);
   const monthly = activeAgg._sum.amount ?? 0n;
+  // 후원자가 스스로 바꾼 내역(셀프서비스·복구 링크) — 2026-11-09 2차 F
+  const changes = await merchantRecurringChanges(merchantId, 30);
   const recentRuns = await prisma.recurringRun.findMany({
     where: { recurring: { merchantId } },
     orderBy: { ranAt: 'desc' },
@@ -140,6 +143,38 @@ export default async function StudioRecurringPage({ searchParams }: { searchPara
           </tbody>
         </Table>
       )}
+
+      {changes.length ? (
+        <section className="mt-6">
+          <h2 className="mb-2 text-[14px] font-extrabold text-ink-900">최근 변경 이력</h2>
+          <p className="mb-2 text-[12.5px] text-ink-500">후원자가 마이페이지·후원 회원 화면·복구 안내 링크에서 직접 바꾼 내용입니다.</p>
+          <Table>
+            <thead>
+              <tr>
+                <Th>시각</Th>
+                <Th>후원자</Th>
+                <Th>누가</Th>
+                <Th>변경</Th>
+                <Th>내용</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {changes.map((c) => (
+                <tr key={c.id}>
+                  <Td className="whitespace-nowrap tabular-nums">{formatKst(c.createdAt)}</Td>
+                  <Td>
+                    <span className="font-semibold text-ink-900">{displayPayerName(c.recurring.payer.displayName ?? '')}</span>
+                    <span className="ml-2 font-mono text-[12px] text-ink-400">{c.recurring.payer.phoneMasked}</span>
+                  </Td>
+                  <Td className="whitespace-nowrap">{changeActorLabel(c.actor)}<span className="block text-[11.5px] text-ink-400">{changeViaLabel(c.via)}</span></Td>
+                  <Td className="whitespace-nowrap"><Badge tone={c.kind === 'CANCEL' ? 'danger' : c.kind === 'RESUME' ? 'success' : 'neutral'}>{changeKindLabel(c.kind)}</Badge></Td>
+                  <Td className="text-[12px] text-ink-500"><span className="block max-w-[360px]">{c.summary}{c.reason ? ` (사유: ${c.reason})` : ''}</span></Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </section>
+      ) : null}
 
       {recentRuns.length ? (
         <section className="mt-6">
