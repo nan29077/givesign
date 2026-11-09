@@ -8,6 +8,9 @@ import { registerApprovalHandler, requestApproval, cancelApproval, ApprovalError
 import { JOURNEYS, journeyDef, defaultParams } from './definitions';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { JourneyBlockedError, type JourneyContext, type JourneyDef, type ParamValue, type StepDef, type StepEnv, type StepOutcome } from './types';
+import { RELATIONAL_WEEKLY_CAP, kindOfJourneyStep } from '../outbound/classify';
+import { relationalCapCount } from '../outbound/coordinator';
+import { autoPauseReason } from '../outbound/pause';
 
 /**
  * 저니 엔진.
@@ -24,7 +27,8 @@ import { JourneyBlockedError, type JourneyContext, type JourneyDef, type ParamVa
 
 export const JOURNEY_MAX_ATTEMPTS = 5;
 export const JOURNEY_LEASE_MS = 5 * 60_000;
-export const JOURNEY_WEEKLY_SEND_CAP = 3;
+/** 7일 상한 — 통합 발송 관리의 관계·정보형 상한과 같은 상수(코드 한 곳, 2026-11-09 D2) */
+export const JOURNEY_WEEKLY_SEND_CAP = RELATIONAL_WEEKLY_CAP;
 export const JOURNEY_MAX_DEFERRALS = 14;
 const QUIET_START = 21; // 21시부터
 const QUIET_END = 9; // 9시 전까지
@@ -176,7 +180,7 @@ export function isQuietHour(d: Date, force = false) {
 type RunRow = Awaited<ReturnType<typeof prisma.journeyRun.findUniqueOrThrow>>;
 
 /** 발송 단계 공통 보호. null 이면 보내도 된다. */
-async function sendGuard(run: RunRow, now: Date): Promise<StepOutcome | null> {
+async function sendGuard(run: RunRow, now: Date, step?: StepDef): Promise<StepOutcome | null> {
   if (!run.payerId) return { type: 'stop', detail: '후원자 없음' };
   const [payer, link, blocked] = await Promise.all([
     prisma.payerProfile.findUnique({ where: { id: run.payerId }, select: { onboardingStatus: true } }),
@@ -199,10 +203,14 @@ async function sendGuard(run: RunRow, now: Date): Promise<StepOutcome | null> {
     const o = await prisma.offlineDonation.findUnique({ where: { id: ctx.offlineDonationId }, select: { status: true } });
     if (!o || o.status !== 'CONFIRMED') return { type: 'stop', detail: '확정 취소된 계좌이체' };
   }
+  // 열린 문의·진행 중 환불 → 담당자 확인 전까지 관계·정보형 단계만 하루씩 보류(2026-11-09 D1-2). 일정·재개 안내 같은 거래형 단계는 멈추지 않는다.
+  if (step && kindOfJourneyStep(step.key)) {
+    const pause = await autoPauseReason(run.merchantId, run.payerId);
+    if (pause) return { type: 'retry', until: new Date(now.getTime() + 86_400_000), detail: `${pause} — 담당자 확인 전 자동 안내 보류` };
+  }
   if (isQuietHour(now)) return { type: 'retry', until: nextMorning(now), detail: '야간 발송 보류' };
-  const sent = await prisma.journeyStepLog.count({
-    where: { merchantId: run.merchantId, payerId: run.payerId, sent: true, at: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
-  });
+  // 7일 상한은 저니 밖 관계·정보형 안내(월간 안내 등 발송 대기열)까지 합쳐 센다(2026-11-09 D2-3).
+  const sent = await relationalCapCount(prisma, run.merchantId, run.payerId, now);
   if (sent >= JOURNEY_WEEKLY_SEND_CAP) return { type: 'retry', until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
   return null;
 }
@@ -227,9 +235,7 @@ async function reserveSend(run: RunRow, step: StepDef, now: Date): Promise<Reser
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journey-send:${run.merchantId}:${run.payerId ?? '-'}`}))`;
       const existing = await tx.journeyStepLog.findUnique({ where: { dedupeKey: key }, select: { id: true } });
       if (existing) return { type: 'already' as const };
-      const sent = await tx.journeyStepLog.count({
-        where: { merchantId: run.merchantId, payerId: run.payerId, sent: true, at: { gte: new Date(now.getTime() - 7 * 86_400_000) } },
-      });
+      const sent = await relationalCapCount(tx, run.merchantId, run.payerId, now);
       if (sent >= JOURNEY_WEEKLY_SEND_CAP) {
         return { type: 'retry' as const, until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
       }
@@ -313,7 +319,7 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
         if (ok !== true) outcome = { type: 'skip', detail: ok };
         else {
           // 3) 발송 보호
-          const blocked = step.sends ? await sendGuard(run, now) : null;
+          const blocked = step.sends ? await sendGuard(run, now, step) : null;
           if (blocked) outcome = blocked;
           // 4) 승인
           else if (step.approvable && setting.approvals[step.key] && !ctx.approved?.[step.key]) {

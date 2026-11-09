@@ -10,6 +10,8 @@ import { defaultPayerName } from '@/lib/payer-name';
 import { getPrivateObject } from '@/server/uploads';
 import { tplDocumentIssued } from './mt-templates';
 import { sendMtForPayer } from './charge-flow';
+import { coordinatorEnabled, sendRelational } from './outbound/coordinator';
+import { kindOfDocumentPurpose } from './outbound/classify';
 import {
   DOCUMENT_PURPOSE_LABEL,
   type DocumentPurpose,
@@ -312,7 +314,7 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     throw e;
   }
   const link = issuedDocumentUrl(token);
-  if (input.notify !== false) await sendIssuedNotice(issuedId, payer.id, merchant.id, merchant.displayName, template.name, link);
+  if (input.notify !== false) await sendIssuedNotice(issuedId, payer.id, merchant.id, merchant.displayName, template.name, link, purpose);
   return { ok: true, issuedId, link, signature: false };
 }
 
@@ -372,11 +374,25 @@ async function issueForSignature(
 }
 
 /** 안내 문자(알림톡 → 문자 대체). 실패는 발급을 되돌리지 않고 send_error 에 남긴다. */
-async function sendIssuedNotice(issuedId: string, payerId: string, merchantId: string, merchantName: string, title: string, link: string) {
+async function sendIssuedNotice(issuedId: string, payerId: string, merchantId: string, merchantName: string, title: string, link: string, autoPurpose?: string) {
   let ok = false;
   let error: string | null = null;
   try {
-    ok = await sendMtForPayer(payerId, tplDocumentIssued({ merchantName, title, link }), null, merchantId);
+    // 자동 발송(감사장·누적 감사·연말 감사장·봉사 감사·확인서)의 첫 안내는 통합 발송 관리 대기열로(같은 날 안내와 묶음, 2026-11-09 D2).
+    // 기관이 누르는 재발송은 바로 보낸다. 대기열에 쌓이면 보낸 뒤 대기열이 sent_at·send_count 를 적는다.
+    const kind = autoPurpose ? kindOfDocumentPurpose(autoPurpose) : null;
+    if (kind && coordinatorEnabled()) {
+      const r = await sendRelational({
+        merchantId, payerId, kind, template: tplDocumentIssued({ merchantName, title, link }),
+        sendKey: `issued:${issuedId}`, source: 'issued_document', sourceId: issuedId, precounted: true,
+      });
+      if (r.mode === 'queued') return true;
+      if (r.mode === 'skipped') {
+        await prisma.issuedDocument.update({ where: { id: issuedId }, data: { sendError: r.reason.slice(0, 300) } }).catch(() => undefined);
+        return false;
+      }
+      ok = r.ok;
+    } else ok = await sendMtForPayer(payerId, tplDocumentIssued({ merchantName, title, link }), null, merchantId);
     if (!ok) error = '문자 발송 실패';
   } catch (e) {
     error = '문자 발송 오류';

@@ -355,3 +355,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **계좌이체 약정**(`offline_pledge`, 기관·후원자당 1건)은 매칭 근거와 "이번 달 미입금"(약정일+3일) 표시에만 쓴다. 출금·결제·문자를 만들지 않는다.
 - **영수증**: `merchant_profile.receipt_include_offline`(기본 끔)일 때만 `receiptCandidates`·`issueReceipt`·연간 준비·홈택스 명세·후원자 미발급 요약에 확정 계좌이체를 넣는다. 끔이면 결과가 예전과 완전히 같다(테스트로 비교). 영수증 items 의 계좌이체 줄은 `offlineDonationId`·`source:'OFFLINE'`, `chargeCount` 는 결제+계좌이체 건수. 발급된 영수증에 묶인 계좌이체를 되돌리면 **자동 VOID 하지 않고** "정정 필요"(`offlineReceiptCorrections`) — 무효 처리(`voidReceipt` 가 묶음을 풀어 줌) 후 재발급은 확정분만.
 - 승인 대기함 묶음 `offline-deposits`("입금 확인 필요 N건", `depositsInboxGroup`). 권한은 기관 콘솔 계정(`requireMerchant`, 기관당 계정 1개 — 별도 금전 권한 없음), 업로드·확정·무시·되돌리기·약정·설정 변경은 감사로그(`OFFLINE_*`, `RECEIPT_INCLUDE_OFFLINE_CHANGE`). 은행 계좌 직접 조회 연동은 하지 않았다(5차, 어댑터+mock 예정).
+
+## 2026-11-09 후원자별 다음 업무 · 통합 발송 관리
+
+테스트 `tests/outbound-next-action-2026-11-09.test.ts`.
+
+- **다음 업무**(`next-action.ts`): (기관, 후원자) → 한 가지 + 이유, 규칙만(예측 없음). 우선순위는 `nextActionOrder` 한 곳 — 환불 진행 중·열린 문의(담당자 확인) > 정기 출금 조치 > 서명 미완료 > 영수증 정보 미등록(1~2월은 서명보다 앞) > 첫 후원 감사(첫 후원 60일 안) > 봉사 신청 확인 > 없음. 저니가 그 일을 처리 중이면 `autoHandled` + 다음 실행. 목록·대시보드는 `nextActionsForMerchant`(기관 단위 일괄 — 후원자마다 쿼리 금지), 담당자 할 일 = `needsStaff`. 화면: `/studio/donors/[payerId]` 카드, 후원자 관리·후원자·봉사자 열·필터, 대시보드 한 줄.
+- **자동 안내 멈춤**(`outbound/pause.ts`): 열린 문의(OPEN)·진행 중 환불(REQUESTED·APPROVED)이면 관계·정보형 저니 단계와 대기열 안내를 하루씩 보류(기존 보류 기구). 거래·요청형은 멈추지 않는다.
+- **발송 분류표는 `outbound/classify.ts` 한 곳.** 표에 없는 템플릿 = 거래·요청형 = 지금처럼 바로 발송. 새 안내를 만들면 분류부터 적는다. 7일 상한 상수 `RELATIONAL_WEEKLY_CAP`(= `JOURNEY_WEEKLY_SEND_CAP`), 기준 (기관, 후원자) 유지.
+- **발송 대기열**(`outbound/coordinator.ts`, 표 `outbound_queue`, 배치 `/api/cron/outbound` 1분): 관계·정보형(저니 문자 단계·자동 문서 첫 안내·월간 안내)은 `sendRelational` 로만 보낸다 — 발송 키 유니크, `OUTBOUND_COALESCE_MINUTES`(기본 10분) 뒤 같은 (기관, 후원자) 대기분을 한 통(LMS 2,000바이트 넘으면 나눔)으로, 1건이면 원래 템플릿 그대로. 선점 = 후원자 advisory lock + QUEUED→SENDING(lockedBy), 15분 넘은 SENDING 은 다시 보내지 않고 UNKNOWN. 결과는 원천(저니 단계 기록·발급 문서·월간 안내 기록과 실행 집계)에 되돌려 적는다. 상한은 저니 기록 + 대기열 발송을 함께 센다(`relationalCapCount`); 저니가 예약하며 센 안내(`precounted`)는 다시 세지 않는다. 넘치면 낮은 우선순위(월간 < 누적·봉사 감사 < 감사장·연말 < 영수증 안내)부터 하루 보류, 3번이면 건너뜀. 야간 21~9시 공통. 묶음은 알림톡 템플릿이 없어 문자로 나간다.
+- **`OUTBOUND_COORDINATOR=off`** 면 대기열 없이 지금 경로 그대로(이미 쌓인 것만 배치가 보낸다). 테스트 기본은 묶음 대기 0(`tests/setup.ts`), 묶음 테스트만 늘린다.
+- **선호 채널** `payer_profile.preferred_channel`(ALIMTALK 기본·SMS) — `sendMtDetailed` 의 알림톡 경로 결정에서만 반영(화면은 2차 F).
+- **알림톡 결과 미확인(UNKNOWN)** 은 그대로 자동 재발송 없음. 닫을 때 본문 암호문을 `resend_body_enc`(14일)로 옮기고, `/studio/journeys` 목록의 "문자로 다시 보내기"가 `manual_resent_at` 조건부 선점으로 1회 보낸다(새 이력 행, `manual_resend_id`). 같은 화면에 최근 30일 안내 5단계(요청→접수→전달→열람→완료, `outbound/stage-stats.ts` — 열람·완료는 기존 기록만 잇고 없으면 "-")와 대기열 현황.

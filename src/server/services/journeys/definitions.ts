@@ -10,6 +10,9 @@ import { issuePurposeDocument, DOCUMENT_PURPOSE_LABEL, type DocumentPurpose, typ
 import type { JourneyDef, StepDef, StepEnv, StepOutcome, ParamValue } from './types';
 import type { StoredDomainEvent } from '../events';
 import { JourneyBlockedError } from './types';
+import { sendRelational } from '../outbound/coordinator';
+import type { RelationalKind } from '../outbound/classify';
+import type { TemplateOutput } from '../mt-templates';
 
 /**
  * 기본 저니 정의.
@@ -109,6 +112,28 @@ async function sentThisYear(merchantId: string, payerId: string, stepKeys: strin
 
 const RECEIPT_INFO_KEYS = ['receipt-info'];
 
+/**
+ * 관계·정보형 문자 단계 발송(2026-11-09 D2). 통합 발송 관리가 켜져 있으면 발송 대기열에 쌓아 같은 날 안내와 묶어 보낸다
+ * (발송 키 = 엔진의 발송 예약 키 `journey:{runId}:{stepKey}` — 대기열 결과가 이 단계 기록에 되돌아온다). 꺼져 있으면 지금처럼 바로.
+ * 엔진이 예약하며 7일 상한에 이미 셌으므로 precounted.
+ */
+async function sendRelationalStep(e: StepEnv, stepKey: string, kind: RelationalKind, template: TemplateOutput, retryMs: number, okDetail: string): Promise<StepOutcome> {
+  const r = await sendRelational({
+    merchantId: e.run.merchantId,
+    payerId: e.run.payerId!,
+    kind,
+    template,
+    sendKey: `journey:${e.run.id}:${stepKey}`,
+    source: 'journey',
+    sourceId: e.run.id,
+    precounted: true,
+    now: e.now,
+  });
+  if (r.mode === 'queued') return { type: 'done', sent: true, detail: r.detail };
+  if (r.mode === 'skipped') return { type: 'skip', detail: r.reason };
+  return r.ok ? { type: 'done', sent: true, detail: okDetail } : { type: 'retry', until: new Date(e.now.getTime() + retryMs), detail: retryMs >= 3_600_000 ? '문자 발송 실패 — 1시간 뒤 재시도' : '문자 발송 실패' };
+}
+
 const receiptInfoStep: StepDef = {
   key: 'receipt-info',
   label: '기부금영수증 정보 등록 안내',
@@ -128,13 +153,7 @@ const receiptInfoStep: StepDef = {
     return true;
   },
   async run(e) {
-    const ok = await sendMtForPayer(
-      e.run.payerId!,
-      tpl.tplReceiptInfoRequest({ merchantName: e.merchant.displayName, link: `${env.baseUrl}/my/receipts` }),
-      null,
-      e.run.merchantId,
-    );
-    return ok ? { type: 'done', sent: true, detail: '등록 안내 발송' } : { type: 'retry', until: new Date(e.now.getTime() + 3_600_000), detail: '문자 발송 실패 — 1시간 뒤 재시도' };
+    return sendRelationalStep(e, 'receipt-info', 'RECEIPT_INFO', tpl.tplReceiptInfoRequest({ merchantName: e.merchant.displayName, link: `${env.baseUrl}/my/receipts` }), 3_600_000, '등록 안내 발송');
   },
 };
 
@@ -290,13 +309,15 @@ export const JOURNEYS: JourneyDef[] = [
         sends: true,
         describe: () => '활동에 감사 인사와 누적 봉사 시간을 보냅니다.',
         async run(e) {
-          const ok = await sendMtForPayer(
-            e.run.payerId!,
+          const r = await sendRelationalStep(
+            e,
+            'volunteer-thanks-msg',
+            'VOLUNTEER_THANKS',
             tpl.tplVolunteerThanks({ merchantName: e.merchant.displayName, totalHours: (e.run.context.totalMinutes ?? 0) / 60 }),
-            null,
-            e.run.merchantId,
+            3_600_000,
+            '감사 문자 발송',
           );
-          return ok ? { type: 'done', sent: true, detail: '감사 문자 발송' } : { type: 'retry', until: new Date(e.now.getTime() + 3_600_000), detail: '문자 발송 실패' };
+          return r.type === 'retry' ? { ...r, detail: '문자 발송 실패' } : r;
         },
       },
       documentStep({

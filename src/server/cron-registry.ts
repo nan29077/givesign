@@ -47,6 +47,11 @@ export const CRON_JOBS: CronDef[] = [
     description: '알림톡 전달 결과 확인(솔라피) — 수신 완료 확정, 명시적 실패는 문자로 1회 대체, 2시간 무응답은 결과 미확인',
   },
   {
+    name: 'outbound', path: '/api/cron/outbound', schedule: '1분마다', eventBridge: 'rate(1 minute)',
+    intervalSec: 60, lockTtlSec: 55,
+    description: '통합 발송 관리 — 기한 된 정보성 안내를 후원자별로 묶어 한 통으로 발송(7일 상한·야간·담당자 확인 보류), 멈춘 발송은 결과 미확인으로',
+  },
+  {
     name: 'content', path: '/api/cron/content', schedule: '1시간마다', eventBridge: 'cron(0 * * * ? *)',
     intervalSec: 3600, lockTtlSec: 900,
     description: '콘텐츠 자율 생성(캘린더)·멈춘 생성 재개·SNS 예약 게시·지표 수집',

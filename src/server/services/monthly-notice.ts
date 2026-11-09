@@ -6,6 +6,7 @@ import { prisma } from '@/server/db';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { issueReceiptsBulk, issuerReadiness, doneeVerified } from './receipts';
 import { sendMtDetailed } from './charge-flow';
+import { coordinatorEnabled, sendRelational } from './outbound/coordinator';
 import { decrypt } from '@/lib/crypto';
 import * as tpl from './mt-templates';
 
@@ -181,7 +182,7 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
   const payerM = new Map(payers.map((p) => [p.id, p]));
   const link = `${env.baseUrl}/my/receipts`;
 
-  const counts = { recipients: 0, sent: 0, alimtalk: 0, fallback: 0, failed: 0, skipped: 0 };
+  const counts = { recipients: 0, sent: 0, alimtalk: 0, fallback: 0, failed: 0, skipped: 0, queued: 0 };
   let handled = 0;
   for (const row of monthly) {
     const payerId = row.payerId!;
@@ -208,37 +209,54 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
       continue;
     }
 
-    let status: 'SENT' | 'FAILED' = 'FAILED';
+    let status: 'SENT' | 'FAILED' | 'QUEUED' | 'SKIPPED' = 'FAILED';
     let channel: string | null = null;
     let mtId: string | null = null;
+    let skipNote: string | null = null;
     try {
-      const res = await sendMtDetailed({
-        phone: decrypt(payer!.phoneEnc),
-        template: tpl.tplMonthlyNotice({
-          merchantName: merchant.displayName,
-          month: monthKey,
-          amount,
-          count: row._count._all,
-          yearTotal: yearM.get(payerId) ?? amount,
-          link,
-        }),
-        merchantId,
+      const template = tpl.tplMonthlyNotice({
+        merchantName: merchant.displayName,
+        month: monthKey,
+        amount,
+        count: row._count._all,
+        yearTotal: yearM.get(payerId) ?? amount,
+        link,
       });
-      status = res.ok ? 'SENT' : 'FAILED';
-      channel = res.channel;
-      mtId = res.id;
-      if (res.ok) {
-        counts.sent += 1;
-        if (res.channel === 'ALIMTALK') counts.alimtalk += 1;
-      } else counts.failed += 1;
-      if (res.fallback) counts.fallback += 1;
+      // 통합 발송 관리(2026-11-09 D2): 켜져 있으면 발송 대기열로 — 같은 날 다른 정보성 안내와 묶고, 7일 상한·야간·담당자 확인 보류를 함께 적용한다.
+      // 기록을 먼저 QUEUED 로 두고 쌓는다. 보낸 뒤 대기열이 SENT/FAILED/SKIPPED 와 실행 집계를 적는다(QUEUED 일 때만).
+      let res: { ok: boolean; id: string | null; channel: string | null; fallback: boolean } | null = null;
+      if (coordinatorEnabled()) {
+        await prisma.noticeDelivery.update({ where: { id: deliveryId }, data: { status: 'QUEUED' } });
+        const routed = await sendRelational({ merchantId, payerId, kind: 'MONTHLY_NOTICE', template, sendKey: `notice:${deliveryId}`, source: 'notice', sourceId: deliveryId, precounted: false });
+        if (routed.mode === 'queued') status = 'QUEUED';
+        else if (routed.mode === 'skipped') {
+          status = 'SKIPPED';
+          skipNote = routed.reason;
+        } else res = { ok: routed.ok, id: routed.mtId, channel: routed.channel, fallback: routed.fallback };
+      } else {
+        res = await sendMtDetailed({ phone: decrypt(payer!.phoneEnc), template, merchantId });
+      }
+      if (status === 'QUEUED') counts.queued += 1;
+      else if (status === 'SKIPPED') counts.skipped += 1;
+      else if (res) {
+        status = res.ok ? 'SENT' : 'FAILED';
+        channel = res.channel;
+        mtId = res.id;
+        if (res.ok) {
+          counts.sent += 1;
+          if (res.channel === 'ALIMTALK') counts.alimtalk += 1;
+        } else counts.failed += 1;
+        if (res.fallback) counts.fallback += 1;
+      }
     } catch (e) {
       counts.failed += 1;
       logger.warn('월간 안내 발송 예외', { message: (e as Error).message });
     }
-    await prisma.noticeDelivery
-      .update({ where: { id: deliveryId }, data: { status, channel, mtMessageId: mtId } })
-      .catch((e) => logger.warn('월간 안내 발송 결과 기록 실패', { message: (e as Error).message }));
+    if (status !== 'QUEUED') {
+      await prisma.noticeDelivery
+        .update({ where: { id: deliveryId }, data: { status, channel, mtMessageId: mtId, ...(skipNote ? { reason: skipNote.slice(0, 200) } : {}) } })
+        .catch((e) => logger.warn('월간 안내 발송 결과 기록 실패', { message: (e as Error).message }));
+    }
 
     handled += 1;
     if (handled % HEARTBEAT_EVERY === 0) {

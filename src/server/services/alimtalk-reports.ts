@@ -102,13 +102,14 @@ export async function processAlimtalkReports(now = new Date()): Promise<Alimtalk
   const deadline = new Date(now.getTime() - ALIMTALK_REPORT_TIMEOUT_MS);
   const expired = await prisma.mtOutboundMessage.findMany({
     where: { status: 'ACCEPTED', acceptedAt: { lt: deadline } },
-    select: { id: true, chargeId: true },
+    select: { id: true, chargeId: true, bodyEnc: true },
     take: BATCH,
   });
   for (const r of expired) {
     const u = await prisma.mtOutboundMessage.updateMany({
       where: { id: r.id, status: 'ACCEPTED' },
-      data: { status: 'UNKNOWN', bodyEnc: null, reportCheckedAt: now, resultMessage: '알림톡 전달 결과를 받지 못했습니다. 수신 여부를 확인해 주세요(자동 재발송하지 않음).' },
+      // 본문 암호문은 기관 콘솔 "문자로 다시 보내기"(수동 1회, 2026-11-09 D) 용으로만 옮겨 두고 14일 뒤 지운다(자동 재발송 없음).
+      data: { status: 'UNKNOWN', bodyEnc: null, resendBodyEnc: r.bodyEnc, reportCheckedAt: now, resultMessage: '알림톡 전달 결과를 받지 못했습니다. 수신 여부를 확인해 주세요(자동 재발송하지 않음).' },
     });
     if (u.count) {
       out.unknown += 1;

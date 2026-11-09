@@ -11,6 +11,8 @@ import { sourceLabel } from '@/lib/attribution';
 import { listSupporters, pendingPledgeRequests, PLEDGE_REMINDER_INTERVAL_DAYS, ROLE_LABEL, SEGMENT_LABEL, SEGMENTS, type Segment, type SupporterRole } from '@/server/services/supporters';
 import { pledgeReminderAction } from '@/app/actions/automation';
 import { marketingConsentPayerIds } from '@/server/services/marketing-consent';
+import { needsStaff, nextActionsForMerchant } from '@/server/services/next-action';
+import { NextActionBadge } from '@/components/studio/next-action-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +24,7 @@ const ROLES = ['all', 'DONOR', 'VOLUNTEER', 'BOTH', 'CONTACT'] as const;
  * 한 사람을 기준으로 후원(누적·횟수·최근)·정기 약정·자원봉사(상태·활동 시간)·기관 명단을 한 줄로 본다.
  * 세그먼트는 "다음에 할 일" 기준이다(정기 전환 대상, 휴면, 봉사만 등). 전화번호 원문은 어디에도 보이지 않는다.
  */
-export default async function StudioSupportersPage({ searchParams }: { searchParams: Promise<{ q?: string; seg?: string; role?: string; consent?: string }> }) {
+export default async function StudioSupportersPage({ searchParams }: { searchParams: Promise<{ q?: string; seg?: string; role?: string; consent?: string; next?: string }> }) {
   const { merchantId } = await requireMerchant();
   const sp = await searchParams;
   const q = (sp.q ?? '').trim();
@@ -33,11 +35,17 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
   const consentOnly = sp.consent === '1';
   const consented = (r: { payerId: string | null }) => Boolean(r.payerId && consentIds.has(r.payerId));
   const consentCount = all.filter(consented).length;
+  // 다음 할 일(2026-11-09 D1) — 기관 단위로 한꺼번에 계산(후원자마다 쿼리하지 않음)
+  const nextActions = await nextActionsForMerchant(merchantId, all.map((r) => r.payerId).filter((x): x is string => Boolean(x)));
+  const nextOf = (r: { payerId: string | null }) => (r.payerId ? nextActions.get(r.payerId) : undefined);
+  const nextOnly = sp.next === '1';
+  const nextCount = all.filter((r) => needsStaff(nextOf(r))).length;
 
   const count = (s: Segment) => all.filter((r) => r.segments.includes(s)).length;
   let rows = all.filter((r) => r.segments.includes(seg));
   if (role !== 'all') rows = rows.filter((r) => r.role === role);
   if (consentOnly) rows = rows.filter(consented);
+  if (nextOnly) rows = rows.filter((r) => needsStaff(nextOf(r)));
   if (q) rows = rows.filter((r) => r.name.includes(q) || r.phoneMasked.includes(q) || r.tags.some((t) => t.includes(q)));
   rows.sort((a, b) => (b.lastDonatedAt?.getTime() ?? 0) - (a.lastDonatedAt?.getTime() ?? 0) || Number(b.totalAmount - a.totalAmount));
 
@@ -78,12 +86,19 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
         >
           소식 수신 동의만 <span className="ml-1 tabular-nums opacity-70">{consentCount}</span>
         </Link>
+        <Link
+          href={`/studio/supporters?seg=${seg}${role !== 'all' ? `&role=${role}` : ''}${consentOnly ? '&consent=1' : ''}${nextOnly ? '' : '&next=1'}`}
+          className={`rounded-full border px-3 py-1.5 text-[12.5px] font-bold ${nextOnly ? 'border-brand-700 bg-brand-700 text-white' : 'border-dashed border-ink-300 bg-white text-ink-600'}`}
+        >
+          다음 할 일 있음 <span className="ml-1 tabular-nums opacity-70">{nextCount}</span>
+        </Link>
       </div>
 
       <Card className="mb-4">
         <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" method="get">
           <input type="hidden" name="seg" value={seg} />
           {consentOnly ? <input type="hidden" name="consent" value="1" /> : null}
+          {nextOnly ? <input type="hidden" name="next" value="1" /> : null}
           <Input name="q" defaultValue={q} placeholder="이름 · 번호 끝자리 · 태그" />
           <Select name="role" aria-label="구성원 구분" defaultValue={role}>
             <option value="all">구분 전체</option>
@@ -106,6 +121,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
               <Th>정기</Th>
               <Th>봉사</Th>
               <Th>첫 유입</Th>
+              <Th>다음 할 일</Th>
             </tr>
           </thead>
           <tbody>
@@ -128,6 +144,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
                 <Td>{r.recurring ? <Badge tone={r.recurring.status === 'ACTIVE' ? 'brand' : 'warning'}>매월 {r.recurring.dayOfMonth}일 {formatWon(r.recurring.amount)}</Badge> : <span className="text-ink-300">-</span>}</Td>
                 <Td>{r.volunteer ? <span className="text-[12.5px]"><Badge tone={r.volunteer.status === 'APPROVED' ? 'success' : 'neutral'}>{r.volunteer.status === 'APPROVED' ? '활동 중' : r.volunteer.status === 'RECEIVED' ? '접수' : '기록'}</Badge> <span className="tabular-nums text-ink-500">{(r.volunteer.minutes / 60).toFixed(1)}시간</span></span> : <span className="text-ink-300">-</span>}</Td>
                 <Td className="text-[12.5px] text-ink-500">{r.firstSource ? sourceLabel(r.firstSource) : '-'}</Td>
+                <Td>{r.payerId ? <Link href={`/studio/donors/${r.payerId}`}><NextActionBadge action={nextOf(r)} /></Link> : <span className="text-ink-300">-</span>}</Td>
               </tr>
             ))}
           </tbody>

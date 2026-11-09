@@ -9,6 +9,8 @@ import { formatNumber, formatWon } from '@/lib/money';
 import { displayPayerName } from '@/lib/payer-name';
 import { foldMergedSums } from '@/server/services/payer-merge';
 import { offlineTotalsByPayer } from '@/server/services/deposits';
+import { needsStaff, nextActionsForMerchant } from '@/server/services/next-action';
+import { NextActionBadge } from '@/components/studio/next-action-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
   const sp = await searchParams;
   const q = (sp.q ?? '').trim();
   const sort: Sort = SORTS.includes(sp.sort as Sort) ? (sp.sort as Sort) : 'recent';
-  const filter = sp.filter === 'recurring' || sp.filter === 'lapsed' || sp.filter === 'receipt' ? sp.filter : 'all';
+  const filter = sp.filter === 'recurring' || sp.filter === 'lapsed' || sp.filter === 'receipt' || sp.filter === 'next' ? sp.filter : 'all';
 
   // 누적은 결제 성공 건 집계로 계산한다(payer_merchant_link 의 totalAmount 는 환불 전 값이 남을 수 있다).
   // 관리자가 병합한 후원자(번호 변경 등)는 대상 후원자 한 줄로 합산한다(결제 건은 옮기지 않는다).
@@ -40,7 +42,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
   });
   const { sums, mergedCount } = await foldMergedSums(rawSums);
   const payerIds = sums.map((s) => s.payerId!).filter(Boolean);
-  const [payers, recurring, profiles, members, memberCount, offline] = await Promise.all([
+  const [payers, recurring, profiles, members, memberCount, offline, nextActions] = await Promise.all([
     prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, displayName: true, phoneMasked: true, phoneHash: true } }),
     prisma.recurringDonation.findMany({ where: { merchantId, payerId: { in: payerIds }, status: { in: ['ACTIVE', 'PAUSED', 'SUSPENDED'] } }, select: { payerId: true, status: true, amount: true, dayOfMonth: true } }),
     prisma.payerReceiptProfile.findMany({ where: { payerId: { in: payerIds } }, select: { payerId: true } }),
@@ -54,6 +56,8 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
     prisma.donorMember.count({ where: { merchantId, status: 'ACTIVE' } }),
     // 기관 통장 계좌이체 확정분(입금 맞추기). 결제 누적과 합치지 않고 따로 보여 준다(2026-11-09 E).
     offlineTotalsByPayer(merchantId),
+    // 다음 할 일(2026-11-09 D1) — 기관 단위로 한꺼번에 계산(후원자마다 쿼리하지 않음)
+    nextActionsForMerchant(merchantId, payerIds),
   ]);
   const offlineOnly = [...offline.keys()].filter((id) => !payerIds.includes(id)).length;
   const memberPhones = new Set(members.map((m) => m.phoneHash).filter(Boolean));
@@ -78,12 +82,14 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
       receiptReady: receiptReady.has(s.payerId!),
       lapsed: (s._max.paidAt?.getTime() ?? 0) < ninetyDaysAgo && !r,
       merged: (mergedCount.get(s.payerId!) ?? 0) > 0,
+      next: nextActions.get(s.payerId!),
     };
   });
   if (q) rows = rows.filter((r) => r.name.includes(q) || r.phoneMasked.includes(q));
   if (filter === 'recurring') rows = rows.filter((r) => r.recurring);
   if (filter === 'lapsed') rows = rows.filter((r) => r.lapsed);
   if (filter === 'receipt') rows = rows.filter((r) => r.receiptReady);
+  if (filter === 'next') rows = rows.filter((r) => needsStaff(r.next));
   rows.sort((a, b) =>
     sort === 'amount' ? Number(b.total - a.total) : sort === 'count' ? b.count - a.count : (b.last?.getTime() ?? 0) - (a.last?.getTime() ?? 0),
   );
@@ -115,6 +121,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
             <option value="recurring">정기후원자</option>
             <option value="lapsed">90일 이상 후원 없음</option>
             <option value="receipt">영수증 정보 등록</option>
+            <option value="next">다음 할 일 있음</option>
           </Select>
           <Select name="sort" aria-label="정렬 기준" defaultValue={sort}>
             <option value="recent">최근 후원순</option>
@@ -138,6 +145,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
               <Th>최근 후원</Th>
               <Th>정기후원</Th>
               <Th>영수증</Th>
+              <Th>다음 할 일</Th>
               <Th></Th>
             </tr>
           </thead>
@@ -145,7 +153,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
             {rows.map((r) => (
               <tr key={r.payerId}>
                 <Td>
-                  <span className="font-semibold text-ink-900">{r.name}</span>
+                  <Link href={`/studio/donors/${r.payerId}`} className="font-semibold text-ink-900 hover:underline">{r.name}</Link>
                   <span className="ml-2 font-mono text-[12px] text-ink-400">{r.phoneMasked}</span>
                   {r.member ? <Badge tone="brand" className="ml-2">회원</Badge> : null}
                   {r.lapsed ? <Badge tone="warning" className="ml-2">휴면</Badge> : null}
@@ -168,6 +176,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
                   )}
                 </Td>
                 <Td>{r.receiptReady ? <Badge tone="success">정보 등록</Badge> : <span className="text-ink-300">미등록</span>}</Td>
+                <Td><NextActionBadge action={r.next} /></Td>
                 <Td>
                   <Link href={`/studio/charges?q=${encodeURIComponent(r.phoneMasked.slice(-4))}`} className="text-[12.5px] font-bold text-brand-700">후원 내역</Link>
                 </Td>

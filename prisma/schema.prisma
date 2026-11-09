@@ -515,6 +515,8 @@ model PayerProfile {
   mergedAt               DateTime?             @map("merged_at") @db.Timestamptz(3)
   mergedBy               String?               @map("merged_by")
   mergeNote              String?               @map("merge_note")
+  /// 안내 받을 채널 선호 (2026-11-09 D): ALIMTALK(알림톡 우선, 기본 — 기관 채널이 없으면 문자) · SMS(문자만). 화면은 2차 F
+  preferredChannel       String                @default("ALIMTALK") @map("preferred_channel")
   createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1187,6 +1189,11 @@ model MtOutboundMessage {
   reportCheckedAt   DateTime?      @map("report_checked_at") @db.Timestamptz(3)
   /// 전달 실패 시 같은 본문을 문자로 대체하기 위한 원문 암호문. 결과가 확정되면 지운다.
   bodyEnc           String?        @map("body_enc")
+  /// 2시간 무응답(UNKNOWN)으로 닫을 때 옮겨 둔 본문 암호문 — 기관 콘솔 "문자로 다시 보내기"(수동 1회)에만 쓰고, 보내거나 14일이 지나면 지운다 (2026-11-09 D)
+  resendBodyEnc     String?        @map("resend_body_enc")
+  /// 수동 문자 재발송 선점 시각(1회)과 새 발송 이력 id
+  manualResentAt    DateTime?      @map("manual_resent_at") @db.Timestamptz(3)
+  manualResendId    String?        @map("manual_resend_id")
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
 
   charge Charge? @relation(fields: [chargeId], references: [id])
@@ -3505,7 +3512,7 @@ model NoticeDelivery {
   id          String   @id
   noticeRunId String   @map("notice_run_id")
   payerId     String   @map("payer_id")
-  /// SENDING(발송 전 선점) · SENT · FAILED · SKIPPED
+  /// SENDING(발송 전 선점) · SENT · FAILED · SKIPPED · QUEUED(통합 발송 관리 대기열에 쌓임 — 보낸 뒤 결과로 바뀜)
   status      String
   channel     String?
   amount      BigInt   @default(0)
@@ -4745,4 +4752,51 @@ model InboxAssignment {
   @@unique([merchantId, itemKey])
   @@index([resolvedAt, dueAt])
   @@map("inbox_assignment")
+}
+
+/// 관계·정보형 안내 발송 대기열 (2026-11-09 D2, `services/outbound/coordinator.ts`).
+/// 정보형 안내를 바로 보내지 않고 짧게 기다렸다가 같은 (기관, 후원자) 대기분을 한 통으로 묶어 보낸다.
+/// 거래·요청형(인증번호·결제 링크·서명 요청·결제 실패/복구 안내 등)은 이 표를 거치지 않는다. OUTBOUND_COORDINATOR=off 면 쓰지 않는다.
+model OutboundQueue {
+  id           String    @id
+  merchantId   String    @map("merchant_id")
+  payerId      String    @map("payer_id")
+  /// 안내 종류(outbound/classify.ts RELATIONAL_KIND) — 우선순위·완료 판단의 기준
+  kind         String
+  /// 상한을 넘을 때 높은 것부터 보낸다(월간 안내 1 < 누적 감사 2 < 감사장 3 < 영수증 안내 4)
+  priority     Int
+  /// 원래 안내의 발송 키(저니 `journey:{runId}:{stepKey}` · `issued:{발급 문서 id}` · `notice:{월간 안내 기록 id}`). 같은 키는 한 번만 쌓인다
+  sendKey      String    @unique @map("send_key")
+  /// journey · issued_document · notice — 결과를 되돌려 적을 원천
+  source       String
+  sourceId     String?   @map("source_id")
+  /// 저니 발송 예약에서 이미 7일 상한에 센 안내(대기열에서 다시 세거나 보류하지 않는다)
+  precounted   Boolean   @default(false)
+  templateCode String    @map("template_code")
+  /// 보낼 템플릿(본문·치환값) 암호문. 보내거나 끝나면 지운다
+  templateEnc  String?   @map("template_enc")
+  /// 마스킹 본문(링크 토큰 제거)
+  bodyMasked   String    @map("body_masked")
+  /// QUEUED · SENDING · SENT · FAILED · SKIPPED · UNKNOWN(발송 중 멈춤 — 다시 보내지 않음)
+  status       String    @default("QUEUED")
+  dueAt        DateTime  @map("due_at") @db.Timestamptz(3)
+  /// 상한·담당자 확인 보류 횟수(3번 넘으면 건너뜀)
+  deferrals    Int       @default(0)
+  attempts     Int       @default(0)
+  lastReason   String?   @map("last_reason")
+  lockedAt     DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy     String?   @map("locked_by")
+  /// 함께 묶여 한 통으로 나간 안내끼리 같은 값
+  bundleId     String?   @map("bundle_id")
+  /// 실제 발송 이력(mt_outbound_message.id). 묶음이면 여러 안내가 같은 id
+  mtMessageId  String?   @map("mt_message_id")
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status, dueAt])
+  @@index([merchantId, payerId, status])
+  @@index([merchantId, createdAt])
+  @@index([mtMessageId])
+  @@map("outbound_queue")
 }
