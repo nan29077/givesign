@@ -17,6 +17,9 @@ export const RELATIONAL_KIND = {
   THANKS_LETTER: { label: '감사장', priority: 3 },
   YEAR_END_THANKS: { label: '연말 감사장', priority: 3 },
   RECEIPT_INFO: { label: '영수증 정보 등록 안내', priority: 4 },
+  // 2026-11-09 3차 H — 정보성 문서 안내(권유 문구 없음)
+  IMPACT_REPORT: { label: '후원금 사용 결과 보고', priority: 2 },
+  ANNUAL_NOTICE: { label: '후원금 연간 통보', priority: 4 },
 } as const;
 
 export type RelationalKind = keyof typeof RELATIONAL_KIND;
@@ -43,6 +46,8 @@ const DOCUMENT_PURPOSE_KIND: Record<string, RelationalKind> = {
   YEAR_END_THANKS: 'YEAR_END_THANKS',
   VOLUNTEER_THANKS: 'VOLUNTEER_THANKS',
   VOLUNTEER_CONFIRMATION: 'VOLUNTEER_THANKS',
+  IMPACT_REPORT: 'IMPACT_REPORT',
+  ANNUAL_DONATION_NOTICE: 'ANNUAL_NOTICE',
 };
 
 /** 저니 단계 → 관계·정보형 종류. 봉사 전날 일정 안내·정기후원 재개 안내는 신청·약정 상태 안내라 거래·요청형(멈추지 않음). */

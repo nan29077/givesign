@@ -27,6 +27,7 @@ import { isOptimizableImage } from '@/lib/image-src';
 import { ProgressBar } from '@/components/public/progress-bar';
 import { listOpenPostings } from '@/server/services/volunteer-postings';
 import { shiftWhenLabel } from '@/lib/volunteer-schedule';
+import { publicImpactUpdates } from '@/server/services/impact-reports';
 
 /**
  * 공개 후원페이지 `/donate/[code]` 와 캠페인 상세 `/donate/[code]/campaigns/[id]`.
@@ -220,6 +221,8 @@ function Landing({
             {campaign.beneficiary ? <TextSection title="지원 대상" body={campaign.beneficiary} /> : null}
             {campaign.usagePlan ? <TextSection title="후원금 사용 계획" body={campaign.usagePlan} /> : null}
             {campaign.status === 'CLOSED' && campaign.resultReport ? <TextSection title="결과 보고" body={campaign.resultReport} /> : null}
+            {/* 2026-11-09 3차 H: 기관이 공개로 둔 승인된 진행 기록(기본 비공개) */}
+            <ImpactPublicSection merchantId={org.id} campaignId={campaign.id} />
           </>
         ) : null}
 
@@ -431,5 +434,33 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
       <dt className="w-28 shrink-0 text-ink-400">{k}</dt>
       <dd className="min-w-0 break-words font-semibold text-ink-800">{v}</dd>
     </div>
+  );
+}
+
+/** 공개 캠페인 상세의 진행 기록(기관이 공개로 둔 승인·발송 기록만, 2026-11-09 3차 H). */
+async function ImpactPublicSection({ merchantId, campaignId }: { merchantId: string; campaignId: string }) {
+  const rows = await publicImpactUpdates(merchantId, campaignId).catch(() => []);
+  if (!rows.length) return null;
+  return (
+    <section>
+      <SectionHead title="사업 진행 소식" />
+      <ul className="space-y-3">
+        {rows.map((r) => (
+          <li key={r.id} className="rounded-[24px] border border-ink-100 bg-white p-5">
+            <p className="text-[15px] font-black text-ink-900">{r.title}</p>
+            {r.at ? <p className="mt-0.5 text-[12px] text-ink-400">{r.at.toISOString().slice(0, 10)}</p> : null}
+            <p className="mt-2 whitespace-pre-wrap text-[14px] leading-7 text-ink-700">{r.text}</p>
+            {r.photos.length ? (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {r.photos.map((p) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={p} src={p} alt="사업 진행 사진" className="aspect-square w-full rounded-xl object-cover" />
+                ))}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

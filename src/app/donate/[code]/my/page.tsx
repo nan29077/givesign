@@ -13,6 +13,7 @@ import { loadDonorContext } from '../_shell';
 import { donorDonationHistory } from '@/server/services/donor-history';
 import { memberScope } from '@/server/services/donor-self-service';
 import { MemberMyNav } from './_member';
+import { DonorImpactList } from '@/components/self-service/impact-list';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: '후원 회원 마이페이지', robots: { index: false } };
@@ -114,6 +115,9 @@ export default async function DonorMyPage({ params, searchParams }: { params: Pr
             </>
           )}
         </section>
+
+        {/* 2026-11-09 3차 H: 이 기관에서 함께한 사업(진행 기록·결과 보고) */}
+        {scope ? <DonorImpactList payerId={scope.payerId} merchantId={ctx.org.id} color={ctx.color} /> : null}
 
         {data.recurring.length > 0 ? (
           <section className="rounded-[24px] border border-ink-100 bg-white p-5">

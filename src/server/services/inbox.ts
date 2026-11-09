@@ -6,6 +6,14 @@ import { walletOverview } from './edoc-billing';
 import { APPROVAL_KIND_LABEL, APPROVAL_STALE_PROCESSING_MS, type ApprovalKind } from './approvals';
 import { getStudioPendingCounts } from './studio-pending';
 
+/** 승인 요청 → 열 화면(2026-11-09 3차 H: 결과 보고·연간 통보 추가) */
+function approvalHref(kind: string): string {
+  if (kind === 'RECEIPT_BATCH') return '/studio/receipts';
+  if (kind === 'IMPACT_REPORT_SEND') return '/studio/impact';
+  if (kind === 'ANNUAL_NOTICE_SEND') return '/studio/reports/legal';
+  return '/studio/journeys';
+}
+
 /**
  * 통합 승인 대기함 + 자동화 준비도.
  *
@@ -72,7 +80,7 @@ export async function inboxItems(merchantId: string) {
       title: a.title,
       summary: a.summary,
       at: a.createdAt,
-      href: a.kind === 'RECEIPT_BATCH' ? '/studio/receipts' : '/studio/journeys',
+      href: approvalHref(a.kind),
       approvalId: a.id,
       error: a.error,
       ...approvalImpact(a.payload, a.payerId),
@@ -90,7 +98,6 @@ export async function inboxItems(merchantId: string) {
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
 
   const stale = Date.now() - APPROVAL_STALE_PROCESSING_MS;
-  const approvalHref = (kind: string) => (kind === 'RECEIPT_BATCH' ? '/studio/receipts' : '/studio/journeys');
   const waiting: InboxItem[] = [
     ...inFlight
       .filter((a) => a.status !== 'FAILED')

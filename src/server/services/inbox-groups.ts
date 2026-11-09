@@ -6,6 +6,7 @@ import { featureContentEnabled } from '@/lib/env';
 import { PREFLIGHT_BLOCK_PREFIX } from './purpose-documents';
 import { recurringRecoveryInboxGroup } from './recurring-recovery';
 import { depositsInboxGroup } from './deposits';
+import { legalDocsInboxGroup } from './legal-reports';
 
 /**
  * 승인 대기함 — 원인별 묶음(예외 그룹) (2026-11-09 과제 C1).
@@ -402,6 +403,8 @@ function ensureDefaults() {
   });
   // 2026-11-09 E — 통장 입금 중 후원자 확인이 필요한 건(입금 맞추기)
   def('offline-deposits', '입금 확인 필요', (ctx) => depositsInboxGroup(ctx.merchantId));
+  // 2026-11-09 3차 H — 결산 시기(기본 2~3월) 법정 서류 준비
+  def('legal-docs', '법정 서류 준비', (ctx) => legalDocsInboxGroup(ctx.merchantId, ctx.now));
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */

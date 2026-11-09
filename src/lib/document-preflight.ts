@@ -1,4 +1,5 @@
 import { MERGE_FIELD_KEYS, mergeKeysIn } from '@/lib/merge-fields';
+import { personalAllocationHit, solicitationHit } from '@/lib/solicitation';
 
 /**
  * 문서 발송 전 점검 — 순수 판정(화면·서버·테스트 공용, DB·파일을 읽지 않는다).
@@ -25,7 +26,9 @@ export type PreflightCode =
   | 'TEXT_OVERFLOW'
   | 'UNKNOWN_FIELD'
   | 'OUTLIER_VALUE'
-  | 'TABLE_OVERFLOW';
+  | 'TABLE_OVERFLOW'
+  /** 정보성 안내(결과 보고·연 1회 통보)에 후원 권유·링크·개인별 사용처 문구 (2026-11-09 3차 H) */
+  | 'SOLICITATION_TEXT';
 
 export interface PreflightIssue {
   code: PreflightCode;
@@ -52,7 +55,13 @@ export const PURPOSE_REQUIRED_FIELDS: Record<string, readonly string[]> = {
   VOLUNTEER_CONFIRMATION: ['후원자명', '기관명', '활동시간'],
   VOLUNTEER_THANKS: ['후원자명', '기관명'],
   RECURRING_CHANGE: ['후원자명', '기관명'],
+  // 2026-11-09 3차 H — 정보성 안내
+  IMPACT_REPORT: ['후원자명', '기관명', '보고내용'],
+  ANNUAL_DONATION_NOTICE: ['후원자명', '기관명', '귀속연도'],
 };
+
+/** 정보성 안내 용도(후원 권유 문구 검사 대상, 2026-11-09 3차 H). 다른 용도의 점검 결과는 바뀌지 않는다. */
+export const INFORMATIONAL_PURPOSES: readonly string[] = ['IMPACT_REPORT', 'ANNUAL_DONATION_NOTICE'];
 
 /**
  * 용도별 권장 머지 필드 — 비면 막지 않고 경고만 한다.
@@ -70,6 +79,11 @@ export const BODY_FIELD_CHAR_LIMIT: Record<string, number> = {
   활동명: 30,
   배정: 40,
   기관명: 30,
+  // 2026-11-09 3차 H — 여러 줄 본문 값(보고서·사용 요약)
+  보고제목: 60,
+  보고내용: 6000,
+  사용요약: 3000,
+  참여내역: 80,
 };
 export const BODY_FIELD_CHAR_DEFAULT = 40;
 
@@ -198,6 +212,25 @@ export function runPreflight(input: PreflightInput): PreflightResult {
     const nowY = kstYear(input.now ?? new Date());
     if (!Number.isInteger(y) || y < 2000) block('AMOUNT_INVALID', '「귀속연도」 값이 올바르지 않습니다.', '귀속연도');
     else if (y > nowY) block('YEAR_IN_FUTURE', `「귀속연도」 ${y}년이 아직 오지 않은 해입니다.`, '귀속연도');
+  }
+
+  // ── 정보성 안내: 권유 문구·링크·개인별 사용처(경고 — 2026-11-09 3차 H)
+  if (t.purpose && INFORMATIONAL_PURPOSES.includes(t.purpose)) {
+    const texts = [t.body ?? '', ...(t.pdfTexts ?? []), val('보고내용'), val('사용요약')];
+    for (const x of texts) {
+      const hit = solicitationHit(x);
+      if (hit) {
+        warn('SOLICITATION_TEXT', `정보성 안내에 후원 권유로 읽히는 문구·링크가 있습니다: 「${hit}」`);
+        break;
+      }
+    }
+    for (const x of texts) {
+      const hit = personalAllocationHit(x);
+      if (hit) {
+        warn('SOLICITATION_TEXT', `개인별 사용처로 읽히는 문구가 있습니다(캠페인 전체 결과로 써 주세요): 「${hit}」`);
+        break;
+      }
+    }
   }
 
   // ── 모르는 필드

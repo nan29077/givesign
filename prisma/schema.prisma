@@ -4828,3 +4828,106 @@ model RecurringChangeLog {
   @@index([merchantId, createdAt])
   @@map("recurring_change_log")
 }
+
+/// 사업 진행 기록 · 후원금 사용 결과 보고 (2026-11-09 3차 H1). 캠페인(비우면 기관 일반 후원)에 붙는다.
+/// 개인별 사용처를 만들지 않는다 — 보고서는 캠페인 전체 결과이고, 후원자 본인 참여 합계는 발송 때 따로 채운다.
+model ImpactUpdate {
+  id             String    @id
+  merchantId     String    @map("merchant_id")
+  /// 연결 캠페인. 비우면 기관 일반 후원(대상 기간의 비지정 후원자)
+  campaignId     String?   @map("campaign_id")
+  title          String
+  body           String
+  /// 기관이 올린 사진(자체 저장소 주소, 최대 3장). 수혜자 실사진·실명 금지 확인(photo_rule_ack_at) 뒤에만 저장한다
+  photos         String[]  @default([])
+  photoRuleAckAt DateTime? @map("photo_rule_ack_at") @db.Timestamptz(3)
+  /// 기관 일반 후원 보고의 대상 기간(KST 날짜, 양끝 포함). 캠페인 보고는 비운다(캠페인 전체)
+  periodFrom     DateTime? @map("period_from") @db.Date
+  periodTo       DateTime? @map("period_to") @db.Date
+  /// DRAFT · APPROVED · SENT
+  status         String    @default("DRAFT")
+  /// 후원자용 보고서 본문(캠페인 전체 결과). AI 초안·규칙 문안을 담당자가 확인한 것
+  report         String?
+  /// AI · RULE(규칙 문안) · EDITED(담당자 수정)
+  reportSource   String?   @map("report_source")
+  /// 보고서를 만들 때 쓴 숫자 근거(모금 합계·집행 합계·건수)
+  reportFacts    Json?     @map("report_facts")
+  /// 공개 후원페이지 캠페인 상세에 보일지(기관 선택, 기본 안 보임). APPROVED·SENT 만 보인다
+  publicVisible  Boolean   @default(false) @map("public_visible")
+  approvedBy     String?   @map("approved_by")
+  approvedAt     DateTime? @map("approved_at") @db.Timestamptz(3)
+  sentAt         DateTime? @map("sent_at") @db.Timestamptz(3)
+  createdBy      String    @map("created_by")
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  expenses FundExpense[]
+
+  @@index([merchantId, status, createdAt])
+  @@index([campaignId, status])
+  @@map("impact_update")
+}
+
+/// 후원금 사용 명세 (2026-11-09 3차 H1·H2). 사업 진행 기록의 집행 내역과 법정 서류 사용 명세가 같은 표를 쓴다(중복 입력 없음).
+model FundExpense {
+  id             String    @id
+  merchantId     String    @map("merchant_id")
+  /// 지정 용도(캠페인). 비우면 비지정(기관 일반)
+  campaignId     String?   @map("campaign_id")
+  /// 이 집행을 보고한 사업 진행 기록
+  impactUpdateId String?   @map("impact_update_id")
+  /// 사용일(KST 날짜)
+  usedOn         DateTime  @map("used_on") @db.Date
+  description    String
+  amount         BigInt
+  createdBy      String    @map("created_by")
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  impactUpdate ImpactUpdate? @relation(fields: [impactUpdateId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, usedOn])
+  @@index([merchantId, campaignId])
+  @@index([impactUpdateId])
+  @@map("fund_expense")
+}
+
+/// 후원금 수입·사용 연 1회 통보 기록 (2026-11-09 3차 H2). (기관, 연도, 후원자) 한 번만.
+model LegalNoticeDelivery {
+  id               String   @id
+  merchantId       String   @map("merchant_id")
+  taxYear          Int      @map("tax_year")
+  payerId          String   @map("payer_id")
+  approvalId       String?  @map("approval_id")
+  issuedDocumentId String?  @map("issued_document_id")
+  /// SENDING · SENT · FAILED
+  status           String   @default("SENDING")
+  reason           String?
+  /// 통보에 쓴 본인 수입 합계·건수
+  amount           BigInt   @default(0)
+  count            Int      @default(0)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, taxYear, payerId])
+  @@index([merchantId, taxYear, status])
+  @@map("legal_notice_delivery")
+}
+
+/// 법정 서류 설정 (2026-11-09 3차 H2). 결산 시기(승인 대기함 "법정 서류 준비" 알림)와 준비 완료 표시.
+model LegalReportSetting {
+  merchantId       String    @id @map("merchant_id")
+  /// 결산 시기 시작·끝 달(KST, 1~12). 기본 2월~3월
+  seasonStartMonth Int       @default(2) @map("season_start_month")
+  seasonEndMonth   Int       @default(3) @map("season_end_month")
+  /// 결과 보고서를 내려받아 준비를 마친 가장 최근 귀속 연도(그해 알림을 닫는다)
+  preparedYear     Int?      @map("prepared_year")
+  preparedAt       DateTime? @map("prepared_at") @db.Timestamptz(3)
+  updatedBy        String?   @map("updated_by")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("legal_report_setting")
+}

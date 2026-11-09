@@ -38,6 +38,10 @@ export const DOCUMENT_PURPOSES = [
    * 이 서식은 기관이 서면 변경·해지 신청을 따로 받을 때 전자문서 센터에서 직접 보내는 용도로만 쓴다.
    */
   'RECURRING_CHANGE',
+  /** 후원금 사용 결과(사업 진행) 보고 — 정보성, 서명 없음 (2026-11-09 3차 H1). 담당자 승인 후 승인 대기함 배치로만 보낸다. */
+  'IMPACT_REPORT',
+  /** 후원금 수입·사용 연 1회 통보 — 정보성, 서명 없음 (2026-11-09 3차 H2, 재무·회계 규칙 제41조의5 — 법령 서식과 대조 필요) */
+  'ANNUAL_DONATION_NOTICE',
 ] as const;
 
 /** 저니·소비자가 자동으로 보내지 않는 용도(기관이 전자문서 센터에서 직접 보낸다) */
@@ -53,6 +57,8 @@ export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
   VOLUNTEER_CONFIRMATION: '자원봉사 활동 확인서',
   VOLUNTEER_THANKS: '자원봉사 감사장',
   RECURRING_CHANGE: '정기후원 변경·해지 신청서',
+  IMPACT_REPORT: '후원금 사용 결과 보고',
+  ANNUAL_DONATION_NOTICE: '후원금 수입·사용 연간 통보',
 };
 
 /** 머지 필드 값. 기관명·대표자·발급일은 모듈이 채운다. 금액은 원 단위 정수. */
@@ -71,6 +77,11 @@ export interface MergeContext {
   taxYear?: number | null;
   receiptNo?: string | null;
   assignment?: string | null;
+  /** 2026-11-09 3차 H: 사업 진행 기록 제목·결과 본문(캠페인 전체)·본인 참여 합계 문장·기관 전체 사용 요약 */
+  reportTitle?: string | null;
+  reportBody?: string | null;
+  participation?: string | null;
+  usageSummary?: string | null;
 }
 
 export interface IssuePurposeDocumentInput {
