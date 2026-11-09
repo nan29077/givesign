@@ -5,7 +5,7 @@ import {
   ATTRIBUTION_MAX_AGE_SEC,
   encodeAttribution,
   normalizeContentId,
-  normalizeSource,
+  parseSourceParam,
 } from '@/lib/attribution';
 
 /**
@@ -21,9 +21,11 @@ export function proxy(request: NextRequest) {
   headers.set('x-givesign-path', `${pathname}${search}`);
   const res = NextResponse.next({ request: { headers } });
 
-  const source = normalizeSource(searchParams.get('src'));
+  // `?src=promo:<id>` 는 QR + 홍보물(2026-11-12 4차 K1). 그 밖은 예전 그대로.
+  const parsed = parseSourceParam(searchParams.get('src'));
+  const source = parsed?.source ?? null;
   if (source) {
-    res.cookies.set(ATTRIBUTION_COOKIE, encodeAttribution({ source, contentItemId: normalizeContentId(searchParams.get('cid')) }), {
+    res.cookies.set(ATTRIBUTION_COOKIE, encodeAttribution({ source, contentItemId: normalizeContentId(searchParams.get('cid')), promoId: parsed?.promoId ?? null }), {
       httpOnly: true,
       sameSite: 'lax',
       secure: request.nextUrl.protocol === 'https:',

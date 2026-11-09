@@ -25,6 +25,8 @@ import * as tpl from './mt-templates';
 import { calculateFees, postChargeSettlement } from './settlement';
 import { notifySuperAdmins } from './notifications';
 import { recordChargeStatusStep, recordFunnelStep } from './funnel';
+import { handleMoCommand, moIntentHint, recordCommandStep, suggestForUnknownRoute } from './mo-commands';
+import { tagMoFlowPromo } from './promo-codes';
 import { prefersSmsOnly } from './outbound/preferred-channel';
 import type { ChargeStatus, MoProcessResult, PaymentMode, PaymentTxStatus } from '@/generated/prisma/enums';
 import type { TemplateOutput } from './mt-templates';
@@ -650,6 +652,18 @@ async function processMoRow(
       where: { id: moRow.id },
       data: { result: 'UNKNOWN_ROUTE', resultDetail: '배정된 사회복지기관 없음', processedAt: new Date() },
     });
+    // 2026-11-12 4차 K2: 대표번호 공유 문자에서 비슷한 기관·캠페인을 찾으면 고르기 링크로 답한다(결제 건 없음).
+    const suggested = await suggestForUnknownRoute({
+      receivedNumber: normalizePhone(inbound.receivedNumber) || inbound.receivedNumber,
+      body: inbound.content,
+      phoneHash: ph,
+      moRowId: moRow.id,
+      send: (template) => sendMt({ phone: inbound.fromNumber, template }),
+    });
+    if (suggested.sent) {
+      await prisma.moInboundMessage.update({ where: { id: moRow.id }, data: { resultDetail: `배정된 사회복지기관 없음 · 비슷한 캠페인 ${suggested.count}건 고르기 안내` } });
+      return { result: 'UNKNOWN_ROUTE', moMessageId: moRow.id, message: '키워드를 알아보지 못해 비슷한 캠페인 고르기 링크를 보냈습니다. 후원 건은 만들지 않았습니다.' };
+    }
     await sendMt({ phone: inbound.fromNumber, template: tpl.tplUnknownRoute() });
     return { result: 'UNKNOWN_ROUTE', moMessageId: moRow.id, message: '사회복지기관을 찾을 수 없습니다.' };
   }
@@ -686,7 +700,20 @@ async function processMoRow(
   // (약정 화면이 등록·로그인을 이어서 안내한다).
   const reserved = await handleReservedMoKeyword({ inbound, routed, moRowId: moRow.id, ph });
   if (reserved) return reserved;
+  // (2-2) 문자 명령어(2026-11-12 4차 K3): 영수증·내역·변경·해지·문의 → 본인 확인 화면 링크만. 결제 건을 만들지 않는다.
+  const command = await handleMoCommand({
+    merchant,
+    body: routed.body,
+    moRowId: moRow.id,
+    phoneHash: ph,
+    send: (template) => sendMt({ phone: inbound.fromNumber, template, merchantId: merchant.id }),
+  });
+  if (command) {
+    await prisma.moInboundMessage.update({ where: { id: moRow.id }, data: { result: 'ROUTED', resultDetail: command.detail, processedAt: new Date() } });
+    return { result: 'ROUTED', moMessageId: moRow.id, message: command.message };
+  }
   await recordFunnelStep({ step: 'MO_RECEIVED', moMessageId: moRow.id, merchantId: merchant.id }); // 단계 측정(2026-11-09)
+  await tagMoFlowPromo(moRow.id, merchant.id, routed.body); // 홍보물별 수신 집계(2026-11-12 4차 K1, 안전 래퍼)
 
   // (3) 실제 활성 빌키가 있을 때만 결제 결제로 진행한다.
   const token = await prisma.paymentMethodToken.findFirst({
@@ -858,6 +885,7 @@ async function processMoRow(
         paymentMode: 'CONFIRM_LINK',
         pointStatus: initialPointStatus(),
         campaignId: campaignMatch.campaign?.id ?? null,
+        promoId: campaignMatch.promo?.id ?? null, // 홍보물 키워드(2026-11-12 4차 K1)
         // 유입 경로: 문자 후원은 캠페인 키워드 매칭 여부와 무관하게 SMS 로 남긴다(CLAUDE.md 11항).
         source: 'SMS',
       },
@@ -926,11 +954,14 @@ async function processMoRow(
   }
 
   // (8) 상품·금액 선택 링크 발송. 이 문자만으로는 출금이 일어나지 않는다.
+  // 금액 선택 화면에 미리 골라 둘 캠페인·금액(2026-11-12 4차 K2 — 미리 선택만, 확정은 후원자가 화면에서)
+  const intentHint = await moIntentHint(merchant.id, routed.body, campaignMatch);
   const link = await issueSecureLink({
     purpose: 'SELECT_AMOUNT',
     phoneHash: ph,
     merchantId: merchant.id,
     chargeId: charge.id,
+    ...(intentHint ? { payload: { intent: intentHint } } : {}),
   });
   // 안내 문자에 상품 이름을 몇 개 넣어 "무엇을 살 수 있는지" 를 링크를 열기 전에 알린다.
   const productNames = await prisma.chargeProduct.findMany({
@@ -1835,6 +1866,7 @@ async function handleReservedMoKeyword(input: {
   const rest = (m[2] ?? '').trim();
   const campaign = kind === 'PLEDGE' && rest ? (await matchCampaignKeyword(merchant.id, rest)).campaign : null;
 
+  await recordCommandStep(input.moRowId, merchant.id, kind); // 명령 문자 종류별 수(2026-11-12 4차 K3)
   const throttleKey = `mo:reserved:${merchant.id}:${input.ph}:${kind}`;
   const first = await kv.setnx(throttleKey, '1', 600).catch(() => true);
   await prisma.moInboundMessage.update({

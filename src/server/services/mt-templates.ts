@@ -84,6 +84,14 @@ export const MT_TEMPLATE = {
   VOLUNTEER_THANKS: 'VOLUNTEER_THANKS',
   /** 기관 대표 담당자에게 보내는 주간 운영 보고 준비 안내(정보성, 2026-11-11 G) */
   WEEKLY_REPORT: 'WEEKLY_REPORT',
+  /** 문자 명령어(영수증·내역·변경·해지·문의) 회신: 본인 확인 화면 링크 (2026-11-12 4차 K3) */
+  MO_COMMAND_LINK: 'MO_COMMAND_LINK',
+  /** 알아듣지 못한 문자 회신: 고르기 화면 링크 (2026-11-12 4차 K2) */
+  MO_INTENT_LINK: 'MO_INTENT_LINK',
+  /** 문자로 접수한 문의의 답변 안내(정보성, 2026-11-12 4차 K4) */
+  INQUIRY_ANSWER: 'INQUIRY_ANSWER',
+  /** 문자 명령 링크에서 처리한 정기후원 변경·해지 결과(정보성, 2026-11-12 4차 K3) */
+  RECURRING_SELF_RESULT: 'RECURRING_SELF_RESULT',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -485,6 +493,28 @@ export function tplPledgeLink(input: { merchantName: string; link: string }): Te
 export function tplVolunteerLink(input: { merchantName: string; link: string }): TemplateOutput {
   const text = withLink(`[기브싸인] ${input.merchantName} 자원봉사 신청 안내입니다. 활동 분야와 가능한 시간을 적어 신청해 주세요:`, input.link);
   return { code: MT_TEMPLATE.VOLUNTEER_LINK, text, masked: maskLink(text) };
+}
+
+export function tplMoCommandLink(input: { merchantName: string; label: string; link: string; ttlMin: number }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName} ${input.label} 안내입니다. 본인 확인(인증번호) 후 볼 수 있습니다. ${input.ttlMin}분 안에 열어 주세요. 후원(결제)은 진행되지 않았습니다:`, input.link);
+  return { code: MT_TEMPLATE.MO_COMMAND_LINK, text, masked: maskLink(text) };
+}
+
+export function tplMoIntentLink(input: { merchantName: string | null; link: string }): TemplateOutput {
+  const who = input.merchantName ? `${input.merchantName} ` : '';
+  const text = withLink(`[기브싸인] ${who}보내신 문자를 정확히 알아보지 못했습니다. 아래에서 맞는 캠페인을 골라 주세요. 후원은 아직 진행되지 않았습니다:`, input.link);
+  return { code: MT_TEMPLATE.MO_INTENT_LINK, text, masked: maskLink(text) };
+}
+
+export function tplInquiryAnswer(input: { merchantName: string; body: string }): TemplateOutput {
+  const body = input.body.length > 600 ? `${input.body.slice(0, 600)}…` : input.body;
+  const text = `[기브싸인] ${input.merchantName} 문의 답변입니다.\n${body}`;
+  return { code: MT_TEMPLATE.INQUIRY_ANSWER, text, masked: `[기브싸인] ${input.merchantName} 문의 답변입니다. (본문 ${body.length}자)` };
+}
+
+export function tplRecurringSelfResult(input: { merchantName: string; text: string }): TemplateOutput {
+  const text = `[기브싸인] ${input.merchantName} 정기후원 처리 결과입니다. ${input.text.slice(0, 300)}`;
+  return { code: MT_TEMPLATE.RECURRING_SELF_RESULT, text, masked: text };
 }
 
 export function tplVolunteerReceived(input: { merchantName: string }): TemplateOutput {
@@ -956,6 +986,34 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '매주 월요일 09시 기관 대표 담당자에게 지난주 후원 건수와 이번 주 승인할 일 건수, 콘솔 보고 화면 링크를 보냅니다.',
     editable: false,
     defaultBody: '{사회복지기관} 이번 주 운영 보고가 준비되었습니다 — 지난주 후원 N건 · 이번 주 승인할 일 M건. 확인: [링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.MO_COMMAND_LINK]: {
+    label: '문자 명령어 회신 (영수증·내역·변경·해지·문의)',
+    description: '기관 번호로 "영수증" "내역" "변경" "해지" "문의" 를 보내면 본인 확인(인증번호) 화면 링크를 보냅니다. 결제 건을 만들지 않습니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 영수증 안내입니다. 본인 확인(인증번호) 후 볼 수 있습니다. 30분 안에 열어 주세요. 후원(결제)은 진행되지 않았습니다: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.MO_INTENT_LINK]: {
+    label: '알아듣지 못한 문자 회신 (캠페인 고르기)',
+    description: '키워드를 알아보지 못했지만 비슷한 캠페인을 찾았을 때 고르기 화면 링크를 보냅니다. 고르기 전에는 후원 건을 만들지 않습니다.',
+    editable: false,
+    defaultBody: '보내신 문자를 정확히 알아보지 못했습니다. 아래에서 맞는 캠페인을 골라 주세요. 후원은 아직 진행되지 않았습니다: [보안링크]',
+    variables: [],
+  },
+  [MT_TEMPLATE.INQUIRY_ANSWER]: {
+    label: '문의 답변 안내 (문자로 접수한 문의)',
+    description: '문자 "문의" 로 접수한 문의에 기관이 답하거나 자동 답변이 나가면 답변 내용을 문자로 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 문의 답변입니다. (답변 내용)',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.RECURRING_SELF_RESULT]: {
+    label: '정기후원 변경·해지 결과 (문자 명령 링크)',
+    description: '문자 "변경" "해지" 로 받은 링크에서 본인 확인 후 정기후원을 바꾸면 결과를 문자로 알립니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 정기후원 처리 결과입니다. (변경 내용 문장)',
     variables: [V.merchant],
   },
 };

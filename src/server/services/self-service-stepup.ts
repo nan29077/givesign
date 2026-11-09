@@ -30,7 +30,11 @@ const OTP_MAX_ATTEMPTS = 5;
 const SEND_WINDOW_SEC = 600;
 const SEND_MAX = 3;
 
-export type StepUpSubject = { kind: 'USER'; userId: string } | { kind: 'MEMBER'; memberId: string };
+export type StepUpSubject =
+  | { kind: 'USER'; userId: string }
+  | { kind: 'MEMBER'; memberId: string }
+  /** 문자 명령 링크(/mo/[토큰], 2026-11-12 4차 K3). 번호 = 그 링크를 받은 번호(링크 유효 기간 안) */
+  | { kind: 'SMS_LINK'; linkId: string };
 
 export class StepUpError extends Error {}
 
@@ -41,7 +45,7 @@ export class StepUpRequiredError extends Error {
   }
 }
 
-const subjectKey = (s: StepUpSubject) => (s.kind === 'USER' ? `user:${s.userId}` : `member:${s.memberId}`);
+const subjectKey = (s: StepUpSubject) => (s.kind === 'USER' ? `user:${s.userId}` : s.kind === 'MEMBER' ? `member:${s.memberId}` : `smslink:${s.linkId}`);
 const otpKey = (s: StepUpSubject) => `selfsvc:otp:${subjectKey(s)}`;
 const tryKey = (s: StepUpSubject) => `selfsvc:otp-try:${subjectKey(s)}`;
 const grantKey = (s: StepUpSubject) => `selfsvc:grant:${subjectKey(s)}`;
@@ -51,6 +55,13 @@ const digest = (code: string) => hmac(`stepup:${code}`, env.crypto.sessionSecret
 async function phoneOf(s: StepUpSubject): Promise<{ hash: string; enc: string; masked: string } | null> {
   if (s.kind === 'USER') {
     const p = await prisma.payerProfile.findUnique({ where: { userId: s.userId }, select: { phoneHash: true, phoneEnc: true, phoneMasked: true, onboardingStatus: true } });
+    if (!p || p.onboardingStatus === 'WITHDRAWN' || !p.phoneEnc) return null;
+    return { hash: p.phoneHash, enc: p.phoneEnc, masked: p.phoneMasked };
+  }
+  if (s.kind === 'SMS_LINK') {
+    const link = await prisma.moReplyLink.findUnique({ where: { id: s.linkId }, select: { phoneHash: true, expiresAt: true } });
+    if (!link || link.expiresAt.getTime() < Date.now()) return null;
+    const p = await prisma.payerProfile.findUnique({ where: { phoneHash: link.phoneHash }, select: { phoneHash: true, phoneEnc: true, phoneMasked: true, onboardingStatus: true } });
     if (!p || p.onboardingStatus === 'WITHDRAWN' || !p.phoneEnc) return null;
     return { hash: p.phoneHash, enc: p.phoneEnc, masked: p.phoneMasked };
   }

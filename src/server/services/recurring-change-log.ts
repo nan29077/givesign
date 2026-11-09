@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
  */
 
 export type RecurringChangeActor = 'DONOR' | 'MERCHANT' | 'ADMIN' | 'SYSTEM';
-export type RecurringChangeVia = 'MY' | 'MEMBER' | 'RECOVER_LINK';
+export type RecurringChangeVia = 'MY' | 'MEMBER' | 'RECOVER_LINK' | 'SMS';
 export type RecurringChangeKind = 'CHANGE' | 'PAUSE' | 'PAUSE_UNTIL' | 'RESUME' | 'CANCEL';
 
 export interface RecurringTermsSnapshot {
@@ -71,6 +71,7 @@ export const CHANGE_VIA_LABEL: Record<RecurringChangeVia, string> = {
   MY: '마이페이지',
   MEMBER: '기관 후원 회원 화면',
   RECOVER_LINK: '복구 안내 링크',
+  SMS: '문자 명령 링크',
 };
 
 /** 누가 바꿨는지(기관 콘솔·후원자 화면 공용) */

@@ -66,18 +66,37 @@ export function normalizeContentId(raw: string | null | undefined): string | nul
 export interface Attribution {
   source: Source;
   contentItemId: string | null;
+  /** 홍보물 QR·링크(`?src=promo:<id>`, 2026-11-12 4차 K1). 기관 확인은 결제 건을 만들 때 한다. */
+  promoId?: string | null;
 }
 
 export function encodeAttribution(a: Attribution): string {
+  if (a.promoId) return `${a.source}.${a.contentItemId ?? ''}.${a.promoId}`;
   return a.contentItemId ? `${a.source}.${a.contentItemId}` : a.source;
 }
 
 export function decodeAttribution(raw: string | null | undefined): Attribution | null {
   if (!raw) return null;
-  const [s, c] = raw.split('.');
+  const [s, c, p] = raw.split('.');
   const source = normalizeSource(s);
   if (!source) return null;
-  return { source, contentItemId: normalizeContentId(c) };
+  const promoId = normalizeContentId(p);
+  return promoId ? { source, contentItemId: normalizeContentId(c), promoId } : { source, contentItemId: normalizeContentId(c) };
+}
+
+/**
+ * `?src=` 값 읽기. `promo:<홍보물 id>` 는 유입 경로 QR + 홍보물 id 로 본다(2026-11-12 4차 K1).
+ * 그 밖은 normalizeSource 그대로.
+ */
+export function parseSourceParam(raw: string | null | undefined): { source: Source; promoId: string | null } | null {
+  if (!raw) return null;
+  const m = raw.trim().match(/^promo:([0-9A-Za-z]{26})$/);
+  if (m) {
+    const promoId = normalizeContentId(m[1]);
+    return promoId ? { source: 'QR', promoId } : null;
+  }
+  const source = normalizeSource(raw);
+  return source ? { source, promoId: null } : null;
 }
 
 export function sourceLabel(raw: string | null | undefined): string {
