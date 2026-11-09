@@ -341,3 +341,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 주간 승인 `/studio/content/review`(이번 주·다음 주, KST 월~일, 지난 대기는 이번 주에), 일괄 승인은 항목마다 `approveContent`(승인 불가는 이유와 함께 건너뜀, 50건 상한). 반려(이유 분류+메모) → `ARCHIVED`, 수정 요청 한 줄 → 새 판(`revision_of/root_id/request`, 이전 판 보관, 슬롯 이어받음, 판 묶음당 하루 5회, advisory lock). 메모·요청은 실명·연락처 거절 후 `maskForLlm` 값만 저장. mock 이면 요청은 메모로만("AI 공급자 연결 후 문장 반영").
 - 반려·수정 이유는 `content_feedback` 에 쌓고 최근 20개를 `contentAvoidHints` 로 LLM 프롬프트 "피해야 할 것" 에 넣는다(로그 금지). 사전 점검(`contentPrecheck`)은 기존 검사(`contentDraftViolation`·`captionProblem`·실명/연락처 패턴)만 부른다.
 - 알림 배치 `/api/cron/content-review`(15분): 월요일 09시 이후 그 주 대기 N건(기관·주 1회), 슬롯 하루 전·3시간 전 미승인(콘텐츠·슬롯 시각·시점 1회) — `content_review_alert` 키와 알림을 한 트랜잭션. 기관 담당자 문자·알림톡 정보성 경로가 없어 콘솔 알림만.
+
+## 2026-11-09 후원자 셀프서비스
+
+테스트 `tests/self-service-2026-11-09.test.ts`.
+
+- **정기후원 관리 한 화면**은 통합 `/my/recurring` 과 기관 후원 회원 `/donate/[code]/my/recurring` 이 같은 서비스(`donor-self-service.ts`)를 쓴다. 범위: MY = 계정에 연결된 후원자의 모든 기관, MEMBER = 회원이 휴대폰 인증한 번호의 후원자 중 **그 기관 약정만**(다른 기관 id 는 "찾을 수 없음"). 바꾸는 일은 기존 함수(`updateRecurringDonation`·`pauseRecurringUntil`·`setRecurringStatus`)만 부른다 — 금액 범위·하루 3회·약정서 새 판 그대로. 복구 링크(`/r/recover`)는 1차 규칙 그대로(그 약정 1건, 재확인 없음).
+- **변경 결과 문장은 `describeRecurringChange(before, after, now)`(`recurring-change-text.ts`, 순수 함수) 한 곳.** 저장 전 미리보기와 저장 후 확인이 같은 문장이다. 날짜 규칙을 바꾸면 recurring.ts 갱신 규칙과 이 함수를 함께 바꾼다. 결과 미확인(PENDING) 실행이 있으면 금액·출금일 변경은 보류(셀프서비스 경로만 — 기존 함수는 그대로), 정지·해지는 안내 문장과 함께 허용.
+- **변경·정지·재개·해지는 로그인 + 휴대폰 재확인 1회(10분)** — `self-service-stepup.ts`(대상 USER/MEMBER, 이미 연결된 번호로만 발송, 번호 해시와 묶음, 번호가 바뀌면 무효). 옛 액션 `updateRecurringAction`(금액·출금일이 바뀔 때)·`setRecurringStatusAction` 도 같은 재확인을 요구한다. 같은 약정 동시 변경은 `kv.setnx` 잠금으로 1건만.
+- **변경 이력 `recurring_change_log`**(actor `DONOR`·via `MY/MEMBER/RECOVER_LINK`·kind·전후 스냅샷·문장·사유). 기록 실패는 변경을 되돌리지 않는다(`recordRecurringChange` 안전 래퍼). 후원자 화면 카드와 기관 `/studio/recurring` "최근 변경 이력"(누가: "후원자 본인")에 보인다.
+- **알림 설정 한 곳**: `/my/notifications`·`/donate/[code]/my/settings` — 연락 선호 `payer_profile.preferred_channel`(`ALIMTALK_FIRST|SMS_ONLY`, 기본 알림톡 우선, 2차 D 와 같은 정의 — 마이그레이션은 `ADD COLUMN IF NOT EXISTS`) · 월간 안내 수신 거부(`notice_opt_out_at`) · (선택) 소식 수신 동의(1차 함수). 발송 경로가 선호값을 읽는 것은 D 의 몫이다. 결제 링크·인증번호는 항상 문자.
+- 후원 내역(`donor-history.ts`)은 연도별 합계 + 건별(출처 표시). 원천은 결제 건이고 다른 출처(2차 E 계좌이체 확정분)는 `registerDonationHistorySource(name, fn, label)` 로 붙인다(실패한 출처만 빠짐). 영수증 발급 시기 안내는 `receiptScheduleNote(receiptCycle)` 하나.
+- 받은 문서(`donor-documents.ts`)는 감사장·확인서 + 약정서(SIGNED·NONE 판만). 회원 화면은 그 기관 문서만, `/donate/[code]/my/documents/[id](/file)`·`/agreements/[id]`. 만료된 `/l/[토큰]` 은 그 기관 회원 로그인·통합 로그인으로 받은 문서에 돌아오게 안내한다. 회원 화면의 영수증 정보 저장은 후원자 단위라 재확인 뒤에만(통합 `/my/receipts` 는 기존대로).
+- 후원자 화면 새 조각(`src/components/self-service/*`)은 본문 16px 이상·큰 버튼(lg)으로 만든다.
