@@ -6,6 +6,8 @@ import type { ConsentType } from '@/generated/prisma/enums';
 
 const CONSENT_TYPES: ConsentType[] = ['TERMS_SERVICE', 'PRIVACY', 'E_FINANCE', 'WITHDRAWAL_AGREE', 'AGE_CONFIRM', 'MARKETING', 'RECEIPT_ISSUANCE', 'RECURRING_DEBIT', 'VOLUNTEER_PRIVACY'];
 import { clientIpFrom } from '@/server/rate-limit';
+import { resolveSecureLink } from '@/server/services/secure-link';
+import { marketingChecked, recordMarketingIntent } from '@/server/services/marketing-consent';
 
 /**
  * 상품·금액 확정.
@@ -72,6 +74,9 @@ export async function confirmChargeAmountAction(
     : null;
 
   const h = await headers();
+  // (선택) 소식 수신 동의: 링크가 소진되기 전에 결제 건을 알아 두고, 확정되면 결제 건에 의사로 남긴다(결제 성공 시 반영).
+  const marketing = marketingChecked(formData.get('marketingConsent'));
+  const linkChargeId = marketing ? await resolveSecureLink(token).then((r) => (r.ok && r.link?.purpose === 'SELECT_AMOUNT' ? r.link.chargeId : null)).catch(() => null) : null;
   // 캠페인 선택 UI 가 있었던 화면만 값을 보낸다(없으면 MO 키워드로 잡힌 값을 유지).
   const campaignTouched = s('campaignTouched') === '1';
   const campaignId = s('campaignId');
@@ -92,6 +97,10 @@ export async function confirmChargeAmountAction(
     ip: clientIpFrom((name) => h.get(name)) ?? undefined,
     userAgent: h.get('user-agent') ?? undefined,
   });
+
+  if (result.ok && linkChargeId) {
+    await recordMarketingIntent(true, { chargeId: linkChargeId, source: 'DONATE', ip: clientIpFrom((name) => h.get(name)), userAgent: h.get('user-agent') });
+  }
 
   return {
     ok: result.ok,

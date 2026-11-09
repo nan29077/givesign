@@ -15,6 +15,7 @@ import {
   type DonorAuthState,
   type DonorPhoneState,
 } from '@/app/actions/donor-member';
+import { MarketingConsentField } from '@/components/public/marketing-consent-field';
 
 /** 기관 후원 회원 폼 (로그인 · 가입 · 휴대폰 인증 · 탈퇴). 모든 폼은 기관 코드를 함께 보낸다. */
 
@@ -87,8 +88,9 @@ export function DonorSignupForm({ code, next, color, orgName, mailLive = false }
           }
         />
         <Checkbox name="agreeAge" required label="[필수] 만 19세 이상입니다" />
-        <Checkbox name="marketing" label="[선택] 기관 소식·캠페인 결과를 받겠습니다" />
       </div>
+      {/* (선택) 동의는 필수 동의와 떨어진 상자에, 기본 체크 해제(2026-11-09). 휴대폰 인증으로 후원자와 이어질 때 그 기관 동의로 옮긴다. */}
+      <MarketingConsentField merchantName={orgName} tail="가입할 수 있습니다" name="marketing" />
       <ErrorLine message={state.ok ? undefined : state.message} />
       <Submit pending={pending} label="가입하기" color={color} />
     </form>

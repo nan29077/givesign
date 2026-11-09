@@ -5,6 +5,7 @@ import { FileSignature, Pencil, Package, Truck } from 'lucide-react';
 import { cx } from '@/components/ui';
 import { formatWon } from '@/lib/money';
 import { confirmChargeAmountAction, type SelectAmountState } from '@/app/actions/charge-select';
+import { MarketingConsentField } from '@/components/public/marketing-consent-field';
 
 /**
  * 상품·금액 선택 화면.
@@ -619,6 +620,7 @@ export function SelectAmountPanel({
         <input type="hidden" name="campaignId" value={campaignId} />
         <input type="hidden" name="campaignTouched" value="1" />
         <input type="hidden" name="anonymous" value={anonymous ? '1' : ''} />
+        <MarketingConsentField merchantName={merchantName} className="mb-3" />
         <input type="hidden" name="productId" value={mode === 'preset' ? productId : ''} />
         <input
           type="hidden"

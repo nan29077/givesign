@@ -11,6 +11,7 @@ import { normalizeMerchantCode } from '@/lib/id';
 import { kstDateKey } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import { PickOrgNotice } from '@/components/my/pick-org-notice';
+import { MarketingConsentField } from '@/components/public/marketing-consent-field';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,6 +102,7 @@ export default async function NewRecurringPage({ searchParams }: { searchParams:
               <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-ink-500">{terms?.content ?? '동의 약관이 준비되지 않았습니다.'}</pre>
               <Checkbox name="agree" required label="위 내용을 확인했고 매월 자동 출금에 동의합니다" />
             </div>
+            <MarketingConsentField merchantName={merchant.displayName} className="mt-4" />
           </DonorActionForm>
         </Card>
       )}
