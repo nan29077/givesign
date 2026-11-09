@@ -393,7 +393,7 @@ async function sendIssuedNotice(issuedId: string, payerId: string, merchantId: s
 
 export type IssuedLoad =
   | { ok: true; row: IssuedDocument; snapshot: IssuedSnapshot; verified: boolean }
-  | { ok: false; reason: string; expired?: boolean; merchantName?: string };
+  | { ok: false; reason: string; expired?: boolean; merchantName?: string; merchantCode?: string };
 
 /** 공개 열람(/l/[토큰]). 토큰 해시로 찾고, 만료·보관·서명 문서는 열지 않는다. 열람하면 시각·횟수를 남긴다. */
 export async function loadIssuedByToken(token: string, opts: { record?: boolean } = {}): Promise<IssuedLoad> {
@@ -401,7 +401,7 @@ export async function loadIssuedByToken(token: string, opts: { record?: boolean 
   const row = await prisma.issuedDocument.findUnique({ where: { tokenHash: tokenHash(token) } });
   if (!row || row.signature) return { ok: false, reason: '유효하지 않은 링크입니다. 가장 최근에 받은 문자의 링크를 열어 주세요.' };
   const [merchant, payer] = await Promise.all([
-    prisma.merchantProfile.findUnique({ where: { id: row.merchantId }, select: { displayName: true, status: true } }),
+    prisma.merchantProfile.findUnique({ where: { id: row.merchantId }, select: { displayName: true, status: true, code: true } }),
     prisma.payerProfile.findUnique({ where: { id: row.payerId }, select: { onboardingStatus: true } }),
   ]);
   if (row.archivedAt) return { ok: false, reason: '기관이 보관 처리한 문서입니다. 기관에 문의해 주세요.', merchantName: merchant?.displayName };
@@ -410,7 +410,7 @@ export async function loadIssuedByToken(token: string, opts: { record?: boolean 
   // 탈퇴한 후원자의 열람 링크는 닫는다(탈퇴 때 토큰도 지우지만, 그 전 링크가 남아 있을 수 있다).
   if (!payer || payer.onboardingStatus === 'WITHDRAWN') return { ok: false, reason: '유효하지 않은 링크입니다.' };
   if (row.expiresAt && row.expiresAt <= new Date()) {
-    return { ok: false, expired: true, reason: '열람 기간이 지난 링크입니다.', merchantName: merchant?.displayName };
+    return { ok: false, expired: true, reason: '열람 기간이 지난 링크입니다.', merchantName: merchant?.displayName, merchantCode: merchant?.code };
   }
   const { snapshot, verified } = readIssuedSnapshot(row);
   if (!snapshot) return { ok: false, reason: '문서를 읽지 못했습니다. 기관에 문의해 주세요.' };

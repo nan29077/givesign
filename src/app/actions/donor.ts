@@ -15,6 +15,7 @@ import { deleteReceiptProfile, rotateReceiptToken, upsertReceiptProfile } from '
 import { normalizeMerchantCode } from '@/lib/id';
 import { currentAttribution } from '@/server/attribution';
 import { marketingChecked, recordMarketingConsentIfChecked } from '@/server/services/marketing-consent';
+import { StepUpRequiredError, assertStepUp } from '@/server/services/self-service-stepup';
 
 /**
  * 후원자(마이페이지) — 정기후원 · 기부금영수증 액션.
@@ -45,6 +46,7 @@ const text = (f: FormData, k: string) => {
 };
 
 function fail(e: unknown): DonorActionState {
+  if (e instanceof StepUpRequiredError) return { ok: false, message: e.message };
   const message = (e as Error)?.message ?? '';
   if (message && /[가-힣]/.test(message) && !/prisma|invocation/i.test(message)) return { ok: false, message };
   logger.error('후원자 액션 처리 오류', { message });
@@ -100,6 +102,9 @@ export async function updateRecurringAction(_prev: DonorActionState, f: FormData
   const amountRaw = text(f, 'amount').replace(/[,\s원]/g, '');
   if (!/^\d{1,9}$/.test(amountRaw)) return { ok: false, message: '후원 금액을 숫자로 입력해 주세요.' };
   try {
+    // 금액·출금일이 바뀌면 휴대폰 재확인(10분) 뒤에만 받는다(2026-11-09 2차 F). 메시지·익명만 바꾸는 것은 그대로.
+    const cur = await prisma.recurringDonation.findFirst({ where: { id, payerId: ctx.payerId }, select: { amount: true, dayOfMonth: true } });
+    if (cur && (cur.amount !== BigInt(amountRaw) || cur.dayOfMonth !== Number(text(f, 'dayOfMonth')))) await assertStepUp({ kind: 'USER', userId: ctx.user.id });
     await updateRecurringDonation(ctx.payerId, id, {
       amount: BigInt(amountRaw),
       dayOfMonth: Number(text(f, 'dayOfMonth')),
@@ -119,6 +124,8 @@ export async function setRecurringStatusAction(_prev: DonorActionState, f: FormD
   const action = text(f, 'action') as 'PAUSE' | 'RESUME' | 'CANCEL';
   if (!['PAUSE', 'RESUME', 'CANCEL'].includes(action)) return { ok: false, message: '알 수 없는 요청입니다.' };
   try {
+    // 정지·재개·해지는 휴대폰 재확인(10분) 뒤에만(2026-11-09 2차 F). 새 화면은 actions/self-service.ts 를 쓴다.
+    await assertStepUp({ kind: 'USER', userId: ctx.user.id });
     await setRecurringStatus(ctx.payerId, text(f, 'id'), action, text(f, 'reason'));
     revalidatePath('/my/recurring');
     const msg = { PAUSE: '정기후원을 일시정지했습니다. 다시 시작할 때까지 출금되지 않습니다.', RESUME: '정기후원을 다시 시작했습니다.', CANCEL: '정기후원을 해지했습니다. 그동안 함께해 주셔서 감사합니다.' }[action];

@@ -515,6 +515,8 @@ model PayerProfile {
   mergedAt               DateTime?             @map("merged_at") @db.Timestamptz(3)
   mergedBy               String?               @map("merged_by")
   mergeNote              String?               @map("merge_note")
+  /// 연락 선호 (2026-11-09 2차): ALIMTALK_FIRST(알림톡 우선, 실패 시 문자) · SMS_ONLY(문자만). 2차 D 와 같은 정의.
+  preferredChannel       String                @default("ALIMTALK_FIRST") @map("preferred_channel")
   createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -2518,6 +2520,7 @@ model RecurringDonation {
   runs     RecurringRun[]
   charges  Charge[]
   recoveryLinks RecurringRecoveryLink[]
+  changeLogs    RecurringChangeLog[]
 
   @@index([status, nextChargeOn])
   @@index([merchantId, status])
@@ -4569,4 +4572,31 @@ model InboxAssignment {
   @@unique([merchantId, itemKey])
   @@index([resolvedAt, dueAt])
   @@map("inbox_assignment")
+}
+
+/// 정기후원 변경 이력 (2026-11-09 2차 F). 후원자 셀프서비스·복구 링크에서 바꾼 내용을 시간순으로 남긴다(append-only 로 쓴다).
+/// 원천 상태는 recurring_donation 이고, 이 표는 "언제 누가 무엇을 바꿨는지" 를 보여 주기 위한 기록이다.
+model RecurringChangeLog {
+  id          String   @id
+  recurringId String   @map("recurring_id")
+  merchantId  String   @map("merchant_id")
+  payerId     String   @map("payer_id")
+  /// 누가: DONOR(후원자 본인) · MERCHANT · ADMIN · SYSTEM
+  actor       String
+  /// 어디서: MY(통합 마이페이지) · MEMBER(기관 후원 회원 화면) · RECOVER_LINK(복구 링크)
+  via         String
+  /// 무엇을: CHANGE(금액·출금일) · PAUSE · PAUSE_UNTIL · RESUME · CANCEL
+  kind        String
+  before      Json
+  after       Json
+  /// 후원자에게 보여 준 결과 문장
+  summary     String
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recurring RecurringDonation @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@index([recurringId, createdAt])
+  @@index([merchantId, createdAt])
+  @@map("recurring_change_log")
 }
