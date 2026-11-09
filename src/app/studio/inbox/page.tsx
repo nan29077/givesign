@@ -219,7 +219,7 @@ function Section({ title, items, empty, muted, staffCount }: { title: string; it
                   {it.error ? <p className="text-[12px] text-danger-500">지난 처리 실패: {it.error}</p> : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {it.approvalId && it.kind === 'RECEIPT_BATCH' ? (
+                  {it.approvalId && (it.kind === 'RECEIPT_BATCH' || it.kind === 'IMPACT_REPORT_SEND' || it.kind === 'ANNUAL_NOTICE_SEND') ? (
                     <Link href={`/studio/inbox/approvals/${it.approvalId}`} className="inline-flex h-9 items-center rounded-xl bg-brand-400 px-3 text-[13px] font-bold text-ink-900">
                       확인하고 승인
                     </Link>

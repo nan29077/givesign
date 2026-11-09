@@ -10,6 +10,8 @@ import { formatNumber, formatWon } from '@/lib/money';
 import { SAMPLE_KIND_LABEL } from '@/lib/document-preflight';
 import { receiptBatchPreview } from '@/server/services/receipt-batch-preview';
 import { decideApprovalAction } from '@/app/actions/journeys';
+import { infoSendPreview } from '@/server/services/impact-legal-approvals';
+import { InfoSendConfirm } from '@/components/studio/impact/info-send-confirm';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +23,9 @@ export const dynamic = 'force-dynamic';
 export default async function ReceiptBatchConfirmPage({ params }: { params: Promise<{ id: string }> }) {
   const { merchantId } = await requireMerchant();
   const { id } = await params;
+  // 2026-11-09 3차 H: 사업 결과 보고·연간 통보 발송은 같은 주소의 확인 화면(대상 수·표본·비용)
+  const info = await infoSendPreview(merchantId, id);
+  if (info) return <InfoSendConfirm p={info} />;
   const p = await receiptBatchPreview(merchantId, id);
   if (!p) notFound();
   const pending = p.approval.status === 'PENDING';

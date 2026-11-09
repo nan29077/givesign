@@ -75,6 +75,8 @@ function buildGroups(pending: {
       title: '모금',
       items: [
         { href: '/studio/campaigns', label: '캠페인', icon: 'campaigns' },
+        // 2026-11-09 3차 H: 사업 진행 기록·후원금 사용 결과 보고
+        { href: '/studio/impact', label: '사업 진행·결과 보고', icon: 'activity' },
         { href: '/studio/donation-page', label: '후원페이지', icon: 'settings' },
         { href: '/studio/qr', label: 'QR 코드', icon: 'qr' },
         { href: '/studio/products', label: '후원 항목', icon: 'products' },
@@ -112,6 +114,8 @@ function buildGroups(pending: {
       items: [
         { href: '/studio/settlement', label: '정산 관리', icon: 'settlement' },
         { href: '/studio/receipts', label: '기부금영수증', icon: 'receipts' },
+        // 2026-11-09 3차 H: 후원금 수입·사용 명세·결과 보고서·연 1회 통보
+        { href: '/studio/reports/legal', label: '법정 서류', icon: 'audit' },
       ],
     },
     {

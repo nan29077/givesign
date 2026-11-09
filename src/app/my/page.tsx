@@ -9,6 +9,7 @@ import { formatKst } from '@/lib/datetime';
 import { redirect } from 'next/navigation';
 import { chargeStatusLabel, pointStatusLabel, refundStatusLabel } from '@/lib/labels';
 import type { ChargeStatus } from '@/generated/prisma/enums';
+import { DonorImpactList } from '@/components/self-service/impact-list';
 
 export const dynamic = 'force-dynamic';
 
@@ -239,6 +240,9 @@ export default async function MyChargesPage({
           )}
         </nav>
       ) : null}
+
+      {/* 2026-11-09 3차 H: 참여한 캠페인의 진행 기록·결과 보고 */}
+      <DonorImpactList payerId={payerId} />
     </div>
   );
 }
