@@ -11,6 +11,8 @@ import { checkBaseData } from '@/server/services/base-data-check';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst, kstStartOfDay, kstStartOfMonth } from '@/lib/datetime';
 import { chargeStatusLabel } from '@/lib/labels';
+import { FunnelBars } from '@/components/funnel/funnel-bars';
+import { funnelReport } from '@/server/services/funnel-report';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +82,8 @@ export default async function AdminDashboardPage() {
   ]);
 
   const successRate = txTotal === 0 ? null : Math.round((txApproved / txTotal) * 1000) / 10;
+  // 전 기관 문자 후원 단계(최근 30일, 측정 시작 이후만). 집계 실패가 대시보드를 막지 않는다.
+  const funnel = await funnelReport({ channel: 'MO', since: new Date(todayStart.getTime() - 29 * 86_400_000) }).catch(() => null);
 
   // 처리 대기 건이 하나라도 있으면 '확인이 필요한 건' 섹션을 지표보다 위에 배치한다.
   // 운영자가 접속해서 가장 먼저 할 일이 화면 순서와 일치하도록.
@@ -222,6 +226,15 @@ export default async function AdminDashboardPage() {
             {pendingSection}
           </>
         )}
+
+        {funnel ? (
+          <section>
+            <SectionTitle title="문자 후원 단계별 현황 (전 기관 · 최근 30일)" description="측정 시작 이후의 흐름만 셉니다. 기관별 화면은 기관 콘솔 > 신고 > 문자 후원 단계별 현황입니다." />
+            <Card>
+              {funnel.total === 0 ? <p className="text-[13px] text-ink-400">아직 기록된 문자 후원 흐름이 없습니다.</p> : <FunnelBars report={funnel} />}
+            </Card>
+          </section>
+        ) : null}
 
         <section>
           <SectionTitle title="최근 결제 10건" />

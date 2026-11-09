@@ -215,7 +215,10 @@ export async function updateContentAction(_p: StudioActionState, f: FormData) {
 export async function approveContentAction(_p: StudioActionState, f: FormData) {
   return withMerchant(async (merchantId, userId) => {
     const id = text(f, 'id');
-    await approveContent(merchantId, id, userId);
+    const w = text(f, 'whenPast');
+    // 슬롯 시각이 지난 콘텐츠: 다음 빈 슬롯(기본) / 지금 게시 예약 / 승인만. 값이 없으면(슬롯이 미래·슬롯 없음) 기존 그대로.
+    const whenPast = w === 'NOW' || w === 'APPROVE_ONLY' || w === 'NEXT_SLOT' ? w : undefined;
+    await approveContent(merchantId, id, userId, { whenPast });
     await writeAudit({ action: 'CONTENT_APPROVE', targetType: 'content_item', targetId: id }).catch(() => undefined);
     revalidatePath(`/studio/content/${id}`);
     revalidatePath('/studio/content');
@@ -281,7 +284,7 @@ export async function saveContentSettingAction(_p: StudioActionState, f: FormDat
       tone: text(f, 'tone'),
       bannedWords: text(f, 'bannedWords').split(/[,\n]/),
       hashtags: text(f, 'hashtags').split(/[\s,]+/),
-      autoApprove: Boolean(f.get('autoApprove')),
+      // 자동 승인은 없다(2026-11-09). 폼에 값이 와도 보내지 않는다(서비스도 무시한다).
       calendar: {
         calendarEnabled: Boolean(f.get('calendarEnabled')),
         weeklyCount: Number(text(f, 'weeklyCount') || '3'),

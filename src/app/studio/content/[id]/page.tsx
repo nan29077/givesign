@@ -3,7 +3,8 @@ import { notFound } from 'next/navigation';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { env, featureContentEnabled } from '@/lib/env';
-import { Badge, Card, Field, Input, Notice, StatTile, Textarea } from '@/components/ui';
+import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react';
+import { Badge, Card, Field, Input, Notice, Select, StatTile, Textarea } from '@/components/ui';
 import { ActionForm } from '@/components/studio/action-form';
 import { ScenePlayer } from '@/components/content/scene-player';
 import { formatKst, kstDateKey } from '@/lib/datetime';
@@ -21,8 +22,17 @@ import {
   schedulePublishAction,
   updateContentAction,
 } from '@/app/actions/automation';
+import { rejectContentAction, reviseContentAction } from '@/app/actions/content-review';
+import { contentPrecheck } from '@/server/services/content-review';
+import { getContentAdapter } from '@/server/adapters/content';
+import { CONTENT_REJECT_REASON_LABEL, CONTENT_REJECT_REASONS, CONTENT_REVISION_MAX_LEN, CONTENT_REVISIONS_PER_DAY, PAST_SLOT_CHOICE_LABEL } from '@/lib/content-review';
 
 export const dynamic = 'force-dynamic';
+
+/** 슬롯 시각이 지났는가 (렌더 밖 함수 — 화면 시각 계산) */
+function slotPassed(at: Date | null | undefined) {
+  return Boolean(at && at.getTime() <= Date.now());
+}
 
 /** 게시 예약 기본값: 지금부터 10분 뒤 (KST, datetime-local 형식) */
 function defaultScheduleValue() {
@@ -46,6 +56,10 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
   const scenes = (item.scenes as unknown as Scene[]) ?? [];
   const format = kindFormat(item.kind);
   const slot = await prisma.contentSlot.findFirst({ where: { merchantId, itemId: item.id } });
+  const pastDue = item.status === 'REVIEW' && slotPassed(slot?.slotAt);
+  const checks = item.status === 'REVIEW' || item.status === 'APPROVED' ? await contentPrecheck(item) : [];
+  const llmMock = getContentAdapter().info().mode === 'mock';
+  const canRevise = item.status === 'REVIEW' || item.status === 'APPROVED';
   const editable = item.status === 'REVIEW' || item.status === 'APPROVED';
   const canPublish = ['APPROVED', 'SCHEDULED', 'PUBLISHED'].includes(item.status);
   const voice = item.jobs.find((j) => j.step === 'VOICE')?.output as { available?: boolean; note?: string } | undefined;
@@ -75,7 +89,16 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
         </div>
       </div>
       {item.status === 'FAILED' ? <Notice tone="danger" title="생성 실패">{item.error ?? '알 수 없는 오류'}</Notice> : null}
-      {item.status === 'REVIEW' && item.error ? <Notice tone="warning" title="자동 승인하지 않음">{item.error} — 내용을 확인하고 고친 뒤 승인해 주세요.</Notice> : null}
+      {item.status === 'REVIEW' && item.error ? <Notice tone="warning" title="확인할 점">{item.error} — 내용을 확인하고 고친 뒤 승인해 주세요.</Notice> : null}
+      {item.status === 'ARCHIVED' && item.error ? <Notice tone="neutral" title="보관됨">{item.error}</Notice> : null}
+      {pastDue ? <Notice tone="danger" title="게시 시각 지남">캘린더 게시 시각({slot ? formatKst(slot.slotAt, false) : ''})이 지났지만 승인 전이라 게시하지 않았습니다. 승인할 때 다음 빈 슬롯 · 지금 · 승인만 중에서 고를 수 있습니다.</Notice> : null}
+      {item.revisionRequest ? (
+        <Notice tone={llmMock || item.provider === 'mock' ? 'warning' : 'neutral'} title="수정 요청으로 만든 판">
+          요청: {item.revisionRequest}
+          {item.provider === 'mock' ? ' — AI 공급자 연결 후 문장 반영(지금은 메모로만 남았습니다).' : ''}
+          {item.revisionOf ? <> · <Link href={`/studio/content/${item.revisionOf}`} className="font-bold text-brand-700">이전 판 보기</Link></> : null}
+        </Notice>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-4">
         <StatTile label="이 콘텐츠로 들어온 후원" value={`${cv.donations}건`} sub={formatWon(cv.amount)} tone="brand" />
@@ -132,11 +155,29 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
 
           <Card>
             <h2 className="text-[16px] font-black text-ink-900">승인</h2>
-            <p className="mt-1.5 text-[13px] text-ink-500">기관 명의로 나가는 게시물입니다. 사실과 다른 내용·수혜자를 특정할 수 있는 표현이 없는지 확인해 주세요.</p>
+            <p className="mt-1.5 text-[13px] text-ink-500">기관 명의로 나가는 게시물입니다. 사실과 다른 내용·수혜자를 특정할 수 있는 표현이 없는지 확인해 주세요. 콘텐츠는 담당자가 승인해야만 게시됩니다.</p>
+            {checks.length ? (
+              <ul className="mt-3 space-y-1.5 rounded-xl border border-ink-100 p-3">
+                <li className="text-[12.5px] font-bold text-ink-700">사전 점검</li>
+                {checks.map((c) => (
+                  <li key={c.key} className="flex gap-1.5 text-[12.5px] leading-snug">
+                    {c.ok ? <CircleCheck size={16} strokeWidth={1.7} className="mt-px shrink-0 text-success-500" /> : c.blocking ? <CircleAlert size={16} strokeWidth={1.7} className="mt-px shrink-0 text-danger-500" /> : <TriangleAlert size={16} strokeWidth={1.7} className="mt-px shrink-0 text-warning-500" />}
+                    <span><b className="text-ink-800">{c.label}</b> <span className="text-ink-500">{c.detail}</span></span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {item.status === 'REVIEW' ? (
                 <ActionForm action={approveContentAction} submitLabel="승인" confirmMessage="이 콘텐츠를 기관 명의 게시물로 승인합니다.">
                   <input type="hidden" name="id" value={item.id} />
+                  {pastDue ? (
+                    <Field label="게시 시각이 지났습니다 — 승인 뒤">
+                      <Select name="whenPast" defaultValue="NEXT_SLOT">
+                        {(Object.keys(PAST_SLOT_CHOICE_LABEL) as Array<keyof typeof PAST_SLOT_CHOICE_LABEL>).map((k) => <option key={k} value={k}>{PAST_SLOT_CHOICE_LABEL[k]}</option>)}
+                      </Select>
+                    </Field>
+                  ) : null}
                 </ActionForm>
               ) : null}
               <ActionForm action={regenerateContentAction} submitLabel="새로 만들기" variant="secondary" pendingLabel="만드는 중">
@@ -148,6 +189,27 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
                 </ActionForm>
               ) : null}
             </div>
+            {canRevise ? (
+              <div className="mt-4 grid gap-3 border-t border-ink-100 pt-4 md:grid-cols-2">
+                <ActionForm action={reviseContentAction} submitLabel="수정 요청으로 다시 만들기" variant="secondary" pendingLabel="만드는 중">
+                  <input type="hidden" name="id" value={item.id} />
+                  <Field label="수정 요청 한 줄" hint={`같은 캠페인·형식·슬롯으로 새 판을 만들고 이 판은 보관합니다. 하루 ${CONTENT_REVISIONS_PER_DAY}회까지.${llmMock ? ' (AI 공급자 연결 전이라 요청은 메모로만 남습니다)' : ''}`}>
+                    <Input name="request" maxLength={CONTENT_REVISION_MAX_LEN} required placeholder="첫 문장을 짧게" />
+                  </Field>
+                </ActionForm>
+                {item.status === 'REVIEW' ? (
+                  <ActionForm action={rejectContentAction} submitLabel="반려" variant="danger" confirmMessage="반려하면 이 콘텐츠는 게시되지 않고 보관됩니다. 이유는 다음 생성 때 참고합니다.">
+                    <input type="hidden" name="id" value={item.id} />
+                    <Field label="반려 이유">
+                      <Select name="reasonCode" defaultValue="OTHER">
+                        {CONTENT_REJECT_REASONS.map((r) => <option key={r} value={r}>{CONTENT_REJECT_REASON_LABEL[r]}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="메모 (선택)"><Input name="note" maxLength={200} /></Field>
+                  </ActionForm>
+                ) : null}
+              </div>
+            ) : null}
           </Card>
 
           <Card>

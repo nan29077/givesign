@@ -31,6 +31,10 @@ export interface ContentBrief {
   color: string;
   regNo: string | null;
   bannedWords: string[];
+  /** 담당자 수정 요청 한 줄(가린 값). LLM 공급자만 반영한다(2026-11-09). */
+  revisionRequest?: string | null;
+  /** 기관의 반려·수정 요청 이유 요약 — 프롬프트 "피해야 할 것"(2026-11-09) */
+  avoid?: string[];
 }
 
 /** 장면(카드) 한 장의 글. 그림은 서버가 그린다. */

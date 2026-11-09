@@ -15,6 +15,7 @@ import { encrypt, maskName, maskPhone, normalizePhone } from '@/lib/crypto';
 import { newId } from '@/lib/id';
 import type { ConsentType, DigitalProductType, ProductKind } from '@/generated/prisma/enums';
 import { recordReconsent, staleRequiredConsents } from './terms';
+import { recordFunnelStep } from './funnel';
 
 /**
  * 상품·금액 선택.
@@ -469,6 +470,7 @@ export async function confirmChargeAmount(input: {
     },
   });
   if (claimed.count === 0) return { ok: false, message: '이미 처리된 결제입니다.' };
+  await recordFunnelStep({ step: 'AMOUNT_SELECTED', chargeId: charge.id }); // 단계 측정(2026-11-09) — 실패해도 예외 없음
 
   // 재동의 기록. 기록 실패가 결제를 막지는 않지만(이미 확정됨) 로그로 남긴다.
   if (claimedReconsent.length > 0 && payer) {

@@ -331,3 +331,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 묶음 바로 실행(`inbox-actions.ts`)은 기존 경로만: 영수증 정보 안내 = `receipt.info_needed`(연간 배치와 같은 dedupeKey, 수신 거부·차단·탈퇴·번호 없음 제외) → 저니, 막힌 안내 = `retryJourneyRun`, 서명 재안내 = `remindSigner` + 서명자·KST 날짜 하루 1회 선점(`kv.setnx`).
 - **담당·기한**(`inbox_assignment`, (기관, 항목 키) 유니크). 기한 넘김 알림은 `/api/cron/inbox`(1시간, `cron-registry.ts`)가 기관 소유자 계정에 콘솔 알림 1회(`overdue_notified_at` 조건부 선점, 기한을 바꾸면 다시). 처리돼 사라진 항목의 배정은 닫는다. 지금 기관당 담당자 계정은 1개라 화면은 기한·메모만.
 - 사이드바 배지(`inboxActionCount`)는 그대로 **항목 수**다(묶음 수가 아님). RECEIPT_BATCH 는 `/studio/inbox/approvals/[id]` 확인 화면(대상 수·표본·제외 이유·비용 0원)을 거쳐 승인한다 — 정보만, 발급 판정은 영수증 대장 규칙 그대로.
+
+## 2026-11-09 문자 후원 단계 측정 · 콘텐츠 승인
+
+- **단계 측정**(`funnel.ts`, 표 `funnel_step`)은 (흐름, 단계) 유니크로 **처음 도달만** 남긴다. 흐름 키는 MO `mo:{수신 id}`(그 문자의 결제 건 포함)·웹 `charge:{결제 id}`. 단계: `MO_RECEIVED → REPLY_SENT → LINK_OPENED → AMOUNT_SELECTED → AUTH_STARTED → PAID`, 끝 `FAILED/BLOCKED`(이유 `LIMIT·UNREGISTERED·PAYMENT_FAILED·CONTENT_BLOCKED·EXPIRED`). 개인정보 원문 없음, 정기·테스트 결제 제외.
+- 결제 함수에는 `recordFunnelStep`/`recordChargeStatusStep` **한 줄 호출만** 넣는다(예외를 던지지 않는 안전 래퍼). 상태 전이는 `charge-flow` `setStatus` 한 곳에서 잡고(PENDING_PIN → 인증 시작, 실패·차단 → 끝 상태), PAID 는 승인 트랜잭션 **커밋 뒤**(정상·관리자 확정). 링크 열람은 `/r/[token]` 금액 선택 화면에서 `isBotUserAgent`(= `/go` 판정)로 미리보기 봇을 뺀다. 웹은 금액 제출부터(방문 수 없음).
+- 집계(`funnel-report.ts`)는 **측정 시작 이후만** — 기간 안에 시작 단계(MO `MO_RECEIVED`, 웹·QR `AMOUNT_SELECTED`)를 기록한 흐름만, 단계 수는 흐름별 최고 단계 기준. 예전 결제 건을 상태로 거꾸로 채우지 않는다. 화면: `/studio/reports?tab=funnel`, 관리자 `/admin` 카드. 미완료 1회 안내(M7)는 만들지 않았다(정책 결정 대기).
+- **콘텐츠는 항상 사람이 승인해야 게시된다**(대표 결정). `autoApprove` 컬럼은 호환용으로만 남고 저장은 항상 false, 읽지 않는다. `approvedBy='AUTO'`·시스템 이름 승인 금지(테스트가 소스를 검사한다). 승인은 `REVIEW` 조건부 갱신(동시 클릭 1회). 슬롯 시각이 지난 미승인은 게시하지 않고 "게시 시각 지남", 늦은 승인은 `whenPast` = 다음 빈 슬롯(`moveSlotToNextFree`, 화면 기본)·지금·승인만(서비스 기본 — 인자 없으면 예전대로 예약 안 함).
+- 주간 승인 `/studio/content/review`(이번 주·다음 주, KST 월~일, 지난 대기는 이번 주에), 일괄 승인은 항목마다 `approveContent`(승인 불가는 이유와 함께 건너뜀, 50건 상한). 반려(이유 분류+메모) → `ARCHIVED`, 수정 요청 한 줄 → 새 판(`revision_of/root_id/request`, 이전 판 보관, 슬롯 이어받음, 판 묶음당 하루 5회, advisory lock). 메모·요청은 실명·연락처 거절 후 `maskForLlm` 값만 저장. mock 이면 요청은 메모로만("AI 공급자 연결 후 문장 반영").
+- 반려·수정 이유는 `content_feedback` 에 쌓고 최근 20개를 `contentAvoidHints` 로 LLM 프롬프트 "피해야 할 것" 에 넣는다(로그 금지). 사전 점검(`contentPrecheck`)은 기존 검사(`contentDraftViolation`·`captionProblem`·실명/연락처 패턴)만 부른다.
+- 알림 배치 `/api/cron/content-review`(15분): 월요일 09시 이후 그 주 대기 N건(기관·주 1회), 슬롯 하루 전·3시간 전 미승인(콘텐츠·슬롯 시각·시점 1회) — `content_review_alert` 키와 알림을 한 트랜잭션. 기관 담당자 문자·알림톡 정보성 경로가 없어 콘솔 알림만.

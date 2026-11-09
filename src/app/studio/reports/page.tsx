@@ -6,6 +6,7 @@ import { prisma } from '@/server/db';
 import { formatNumber } from '@/lib/money';
 import { formatKst } from '@/lib/datetime';
 import type { ReportStatus } from '@/generated/prisma/enums';
+import { FunnelTab, ReportTabs } from './funnel-tab';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +22,11 @@ const REPORT_CATEGORY: Record<string, string> = {
   ABUSE: '후원자 신고',
 };
 
-export default async function StudioReportsPage() {
+export default async function StudioReportsPage({ searchParams }: { searchParams: Promise<{ tab?: string; days?: string; campaign?: string; channel?: string }> }) {
   const { merchantId } = await requireMerchant();
+  const sp = await searchParams;
+  // 문자 후원 단계별 현황(2026-11-09) — 같은 화면의 새 탭
+  if (sp.tab === 'funnel') return <FunnelTab merchantId={merchantId} days={sp.days} campaign={sp.campaign} channel={sp.channel} />;
 
   const [reports, statusCounts] = await Promise.all([
     prisma.report.findMany({
@@ -54,6 +58,7 @@ export default async function StudioReportsPage() {
   return (
     <>
       <PageHeader title="신고 내역" description="내 채널과 관련해 접수된 신고입니다. 최근 100건을 표시합니다." />
+      <ReportTabs active="reports" />
 
       <div className="space-y-5">
         <Notice tone="neutral" title="신고는 통합 관리자가 처리합니다">

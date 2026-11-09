@@ -22,6 +22,11 @@ import type { ContentStatus } from '@/generated/prisma/enums';
 
 export const dynamic = 'force-dynamic';
 
+/** 슬롯 시각이 지났는가 (렌더 밖 함수 — 화면 시각 계산) */
+function isPastSlot(at: Date | undefined) {
+  return Boolean(at && at.getTime() <= Date.now());
+}
+
 const STATUS_TONE: Record<string, 'neutral' | 'brand' | 'success' | 'warning' | 'danger'> = {
   GENERATING: 'neutral', REVIEW: 'warning', APPROVED: 'brand', SCHEDULED: 'brand', PUBLISHED: 'success', FAILED: 'danger', ARCHIVED: 'neutral', DRAFT: 'neutral',
 };
@@ -44,12 +49,14 @@ export default async function StudioContentPage({ searchParams }: { searchParams
     monthlyUsage(merchantId),
     prisma.contentItem.groupBy({ by: ['status'], where: { merchantId }, _count: { _all: true } }),
   ]);
-  const [conv, preview, blockers, insight] = await Promise.all([
+  const [conv, preview, blockers, insight, itemSlots] = await Promise.all([
     contentConversions(merchantId, items.map((i) => i.id)),
     calendarPreview(merchantId),
     calendarBlockers(merchantId),
     getCachedInsight(merchantId),
+    prisma.contentSlot.findMany({ where: { merchantId, itemId: { in: items.map((i) => i.id) } }, select: { itemId: true, slotAt: true } }),
   ]);
+  const slotAtBy = new Map(itemSlots.map((x) => [x.itemId, x.slotAt]));
   const ai = aiDraftAvailability();
   const insightToday = insight?.dayKey === kstDateKey();
   const calendarKinds = setting.kinds.length ? setting.kinds : DEFAULT_CALENDAR_KINDS;
@@ -64,7 +71,12 @@ export default async function StudioContentPage({ searchParams }: { searchParams
       <PageHeader
         title="콘텐츠 만들기"
         description="캠페인 이야기로 숏폼(9:16)과 캠페인 이미지를 자동으로 만듭니다. 기관 명의로 나가는 게시물이라 담당자가 검토·승인한 뒤 게시합니다."
-        action={<LinkButton href="/studio/channels" variant="secondary" size="sm">SNS 채널 연결</LinkButton>}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/studio/content/review" size="sm">주간 승인{c('REVIEW') ? ` (${c('REVIEW')})` : ''}</LinkButton>
+            <LinkButton href="/studio/channels" variant="secondary" size="sm">SNS 채널 연결</LinkButton>
+          </div>
+        }
       />
       {mock ? <Notice tone="warning" title="콘텐츠 생성 mock">AI 공급자(대본·이미지·음성) 연결 전입니다. 캠페인 내용으로 대본과 장면 이미지(SVG)를 만들고, 음성·영상(mp4)은 만들지 않습니다. 장면 이미지와 자막 파일은 바로 내려받아 쓸 수 있습니다.</Notice> : null}
       {!merchant.fundraisingRegNo ? (
@@ -113,7 +125,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
             <Field label="기본 분위기"><Select name="tone" defaultValue={setting.tone}>{(Object.keys(TONE_LABEL) as Tone[]).map((t) => <option key={t} value={t}>{TONE_LABEL[t]}</option>)}</Select></Field>
             <Field label="쓰지 않을 단어 (쉼표로 구분)"><Input name="bannedWords" defaultValue={setting.bannedWords.join(', ')} placeholder="예: 불쌍한, 가엾은" /></Field>
             <Field label="기본 해시태그"><Input name="hashtags" defaultValue={setting.hashtags.map((t) => `#${t}`).join(' ')} placeholder="#우리동네복지관 #나눔" /></Field>
-            <Checkbox name="autoApprove" defaultChecked={setting.autoApprove} label="자동 승인" description="켜면 생성 직후 금지어·링크·AI 표시 검사를 통과한 콘텐츠를 승인까지 진행합니다(모집등록번호가 있을 때만). 게시 예약은 아래 캘린더의 자동 예약을 켰을 때만 합니다. 기본은 담당자 승인입니다." />
+            <Notice tone="neutral" title="승인 방식">콘텐츠는 AI 가 자동으로 만들고, 담당자가 승인해야 게시됩니다. 승인 전에는 어떤 채널에도 올라가지 않습니다.</Notice>
 
             <div className="mt-2 border-t border-ink-100 pt-4">
               <h3 className="text-[14px] font-black text-ink-900">콘텐츠 캘린더 (자율 생성)</h3>
@@ -152,7 +164,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
                   ))}
                 </div>
               </Field>
-              <Checkbox name="autoSchedule" defaultChecked={setting.autoSchedule} label="승인되면 슬롯 시각으로 자동 예약" description="자동 승인이면 생성 직후, 아니면 담당자가 승인하는 순간 예약합니다(슬롯이 아직 미래일 때). SNS 자동 게시가 열려 있어야 합니다." />
+              <Checkbox name="autoSchedule" defaultChecked={setting.autoSchedule} label="승인되면 슬롯 시각으로 자동 예약" description="담당자가 승인하는 순간 슬롯 시각으로 예약합니다(슬롯이 아직 미래일 때). 슬롯 시각이 지난 뒤 승인하면 다음 빈 슬롯 · 지금 · 승인만 중에서 고릅니다. SNS 자동 게시가 열려 있어야 합니다." />
             </div>
           </ActionForm></div>
         </Card>
@@ -221,6 +233,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
                   <Badge tone={STATUS_TONE[it.status]}>{CONTENT_STATUS_LABEL[it.status]}</Badge>
                   <Badge>{CONTENT_KIND_SHORT[it.kind]}</Badge>
                   {it.createdBy === 'CALENDAR' ? <Badge tone="brand">캘린더</Badge> : null}
+                  {it.status === 'REVIEW' && isPastSlot(slotAtBy.get(it.id)) ? <Badge tone="danger">게시 시각 지남</Badge> : null}
                 </div>
                 <p className="mt-1.5 line-clamp-2 text-[12.5px] font-bold text-ink-900">{it.campaignId ? campaignTitle.get(it.campaignId) ?? it.title : it.title}</p>
                 <p className="mt-0.5 text-[11px] text-ink-400">{formatKst(it.createdAt, false)}</p>

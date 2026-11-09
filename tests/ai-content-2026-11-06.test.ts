@@ -382,7 +382,10 @@ describe('[4] 콘텐츠 캘린더', () => {
     expect(preview.filter((p) => p.slot).length).toBe(2);
   });
 
-  it('자동 승인 + 자동 예약이면 생성 직후 연결 채널(형식 허용)로 슬롯 시각에 예약한다', async () => {
+  // 2026-11-09 대표 결정으로 자동 승인이 없어졌다. 예전 이 테스트는 "자동 승인 + 자동 예약 → 생성 직후 예약" 을 확인했는데,
+  // 생성 직후 예약 부분만 새 규칙(검토 대기 · 게시 예약 없음 → 담당자 승인 순간 예약)으로 바꾸고,
+  // 검증하던 다른 성질 — 연결 채널 중 형식 허용 플랫폼만 · 슬롯 시각으로 예약 · 콘텐츠 SCHEDULED — 은 그대로 둔다.
+  it('자동 승인 설정이 있어도 캘린더 콘텐츠는 검토 대기로 만들고, 담당자가 승인하면 연결 채널(형식 허용)로 슬롯 시각에 예약한다', async () => {
     await withRegNo();
     await seedCampaign();
     await connectSocialChannel(fx.merchantId, 'INSTAGRAM', '@welfare', fx.merchantUserId);
@@ -391,7 +394,10 @@ describe('[4] 콘텐츠 캘린더', () => {
       data: { merchantId: fx.merchantId, calendarEnabled: true, weeklyCount: 7, days: [], postHour: 23, kinds: ['CARD_NEWS'], platforms: ['INSTAGRAM', 'YOUTUBE'], autoApprove: true, autoSchedule: true },
     });
     const r = await fillNextSlot(fx.merchantId);
-    expect(r.slot!.status).toBe('SCHEDULED');
+    expect(r.slot!.status).toBe('REVIEW');
+    expect(await prisma.contentPublish.count({ where: { itemId: r.slot!.itemId! } })).toBe(0);
+    expect((await prisma.contentItem.findUniqueOrThrow({ where: { id: r.slot!.itemId! } })).approvedBy).toBeNull();
+    await approveContent(fx.merchantId, r.slot!.itemId!, fx.merchantUserId);
     const pubs = await prisma.contentPublish.findMany({ where: { itemId: r.slot!.itemId! } });
     expect(pubs.map((p) => p.platform)).toEqual(['INSTAGRAM']); // 유튜브는 카드뉴스 불가
     expect(pubs[0]!.scheduledAt.getTime()).toBe(r.slot!.slotAt.getTime());

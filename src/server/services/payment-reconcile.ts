@@ -9,6 +9,7 @@ import { restoreStock } from './charge-flow';
 import { sendMtForPayer, setStatus } from './charge-flow';
 import * as tpl from './mt-templates';
 import { emitChargePaid } from './charge-events';
+import { recordFunnelStep } from './funnel';
 
 /**
  * 결과 미확인(UNKNOWN / TIMEOUT) 결제의 수동 대사.
@@ -220,6 +221,7 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
     await emitChargePaid(tx, charge, approvedAt, { reconciled: true });
   });
 
+  await recordFunnelStep({ step: 'PAID', chargeId: charge.id }); // 단계 측정(2026-11-09) — 관리자 확정도 결제 완료
   // 한도 집계는 결제 판정 시점에 이미 예약(반영)되어 있으므로 다시 더하지 않는다.
   if (charge.payerId) {
     const link = await prisma.payerMerchantLink.findUnique({

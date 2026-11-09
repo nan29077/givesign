@@ -2,6 +2,7 @@ import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
 import { markPaymentUnknown } from './charge-flow';
+import { recordFunnelStep } from './funnel';
 
 /**
  * 고착된 결제의 정리 (정리 배치 /api/cron/cleanup 에서 1분마다 호출).
@@ -81,6 +82,7 @@ export async function closeOrphanPreparedCharges(now = new Date(), olderThanMs =
       data: { status: 'PAYMENT_FAILED', statusReason: reason },
     });
     if (claimed.count !== 1) continue;
+    await recordFunnelStep({ step: 'FAILED', chargeId: c.id, reason: 'PAYMENT_FAILED' }); // 단계 측정
     await prisma.chargeStatusLog
       .create({ data: { id: newId(), chargeId: c.id, fromStatus: c.status, toStatus: 'PAYMENT_FAILED', reason, actor: 'system' } })
       .catch(() => undefined);
@@ -101,6 +103,7 @@ export async function failPreparedCharge(chargeId: string, reason: string): Prom
     data: { status: 'PAYMENT_FAILED', statusReason: reason },
   });
   if (claimed.count !== 1) return false;
+  await recordFunnelStep({ step: 'FAILED', chargeId, reason: 'PAYMENT_FAILED' }); // 단계 측정
   await prisma.paymentPinSession
     .updateMany({ where: { chargeId, status: 'PENDING' }, data: { status: 'FAILED', resultNote: reason } })
     .catch(() => undefined);
