@@ -13,6 +13,7 @@ import { BannerStrip } from '@/components/public/banner-strip';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { OnboardingChecklist } from '@/components/studio/onboarding-checklist';
 import { InboxBanner } from '@/components/studio/inbox-banner';
+import { NextActionBanner } from '@/components/studio/next-action-banner';
 import { ChargeCardGrid } from '@/components/studio/charge-cards';
 import { requireMerchant } from '@/server/auth';
 import { prisma } from '@/server/db';
@@ -171,6 +172,8 @@ export default async function StudioDashboardPage() {
 
         {/* 0-0) 승인 대기함 — 자동화가 준비한 일·담당자가 처리할 일(모바일에서도 첫 화면에 보이게) */}
         <InboxBanner merchantId={merchantId} />
+        {/* 0-0-1) 다음 할 일이 있는 후원자 수(2026-11-09 D1) */}
+        <NextActionBanner merchantId={merchantId} />
 
         {/* 0-1) 모금 현황 — 후원 업무의 첫 화면. 캠페인 진행률과 정기후원·영수증 준비 상태로 바로 간다. */}
         <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">

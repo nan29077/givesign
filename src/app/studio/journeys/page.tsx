@@ -8,6 +8,7 @@ import { formatKst } from '@/lib/datetime';
 import { formatNumber } from '@/lib/money';
 import { journeySettings, journeyStats, journeyDef, JOURNEY_WEEKLY_SEND_CAP } from '@/server/services/journeys';
 import { cancelJourneyRunAction, saveJourneyAction } from '@/app/actions/journeys';
+import { OutboundPanel } from '@/components/studio/outbound-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,7 +64,7 @@ export default async function StudioJourneysPage() {
         <StatTile label="켜진 자동 안내" value={`${settings.filter((s) => s.enabled).length} / ${settings.length}`} tone="brand" />
         <StatTile label="최근 30일 자동 발송" value={`${formatNumber(totalSent)}건`} />
         <StatTile label="승인 대기" value={`${formatNumber(awaiting)}건`} tone={awaiting ? 'warning' : 'neutral'} sub={awaiting ? '승인 대기함에서 처리' : undefined} />
-        <StatTile label="후원자 보호" value={`7일 ${JOURNEY_WEEKLY_SEND_CAP}건`} sub="야간(21~9시) 보류 · 수신 거부 제외" />
+        <StatTile label="후원자 보호" value={`7일 ${JOURNEY_WEEKLY_SEND_CAP}건`} sub="월간 안내 등 정보성 안내 합산 · 야간(21~9시) 보류 · 수신 거부 제외" />
       </div>
       <Notice tone="neutral">
         감사장·확인서는 <Link href="/studio/documents" className="font-semibold underline">서식·제출 문서</Link>에서 용도별로 지정한 서식(없으면 기브싸인 기본 서식)으로 만들어집니다.
@@ -129,6 +130,8 @@ export default async function StudioJourneysPage() {
           </div>
         </section>
       ))}
+
+      <OutboundPanel merchantId={merchantId} />
 
       <Card className="mt-6">
         <h2 className="text-[16px] font-black text-ink-900">최근 실행</h2>
