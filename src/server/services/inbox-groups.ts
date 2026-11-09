@@ -402,6 +402,8 @@ function ensureDefaults() {
   });
   // 2026-11-09 E — 통장 입금 중 후원자 확인이 필요한 건(입금 맞추기)
   def('offline-deposits', '입금 확인 필요', (ctx) => depositsInboxGroup(ctx.merchantId));
+  // 2026-11-11 G — 주간 운영 계획 제안(승인 대기)
+  def('weekly-plan', '주간 운영 계획', async (ctx) => (await import('./weekly-plan')).weeklyPlanInboxGroup(ctx.merchantId, ctx.now));
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */

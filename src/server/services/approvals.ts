@@ -25,7 +25,10 @@ export type ApprovalKind =
   | 'CONTENT_CALENDAR'
   | 'VOLUNTEER_CERTIFICATE'
   | 'SUPPORTER_MERGE'
-  | 'AI_DRAFT';
+  | 'AI_DRAFT'
+  // 2026-11-11 G: 주간 운영 계획 제안 — 승인해도 캘린더 설정·검토 대기 콘텐츠만 만든다(게시·발송 없음)
+  | 'WEEKLY_PLAN_SLOT'
+  | 'WEEKLY_PLAN_TOPIC';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -35,6 +38,8 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   VOLUNTEER_CERTIFICATE: '봉사활동 확인서 발급',
   SUPPORTER_MERGE: '후원자 병합',
   AI_DRAFT: 'AI 초안 검토',
+  WEEKLY_PLAN_SLOT: '주간 계획 — 콘텐츠 슬롯 추가',
+  WEEKLY_PLAN_TOPIC: '주간 계획 — 콘텐츠 주제 제안',
 };
 
 export interface ApprovalRow {

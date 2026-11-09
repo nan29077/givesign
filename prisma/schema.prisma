@@ -747,6 +747,11 @@ model MerchantProfile {
   contentSetting        MerchantContentSetting?
   contentItems          ContentItem[]
   socialChannels        SocialChannel[]
+  /// 2026-11-11 G: 기관 목표·주간 운영 계획·보고 설정·콘텐츠 소재
+  merchantGoals         MerchantGoal[]
+  weeklyPlans           WeeklyPlan[]
+  weeklyReportSetting   WeeklyReportSetting?
+  contentAssets         ContentAsset[]
 
   @@index([status])
   @@map("merchant_profile")
@@ -3636,6 +3641,8 @@ model MerchantContentSetting {
   platforms   SocialPlatform[]
   /// 캘린더 콘텐츠가 승인되면 슬롯 시각으로 게시 예약 (SOCIAL_PUBLISH_ENABLED 일 때만)
   autoSchedule Boolean @default(false) @map("auto_schedule")
+  /// 2안 비교(A/B): 캘린더 슬롯마다 캡션 2안을 만든다. 둘 다 승인해야 나눠 게시한다(2026-11-11 G2)
+  abTestEnabled Boolean @default(false) @map("ab_test_enabled")
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
@@ -3684,6 +3691,12 @@ model ContentItem {
   revisionRootId String?     @map("revision_root_id")
   /// 담당자 수정 요청 한 줄(가린 값). LLM 공급자면 대본에 반영, mock 이면 메모로만. 2026-11-09
   revisionRequest String?    @map("revision_request")
+  /// 2안 비교(A/B) 묶음 — A안의 id. A안·B안이 같은 값을 가진다(2026-11-11 G2). 없으면 단일안.
+  variantGroupId String?     @map("variant_group_id")
+  /// 2안 비교의 안 이름 (A · B)
+  variantLabel   String?     @map("variant_label")
+  /// 이 콘텐츠에 연결한 소재(content_asset id). 승인 화면이 동의서 상태를 보여 주고 승인 때 다시 검사한다(2026-11-11 G2).
+  assetIds       String[]    @default([]) @map("asset_ids")
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -3692,6 +3705,7 @@ model ContentItem {
   publishes ContentPublish[]
 
   @@index([revisionRootId, createdAt])
+  @@index([variantGroupId])
 
   @@index([merchantId, status, createdAt])
   @@index([campaignId])
@@ -4827,4 +4841,109 @@ model RecurringChangeLog {
   @@index([recurringId, createdAt])
   @@index([merchantId, createdAt])
   @@map("recurring_change_log")
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-11 G — 기관 목표 · 주간 운영 계획·보고 · 콘텐츠 소재
+// ---------------------------------------------------------------------------
+
+/// 기관 목표. 진행률은 원천(결제 건·약정·봉사 신청)에서 그때그때 계산한다 — 누적 컬럼을 두지 않는다.
+model MerchantGoal {
+  id         String    @id
+  merchantId String    @map("merchant_id")
+  /// RECURRING_DONORS(정기후원자 수) · CAMPAIGN_AMOUNT(캠페인 모금액 — 캠페인 목표 재사용) · VOLUNTEERS(봉사자 수) · MONTHLY_AMOUNT(월 후원액)
+  kind       String
+  title      String?
+  /// 목표 값(명 또는 원). CAMPAIGN_AMOUNT 는 캠페인 목표액을 읽으므로 0
+  target     BigInt    @default(0)
+  campaignId String?   @map("campaign_id")
+  /// 봉사자 수를 세기 시작하는 날(KST)
+  startsOn   DateTime  @map("starts_on") @db.Date
+  /// 기한(KST). 월 후원액은 매달 말일로 본다
+  dueOn      DateTime? @map("due_on") @db.Date
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, archivedAt])
+  @@map("merchant_goal")
+}
+
+/// 주간 운영 계획(기관, 주 시작 월요일 KST) 1건. 수치만 저장한다(후원자 이름·연락처 없음).
+model WeeklyPlan {
+  id              String    @id
+  merchantId      String    @map("merchant_id")
+  /// 그 주 월요일(KST 날짜)
+  weekStart       DateTime  @map("week_start") @db.Date
+  /// DRAFT(만듦) · SENT(보고 보냄) · ACKED(담당자 확인)
+  status          String    @default("DRAFT")
+  /// RULES(규칙 문장) · LLM(공급자가 문장을 다듬음 — 숫자는 규칙 계산값)
+  generatedBy     String    @default("RULES") @map("generated_by")
+  /// 지난주 평가(수치·라벨·문장)
+  evaluation      Json
+  /// 이번 주 제안 목록(실행이 필요한 항목은 approvalId)
+  suggestions     Json
+  /// 월요일 보고 발송 선점(1회)
+  reportClaimedAt DateTime? @map("report_claimed_at") @db.Timestamptz(3)
+  reportSentAt    DateTime? @map("report_sent_at") @db.Timestamptz(3)
+  /// ALIMTALK · SMS · NONE(보내지 않음)
+  reportChannel   String?   @map("report_channel")
+  reportMtId      String?   @map("report_mt_id")
+  reportNote      String?   @map("report_note")
+  ackedAt         DateTime? @map("acked_at") @db.Timestamptz(3)
+  ackedBy         String?   @map("acked_by")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, weekStart])
+  @@index([weekStart, status])
+  @@map("weekly_plan")
+}
+
+/// 주간 운영 보고 수신 설정. 행이 없으면 받는다(기본 켬).
+model WeeklyReportSetting {
+  merchantId String   @id @map("merchant_id")
+  enabled    Boolean  @default(true)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@map("weekly_report_setting")
+}
+
+/// 콘텐츠 소재(담당자가 올린 사진·짧은 영상). 비공개 저장소에만 둔다. 얼굴이 나온 소재는 초상권 동의서(PORTRAIT_CONSENT)와 연결해야 쓸 수 있다.
+model ContentAsset {
+  id                String    @id
+  merchantId        String    @map("merchant_id")
+  /// IMAGE · VIDEO
+  kind              String
+  /// 비공개 저장소 객체 이름
+  objectName        String    @map("object_name")
+  mime              String
+  sizeBytes         Int       @map("size_bytes")
+  /// EVENT(행사) · VOLUNTEER(봉사) · GOODS(물품) · FACILITY(시설) · BENEFICIARY(수혜자 — 콘텐츠에 쓸 수 없음)
+  tags              String[]  @default([])
+  /// 나온 사람: NONE · STAFF_VOLUNTEER(직원·봉사자) · CHILD(아동) · CLIENT(이용자)
+  people            String    @default("NONE")
+  /// 얼굴이 나왔는지(담당자 체크 — 자동 인식하지 않는다)
+  hasFace           Boolean   @default(false) @map("has_face")
+  /// 얼굴 가림 필요(아동·이용자 기본 켬)
+  blurRequired      Boolean   @default(false) @map("blur_required")
+  /// 연결한 초상권 동의서 서명 요청(edoc_envelope id)
+  consentEnvelopeId String?   @map("consent_envelope_id")
+  note              String?
+  uploadedBy        String    @map("uploaded_by")
+  archivedAt        DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, archivedAt, createdAt])
+  @@map("content_asset")
 }

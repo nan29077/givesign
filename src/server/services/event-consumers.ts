@@ -11,6 +11,7 @@ import { chargeDonorLabel } from './charge-events';
 import { registerRecurringRecoveryConsumer } from './recurring-recovery';
 import { registerMarketingConsentConsumer } from './marketing-consent';
 import { registerOfflineDepositConsumers } from './deposits';
+import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -166,5 +167,7 @@ export function registerDefaultConsumers() {
   registerMarketingConsentConsumer();
   // 2026-11-09 E: 계좌이체 후원 확정 → 기관 알림(여러 건이면 묶음 1건)
   registerOfflineDepositConsumers();
+  // 2026-11-11 G: 주간 운영 계획 제안 승인(캘린더 요일 추가 · 주제 → 검토 대기 콘텐츠). 게시·발송을 만들지 않는다.
+  registerWeeklyPlanApprovalHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

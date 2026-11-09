@@ -62,6 +62,11 @@ export const CRON_JOBS: CronDef[] = [
     description: '콘텐츠 승인 알림 — 월요일 09시 그 주 검토 대기 건수, 게시 시각 하루 전·3시간 전 미승인(같은 슬롯·시점 1회, 콘솔 알림)',
   },
   {
+    name: 'weekly-plan', path: '/api/cron/weekly-plan', schedule: '1시간마다(월요일 07시 이후 계획, 09~21시 보고)', eventBridge: 'cron(5 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 600,
+    description: '주간 운영 계획 — 기관·주 1회 지난주 평가·이번 주 제안(실행은 승인 요청), 월요일 09시 기관 대표 담당자 보고 1통',
+  },
+  {
     name: 'recurring', path: '/api/cron/recurring', schedule: '매일 10:00', eventBridge: 'cron(0 1 * * ? *)',
     intervalSec: 86_400, lockTtlSec: 900,
     description: '정기후원 출금·실패 재시도·정지',
