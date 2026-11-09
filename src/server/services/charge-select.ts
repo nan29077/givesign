@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { readIntentHint } from './mo-commands';
 import { logger } from '@/lib/logger';
 import { initialPointStatus } from './point-status';
 import { openCampaigns } from './fundraising';
@@ -103,6 +104,8 @@ export interface SelectAmountContext {
   closedCampaignTitle: string | null;
   /** 개정되어 다시 동의받아야 하는 필수 약관. 비어 있지 않으면 화면에서 체크를 받고 확정 시 기록한다. */
   reconsent: Array<{ type: ConsentType; title: string; version: string; content: string }>;
+  /** 문자 내용으로 미리 골라 둘 캠페인·금액(2026-11-12 4차 K2). 화면 초기값일 뿐 확정은 후원자가 한다. */
+  suggestion?: { campaignId: string | null; amount: bigint | null; note: string } | null;
 }
 
 export async function loadSelectAmountContext(
@@ -230,8 +233,19 @@ export async function loadSelectAmountContext(
       reconsent: charge.payer
         ? (await staleRequiredConsents(charge.payer)).map((t) => ({ type: t.type, title: t.title, version: t.version, content: t.content }))
         : [],
+      suggestion: suggestionFrom(link.payload, charge.campaignId, campaigns.map((c) => c.id), minAmount, maxAmount),
     },
   };
+}
+
+/** 링크 payload 의 미리 선택 값 검증: 모금 중 캠페인(키워드로 이미 지정된 결제 건은 제외)·유효 범위 금액만. */
+function suggestionFrom(payload: unknown, chargeCampaignId: string | null, openIds: string[], min: bigint, max: bigint): SelectAmountContext['suggestion'] {
+  const hint = readIntentHint(payload);
+  if (!hint) return null;
+  const campaignId = !chargeCampaignId && hint.campaignId && openIds.includes(hint.campaignId) ? hint.campaignId : null;
+  const amount = hint.amount != null && BigInt(hint.amount) >= min && BigInt(hint.amount) <= max ? BigInt(hint.amount) : null;
+  if (!campaignId && amount === null) return null;
+  return { campaignId, amount, note: hint.note };
 }
 
 export interface ConfirmAmountResult {

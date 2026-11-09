@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { promoForAttribution } from './promo-codes';
 import { ownedContentItemId } from './attribution';
 import { initialPointStatus } from './point-status';
 import { newId, newTransactionNo } from '@/lib/id';
@@ -53,6 +54,8 @@ export interface WebChargeInput {
   /** 유입 경로 (SNS 게시물 링크의 src·cid). 없으면 WEB */
   source?: string | null;
   contentItemId?: string | null;
+  /** 홍보물 QR·링크 쿠키(2026-11-12 4차 K1). 이 기관 홍보물일 때만 남긴다. */
+  promoId?: string | null;
 }
 
 export interface WebChargeResult {
@@ -158,6 +161,7 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         anonymous: Boolean(input.anonymous),
         source: input.source ?? 'WEB',
         contentItemId: await ownedContentItemId(merchant.id, input.contentItemId),
+        promoId: await promoForAttribution(merchant.id, input.promoId),
       },
     });
   } catch (error) {

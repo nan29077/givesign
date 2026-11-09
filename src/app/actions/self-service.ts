@@ -22,6 +22,8 @@ import { setNoticeOptOut, setPreferredChannel } from '@/server/services/donor-pr
 import { setDonorMemberMarketing, setMarketingConsent } from '@/server/services/marketing-consent';
 import { rotateReceiptToken, upsertReceiptProfile } from '@/server/services/receipts';
 import { prisma } from '@/server/db';
+import { notifySmsRecurringResult, smsReplyLinkScope } from '@/server/services/mo-command-scope';
+import { replyLinkBound } from '@/server/services/mo-link-cookie';
 
 /**
  * 후원자 셀프서비스 액션 (2026-11-09 2차 F). 통합 후원자(/my)와 기관 후원 회원(/donate/[코드]/my)이 함께 쓴다.
@@ -56,6 +58,13 @@ type Resolved = { ok: true; scope: SelfServiceScope; paths: string[] } | { ok: f
 
 async function resolveScope(f: FormData): Promise<Resolved> {
   const code = text(f, 'code');
+  // 2026-11-12 4차 K3: 문자 '변경·해지' 명령 링크(/mo/[토큰]). 링크 유효 + 이 브라우저에서 본인 확인을 마쳤을 때만.
+  if (code.startsWith('sms:')) {
+    const scope = await smsReplyLinkScope(code.slice(4));
+    if (!scope) return { ok: false, state: { ok: false, message: '링크 유효 시간이 지났습니다. 기관 번호로 "변경" 또는 "해지" 를 다시 보내 주세요.' } };
+    if (!(await replyLinkBound(scope.linkId))) return { ok: false, state: { ok: false, needStepUp: true, message: '본인 확인을 먼저 해 주세요.' } };
+    return { ok: true, scope, paths: [] };
+  }
   if (code) {
     const org = await findDonationOrg(code);
     const member = org ? await getDonorMember(org) : null;
@@ -146,12 +155,13 @@ export async function recurringApplyAction(_prev: SelfServiceState, f: FormData)
   if (!r.ok) return r.state;
   const after = parseAfter(f);
   if (typeof after === 'string') return { ok: false, message: after };
-  const by = r.scope.via === 'MY' ? r.scope.userId : r.scope.memberId;
+  const by = r.scope.via === 'MY' ? r.scope.userId : r.scope.via === 'MEMBER' ? r.scope.memberId : r.scope.linkId;
   const limited = await consumeRateLimit('selfsvc-apply', by, 30, 600);
   if (!limited.ok) return { ok: false, message: '요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.' };
   try {
     const res = await applyRecurringChange(r.scope, text(f, 'id'), after, { ...(await meta()), reason: text(f, 'reason') });
     refresh(r.paths);
+    if (r.scope.via === 'SMS') await notifySmsRecurringResult(r.scope, text(f, 'id'), res.message); // 결과 문자(정보성, 실패해도 변경은 유지)
     return { ok: true, message: res.message };
   } catch (e) {
     return fail(e);

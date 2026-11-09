@@ -30,9 +30,12 @@ export class SelfServiceError extends Error {}
 
 export type SelfServiceScope =
   | { via: 'MY'; userId: string; payerId: string }
-  | { via: 'MEMBER'; memberId: string; merchantId: string; payerId: string };
+  | { via: 'MEMBER'; memberId: string; merchantId: string; payerId: string }
+  /** 문자 '변경·해지' 명령 링크(2026-11-12 4차 K3) — 그 번호의 후원자 중 그 기관 약정만(MEMBER 와 같은 범위) */
+  | { via: 'SMS'; linkId: string; merchantId: string; payerId: string };
 
 export function stepUpSubjectOf(scope: SelfServiceScope): StepUpSubject {
+  if (scope.via === 'SMS') return { kind: 'SMS_LINK', linkId: scope.linkId };
   return scope.via === 'MY' ? { kind: 'USER', userId: scope.userId } : { kind: 'MEMBER', memberId: scope.memberId };
 }
 
@@ -53,7 +56,7 @@ export async function memberScope(member: { id: string; merchantId: string }): P
 }
 
 function scopedWhere(scope: SelfServiceScope) {
-  return { payerId: scope.payerId, ...(scope.via === 'MEMBER' ? { merchantId: scope.merchantId } : {}) };
+  return { payerId: scope.payerId, ...(scope.via !== 'MY' ? { merchantId: scope.merchantId } : {}) };
 }
 
 const dateKey = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);

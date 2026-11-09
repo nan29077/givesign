@@ -16,7 +16,7 @@ import { notifyUser } from './notifications';
 
 export class InboxAssignmentError extends Error {}
 
-const KEY_RE = /^(approval|approval-run|approval-failed|content|volunteer|document|report|edoc|refund|run|publish|group):[A-Za-z0-9._:-]{1,120}$/;
+const KEY_RE = /^(approval|approval-run|approval-failed|content|volunteer|document|report|edoc|refund|run|publish|group|inquiry):[A-Za-z0-9._:-]{1,120}$/;
 
 export function isInboxItemKey(v: string) {
   return KEY_RE.test(v);
@@ -131,6 +131,8 @@ export async function itemStillOpen(merchantId: string, itemKey: string): Promis
       return (await prisma.contentPublish.count({ where: { id, item: { merchantId }, status: { in: ['FAILED', 'UNKNOWN'] } } })) > 0;
     case 'edoc':
       return (await prisma.eDocEnvelope.count({ where: { id, merchantId, status: { in: ['SENT', 'IN_PROGRESS'] } } })) > 0;
+    case 'inquiry': // 2026-11-12 4차 K4 — 기관 응대 문의(답변 전)
+      return (await prisma.supportInquiry.count({ where: { id, merchantId, handledBy: 'MERCHANT', status: 'OPEN' } })) > 0;
     case 'group': {
       const { loadInboxGroups, groupKey } = await import('./inbox-groups');
       const groups = await loadInboxGroups(merchantId);

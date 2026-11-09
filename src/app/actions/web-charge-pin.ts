@@ -180,6 +180,7 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
     anonymous,
     source: attribution?.source ?? 'WEB',
     contentItemId: attribution?.contentItemId ?? null,
+    promoId: attribution?.promoId ?? null,
   });
 
   if (!result.ok || !result.chargeId) {

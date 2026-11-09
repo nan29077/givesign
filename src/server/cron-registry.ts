@@ -97,6 +97,12 @@ export const CRON_JOBS: CronDef[] = [
     description: '승인 대기함 처리 기한 넘김 → 기관 대표 담당자 콘솔 알림(배정마다 1회), 처리된 항목의 배정 닫기',
   },
   {
+    // 2026-11-12 4차 K4
+    name: 'inquiry-auto', path: '/api/cron/inquiry-auto', schedule: '5분마다', eventBridge: 'rate(5 minutes)',
+    intervalSec: 300, lockTtlSec: 240,
+    description: '문자로 접수한 기관 문의 분류 — 기관이 켠 분류만 1회 자동 답변, 그 밖은 담당자에게(이력 요약·처리 기한·승인 대기함)',
+  },
+  {
     name: 'bazaar', path: '/api/cron/bazaar', schedule: '1시간마다(라이브 바자회 켜짐일 때만 일함)', eventBridge: 'cron(10 * * * ? *)',
     intervalSec: 3600, lockTtlSec: 600,
     description: '라이브 바자회 매칭 수락 기한 만료 → 기부 건을 접수 상태로 되돌림',

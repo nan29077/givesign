@@ -1338,6 +1338,8 @@ model Charge {
   source        String?
   /// 유입을 만든 콘텐츠 (SNS 게시물 링크의 cid)
   contentItemId String?      @map("content_item_id")
+  /// 홍보물(campaign_promo.id, 2026-11-12 4차 K). MO 홍보물 키워드 또는 홍보물 QR·링크 쿠키로 들어온 후원
+  promoId       String?      @map("promo_id")
 
   /// 결제수수료 차감액 (부가세 포함)
   pgFee       BigInt @default(0) @map("pg_fee")
@@ -1391,6 +1393,7 @@ model Charge {
 
   @@index([campaignId, status])
   @@index([contentItemId])
+  @@index([promoId])
   @@index([recurringId])
   @@index([receiptId])
   @@index([merchantId, receivedAt])
@@ -1868,6 +1871,25 @@ model SupportInquiry {
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   lastMessageAt DateTime      @default(now()) @map("last_message_at") @db.Timestamptz(3)
+  /// 2026-11-12 4차 K — 기관이 응대하는 문의(MERCHANT: 문자 '문의' 명령으로 그 기관에 접수). 비면 예전처럼 통합 관리자 응대
+  handledBy      String?       @map("handled_by")
+  /// 기관 응대 문의의 후원자(payer_profile.id, FK 없이 참조)
+  payerId        String?       @map("payer_id")
+  /// 자동 분류: RECEIPT · RECURRING · CONTACT · HISTORY · COMPLAINT · REFUND · LEGAL · OTHER
+  autoCategory   String?       @map("auto_category")
+  /// RULE | LLM
+  autoCategoryBy String?       @map("auto_category_by")
+  /// 자동 답변 시각(문의당 1회만)
+  autoAnsweredAt DateTime?     @map("auto_answered_at") @db.Timestamptz(3)
+  /// 분류·응대를 마친 마지막 메시지 시각(last_message_at 과 비교해 새 메시지만 처리)
+  triagedAt      DateTime?     @map("triaged_at") @db.Timestamptz(3)
+  /// 분류 처리 선점(동시 배치 1회)
+  triageLockedAt DateTime?     @map("triage_locked_at") @db.Timestamptz(3)
+  /// 담당자 답변이 필요해진 시각·처리 기한
+  needsStaffAt   DateTime?     @map("needs_staff_at") @db.Timestamptz(3)
+  dueAt          DateTime?     @map("due_at") @db.Timestamptz(3)
+  /// 이 기관 안의 지난 이력 요약(숫자·날짜만, 원문 개인정보 없음)
+  historySummary Json?         @map("history_summary")
 
   messages SupportMessage[]
 
@@ -1875,6 +1897,7 @@ model SupportInquiry {
   @@index([userId])
   @@index([category])
   @@index([merchantId])
+  @@index([handledBy, merchantId, status])
   @@map("support_inquiry")
 }
 
@@ -1886,6 +1909,8 @@ model SupportMessage {
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   readByUserAt  DateTime?     @map("read_by_user_at") @db.Timestamptz(3)
   readByAdminAt DateTime?     @map("read_by_admin_at") @db.Timestamptz(3)
+  /// 답변 주체(2026-11-12 4차 K): 비면 통합 관리자, MERCHANT = 기관 담당자, AUTO = 기관 설정 자동 답변
+  authorKind    String?       @map("author_kind")
 
   inquiry SupportInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
 
@@ -2469,6 +2494,8 @@ model Campaign {
   resultReport  String?        @map("result_report")
   /// 모금액이 목표에 처음 닿은 시각. 이벤트(campaign.goal_reached)는 이 값이 비어 있을 때 한 번만 낸다.
   goalReachedAt DateTime?      @map("goal_reached_at") @db.Timestamptz(3)
+  /// 문자 의도 해석용 별칭(2026-11-12 4차 K). 키워드 정확 일치에는 쓰지 않고 알아듣지 못한 문자의 보완 해석에만 쓴다.
+  aliases       String[]       @default([])
   closedAt      DateTime?      @map("closed_at") @db.Timestamptz(3)
   archivedAt    DateTime?      @map("archived_at") @db.Timestamptz(3)
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -4132,6 +4159,8 @@ model FunnelStep {
   source     String?
   moMessageId String? @map("mo_message_id")
   chargeId   String?  @map("charge_id")
+  /// 홍보물(campaign_promo.id, 2026-11-12 4차 K)
+  promoId    String?  @map("promo_id")
   /// 끝 상태(FAILED·BLOCKED)의 이유 분류: LIMIT · UNREGISTERED · PAYMENT_FAILED · CONTENT_BLOCKED · EXPIRED
   reason     String?
   occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
@@ -4140,6 +4169,7 @@ model FunnelStep {
   @@index([merchantId, occurredAt])
   @@index([occurredAt])
   @@index([chargeId])
+  @@index([promoId])
   @@map("funnel_step")
 }
 
@@ -5120,4 +5150,60 @@ model SelfCheckAlert {
 
   @@index([merchantId, kind, createdAt])
   @@map("self_check_alert")
+}
+
+/// 캠페인 홍보물 코드(2026-11-12 4차 K1). 현수막·소식지·행사장 QR 처럼 홍보물마다 문자 키워드·QR 을 따로 두고 성과를 나눠 본다.
+/// FK 없이 참조(campaign·merchant). 지우지 않고 보관(archived_at).
+model CampaignPromo {
+  id         String    @id
+  merchantId String    @map("merchant_id")
+  campaignId String    @map("campaign_id")
+  name       String
+  /// 문자 키워드(정규화 값, 기관 안에서 유일). 비면 QR·링크 전용
+  keyword    String?
+  /// 이 날(KST)까지 인식. 비면 캠페인 모금 기간을 따른다
+  expiresOn  DateTime? @map("expires_on") @db.Date
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, keyword])
+  @@index([campaignId, archivedAt])
+  @@map("campaign_promo")
+}
+
+/// 문자 명령·의도 해석 회신 링크(2026-11-12 4차 K2·K3). 토큰은 해시만, 짧은 유효 기간, 보낸 번호 해시와 묶는다.
+model MoReplyLink {
+  id          String    @id
+  tokenHash   String    @unique @map("token_hash")
+  /// RECEIPT · HISTORY · CHANGE · CANCEL · INQUIRY · INTENT
+  kind        String
+  /// INTENT 는 대표번호 공유 기관 여럿일 수 있어 비어 있을 수 있다
+  merchantId  String?   @map("merchant_id")
+  phoneHash   String    @map("phone_hash")
+  moMessageId String?   @map("mo_message_id")
+  payload     Json      @default("{}")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  openedAt    DateTime? @map("opened_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([phoneHash, createdAt])
+  @@index([expiresAt])
+  @@map("mo_reply_link")
+}
+
+/// 기관별 문의 자동 응대 설정(2026-11-12 4차 K4). 분류별 자동 답변은 기관이 켜야만(기본 꺼짐).
+model InquiryAutoSetting {
+  merchantId      String   @id @map("merchant_id")
+  /// 자동 답변을 켠 분류(RECEIPT · HISTORY · RECURRING · CONTACT)
+  autoCategories  String[] @default([]) @map("auto_categories")
+  /// 분류별 답변 서식 { "RECEIPT": "..." } — 비면 기본 문안
+  templates       Json     @default("{}")
+  /// 담당자 처리 기한(영업일, 공휴일 표 사용)
+  dueBusinessDays Int      @default(2) @map("due_business_days")
+  updatedBy       String?  @map("updated_by")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("inquiry_auto_setting")
 }

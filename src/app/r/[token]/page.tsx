@@ -399,6 +399,9 @@ async function SelectAmountScreen({ token }: { token: string }) {
         remoteFee={ctx.shipping.remoteFee.toString()}
         campaigns={ctx.campaigns}
         defaultCampaignId={ctx.campaignId}
+        suggestedCampaignId={ctx.suggestion?.campaignId ?? null}
+        suggestedAmount={ctx.suggestion?.amount != null ? ctx.suggestion.amount.toString() : null}
+        suggestionNote={ctx.suggestion?.note ?? null}
       />
     </Card>
   );

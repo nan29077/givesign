@@ -45,6 +45,7 @@ interface FlowContext {
   source: string | null;
   moMessageId: string | null;
   chargeId: string | null;
+  promoId?: string | null;
 }
 
 function channelOf(charge: { channel: string; moMessageId: string | null; source: string | null }): FunnelChannel | null {
@@ -57,7 +58,7 @@ async function resolveContext(input: FunnelStepInput): Promise<FlowContext | nul
   if (input.chargeId) {
     const c = await prisma.charge.findUnique({
       where: { id: input.chargeId },
-      select: { id: true, merchantId: true, moMessageId: true, channel: true, campaignId: true, source: true, isTest: true, recurringId: true },
+      select: { id: true, merchantId: true, moMessageId: true, channel: true, campaignId: true, source: true, isTest: true, recurringId: true, promoId: true },
     });
     if (!c || c.isTest || c.recurringId) return null;
     const channel = channelOf(c);
@@ -70,6 +71,7 @@ async function resolveContext(input: FunnelStepInput): Promise<FlowContext | nul
       source: c.source,
       moMessageId: c.moMessageId,
       chargeId: c.id,
+      promoId: c.promoId,
     };
   }
   if (input.moMessageId && input.merchantId) {
@@ -97,6 +99,7 @@ export async function recordFunnelStep(input: FunnelStepInput): Promise<boolean>
           source: ctx.source,
           moMessageId: ctx.moMessageId,
           chargeId: ctx.chargeId,
+          promoId: ctx.promoId ?? null,
           reason: input.reason ?? null,
           occurredAt: input.at ?? new Date(),
         },
@@ -106,7 +109,7 @@ export async function recordFunnelStep(input: FunnelStepInput): Promise<boolean>
     // 캠페인은 금액 선택 화면에서 바뀔 수 있다. 결제 건 단계마다 흐름 전체의 캠페인·결제 건을 지금 값으로 맞춘다
     // (캠페인별 집계가 흐름 단위로 일관되게). 흐름당 행은 8개 이하다.
     if (ctx.chargeId) {
-      await prisma.funnelStep.updateMany({ where: { flowKey: ctx.flowKey }, data: { campaignId: ctx.campaignId, chargeId: ctx.chargeId } });
+      await prisma.funnelStep.updateMany({ where: { flowKey: ctx.flowKey }, data: { campaignId: ctx.campaignId, chargeId: ctx.chargeId, promoId: ctx.promoId ?? null } });
     }
     return created.count > 0;
   } catch (e) {

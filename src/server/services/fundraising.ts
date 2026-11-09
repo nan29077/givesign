@@ -15,6 +15,8 @@ import {
 import type { Campaign, MerchantDonationPage } from '@/generated/prisma/client';
 import type { CampaignStatus, Prisma } from '@/generated/prisma/client';
 import { getOrgVisuals } from './visual-settings';
+import { matchPromoKeyword, promoKeywordTaken } from './promo-codes';
+import { moCommandKind } from '@/lib/mo-commands';
 import { orgVisualKey } from '@/lib/visual-presets';
 
 /**
@@ -145,8 +147,14 @@ export async function getCampaign(merchantId: string, id: string): Promise<Campa
 }
 
 export class CampaignCodeTakenError extends Error {
+  constructor(message = '이미 같은 문자 키워드를 쓰는 캠페인이 있습니다.') {
+    super(message);
+  }
+}
+
+export class CampaignCodeReservedError extends Error {
   constructor() {
-    super('이미 같은 문자 키워드를 쓰는 캠페인이 있습니다.');
+    super('영수증·내역·변경·해지·문의는 문자 명령어라 새 캠페인 키워드로 쓸 수 없습니다.');
   }
 }
 
@@ -157,6 +165,13 @@ export async function saveCampaign(merchantId: string, input: CampaignInput, id?
     select: { id: true },
   });
   if (dup) throw new CampaignCodeTakenError();
+  // 2026-11-12 4차 K3: 새 문자 명령어(영수증·내역·변경·해지·문의)는 새 키워드로 쓸 수 없다.
+  // 이미 그 단어를 쓰던 캠페인은 그대로 저장된다(기존 캠페인 키워드가 명령어보다 우선 — 관리자 화면에 충돌 경고).
+  if (moCommandKind(code)) {
+    const prev = id ? await prisma.campaign.findFirst({ where: { id, merchantId }, select: { code: true } }) : null;
+    if (!prev || normalizeCampaignCode(prev.code) !== code) throw new CampaignCodeReservedError();
+  }
+  if (await promoKeywordTaken(merchantId, code)) throw new CampaignCodeTakenError('이미 같은 문자 키워드를 쓰는 홍보물이 있습니다.');
 
   const data = {
     code,
@@ -219,7 +234,7 @@ export async function matchCampaignKeyword(
   merchantId: string,
   body: string,
   now = new Date(),
-): Promise<{ campaign: Campaign | null; rest: string }> {
+): Promise<{ campaign: Campaign | null; rest: string; promo?: { id: string } | null }> {
   // 폭 없는 문자·제어 문자를 먼저 걷어 낸다. 앞에 U+200B 가 붙은 키워드가 일반 후원으로 빠지지 않게.
   const t = normalizeText(body ?? '');
   const m = t.match(/^([\p{L}\p{N}][\p{L}\p{N}._-]{1,19})(?:\s+([\s\S]*))?$/u);
@@ -229,7 +244,12 @@ export async function matchCampaignKeyword(
 
   const candidates = await prisma.campaign.findMany({ where: { merchantId, status: 'ACTIVE' } });
   const hit = candidates.find((c) => normalizeKeyword(c.code) === token && campaignOpen(c, now));
-  if (!hit) return { campaign: null, rest: t };
+  if (!hit) {
+    // 2026-11-12 4차 K1: 캠페인 키워드가 아니면 홍보물 키워드("김장A")를 본다. 캠페인 키워드가 항상 먼저다.
+    const promoHit = await matchPromoKeyword(merchantId, normalizeCampaignCode(m[1]), now);
+    if (promoHit) return { campaign: promoHit.campaign, rest: (m[2] ?? '').trim(), promo: { id: promoHit.promo.id } };
+    return { campaign: null, rest: t };
+  }
   return { campaign: hit, rest: (m[2] ?? '').trim() };
 }
 

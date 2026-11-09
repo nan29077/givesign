@@ -409,6 +409,8 @@ function ensureDefaults() {
   def('weekly-plan', '주간 운영 계획', async (ctx) => (await import('./weekly-plan')).weeklyPlanInboxGroup(ctx.merchantId, ctx.now));
   // 2026-11-12 4차 I — 캠페인 결과 보고 예정일이 된 끝난 캠페인(결과 보고가 승인되면 빠짐)
   def('campaign-result-report', '결과 보고 작성', async (ctx) => (await import('./campaign-setup')).resultReportInboxGroup(ctx.merchantId, ctx.now));
+  // 2026-11-12 4차 K4 — 문자로 접수한 문의 중 담당자 답변이 필요한 것
+  def('inquiry-reply', '답변이 필요한 문의', async (ctx) => (await import('./inquiry-auto')).inquiryReplyInboxGroup(ctx.merchantId, ctx.now));
 }
 
 /** 테스트용: 기본 제공자를 다시 깐다. */
