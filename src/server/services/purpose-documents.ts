@@ -47,10 +47,17 @@ export const DOCUMENT_PURPOSES = [
    * 자동 발송 경로가 없다(전자문서 센터에서 직접 보낸다). 소재는 이 용도의 서명 요청(보냈거나 완료)과 연결해야 콘텐츠에 쓸 수 있다.
    */
   'PORTRAIT_CONSENT',
+  /**
+   * 개인정보 수집·이용 동의서(2026-11-12 4차 J2) — 서명. 자동 발송 경로가 없다 — 업무별 문서 묶음(정기후원·봉사 신청)으로만 보낸다.
+   * 기본 서식은 기존 CONSENT_PRIVACY 서식이다(용도 없는 기관 복사본이 있으면 그 서식에 용도만 붙는다).
+   */
+  'PRIVACY_CONSENT',
+  /** 정기후원 출금 동의서(2026-11-12 4차 J2) — 서명. 계좌 번호는 문서에 적지 않는다(결제수단 등록 화면). 묶음으로만 보낸다. */
+  'DEBIT_CONSENT',
 ] as const;
 
 /** 저니·소비자가 자동으로 보내지 않는 용도(기관이 전자문서 센터에서 직접 보낸다) */
-export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE', 'PORTRAIT_CONSENT'];
+export const MANUAL_ONLY_PURPOSES: readonly DocumentPurpose[] = ['RECURRING_CHANGE', 'PORTRAIT_CONSENT', 'PRIVACY_CONSENT', 'DEBIT_CONSENT'];
 export type DocumentPurpose = (typeof DOCUMENT_PURPOSES)[number];
 
 export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
@@ -65,6 +72,8 @@ export const DOCUMENT_PURPOSE_LABEL: Record<DocumentPurpose, string> = {
   IMPACT_REPORT: '후원금 사용 결과 보고',
   ANNUAL_DONATION_NOTICE: '후원금 수입·사용 연간 통보',
   PORTRAIT_CONSENT: '초상권 이용 동의서',
+  PRIVACY_CONSENT: '개인정보 수집·이용 동의서',
+  DEBIT_CONSENT: '정기후원 출금 동의서',
 };
 
 /** 머지 필드 값. 기관명·대표자·발급일은 모듈이 채운다. 금액은 원 단위 정수. */
@@ -88,6 +97,8 @@ export interface MergeContext {
   reportBody?: string | null;
   participation?: string | null;
   usageSummary?: string | null;
+  /** 2026-11-12 4차 J: 가린 연락처(예: 010-****-5678). 비우면 발급 때 후원자 행의 가린 번호로 채운다 */
+  phoneMasked?: string | null;
 }
 
 export interface IssuePurposeDocumentInput {

@@ -218,8 +218,8 @@ export async function renderAndStore(
 /** 편집기가 무엇을 바탕으로 미리보기를 요청하는지 */
 export type PreviewSource = { templateId: string } | { basePdfUrl: string; token: string };
 
-/** 미리보기 바탕 PDF 를 찾는다. 기관 소유가 확인되지 않으면 null. */
-async function resolveBase(
+/** 미리보기 바탕 PDF 를 찾는다. 기관 소유가 확인되지 않으면 null. (4차 J 자동 인식도 같은 확인을 쓴다) */
+export async function resolveBase(
   merchantId: string,
   source: PreviewSource,
 ): Promise<{ base: Uint8Array; pageCount: number | null } | { error: string }> {

@@ -174,7 +174,7 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
   }
 
   const [payer, merchant] = await Promise.all([
-    prisma.payerProfile.findUnique({ where: { id: input.payerId }, select: { id: true, displayName: true, phoneEnc: true, onboardingStatus: true } }),
+    prisma.payerProfile.findUnique({ where: { id: input.payerId }, select: { id: true, displayName: true, phoneEnc: true, phoneMasked: true, onboardingStatus: true } }),
     prisma.merchantProfile.findUnique({ where: { id: input.merchantId }, select: { id: true, code: true, displayName: true, representativeName: true, status: true } }),
   ]);
   if (!merchant) return { ok: false, reason: '기관을 찾을 수 없습니다.' };
@@ -200,7 +200,7 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     }
   }
   const values = mergeValuesFromContext(
-    { ...input.context, donorName },
+    { ...input.context, donorName, phoneMasked: input.context.phoneMasked ?? payer.phoneMasked ?? null },
     { merchantName: merchant.displayName, representative: merchant.representativeName ?? null },
     now,
   );

@@ -5050,3 +5050,101 @@ model ContentAsset {
   @@index([merchantId, archivedAt, createdAt])
   @@map("content_asset")
 }
+
+// ---------------------------------------------------------------------------
+// 2026-11-12 4차 J — 업무별 문서 묶음 (한 번의 본인확인으로 여러 문서를 순서대로 서명)
+// 기관·후원자 표에 관계(FK)를 걸지 않는다(공용 모델을 고치지 않기 위해). 정리는 기관 id 로 한다.
+// ---------------------------------------------------------------------------
+
+/// 문서 묶음 정의(기관별). 기본 묶음은 preset_key 로 기관당 1개(멱등).
+model DocumentBundle {
+  id               String    @id
+  merchantId       String    @map("merchant_id")
+  name             String
+  /// RECURRING_SIGNUP(정기후원 신청) · VOLUNTEER_SIGNUP(봉사 신청) · CUSTOM
+  kind             String
+  presetKey        String?   @map("preset_key")
+  /// 정기후원 약정이 생기면 이 묶음을 보낸다(기본 꺼짐 — 기존처럼 약정서만). 기관당 1개.
+  useForRecurring  Boolean   @default(false) @map("use_for_recurring")
+  archivedAt       DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  items DocumentBundleItem[]
+  sends DocumentBundleSend[]
+
+  @@index([merchantId, archivedAt])
+  @@map("document_bundle")
+}
+
+/// 묶음에 든 문서(용도 단위 — 보낼 때 그 용도의 현재 서식을 쓴다)
+model DocumentBundleItem {
+  id       String  @id
+  bundleId String  @map("bundle_id")
+  position Int
+  /// DocumentPurpose
+  purpose  String
+  /// false 면 선택 문서(후원자가 건너뛸 수 있다)
+  required Boolean @default(true)
+
+  bundle DocumentBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, purpose])
+  @@map("document_bundle_item")
+}
+
+/// 묶음 발송 1건(후원자 1명). 서명 링크는 묶음 토큰 하나(해시만), 문서마다 전자문서 봉투 1개(이용요금도 문서마다).
+model DocumentBundleSend {
+  id            String    @id
+  merchantId    String    @map("merchant_id")
+  bundleId      String    @map("bundle_id")
+  payerId       String    @map("payer_id")
+  /// 같은 발송을 두 번 만들지 않는다(재시도 안전)
+  dedupeKey     String    @unique @map("dedupe_key")
+  /// PREPARING · BLOCKED · SENT · COMPLETED · CLOSED
+  status        String    @default("PREPARING")
+  /// BLOCKED 일 때: EDOC_BALANCE · PREFLIGHT · NO_TEMPLATE · DISABLED · WITHDRAWN · NOT_READY · SEND_FAILED
+  blocked       String?
+  blockedReason String?   @map("blocked_reason")
+  /// 묶음 서명 링크 토큰 해시(재발송하면 바뀐다)
+  tokenHash     String?   @unique @map("token_hash")
+  /// 머지 맥락(마스킹 값·금액만 — 이름·연락처 원문 없음)
+  context       Json      @default("{}")
+  subjectType   String?   @map("subject_type")
+  subjectId     String?   @map("subject_id")
+  attempts      Int       @default(0)
+  sentAt        DateTime? @map("sent_at") @db.Timestamptz(3)
+  otpVerifiedAt DateTime? @map("otp_verified_at") @db.Timestamptz(3)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  bundle DocumentBundle           @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  items  DocumentBundleSendItem[]
+
+  @@index([merchantId, status, createdAt])
+  @@index([bundleId, createdAt])
+  @@map("document_bundle_send")
+}
+
+/// 묶음 발송의 문서 1건 — 발급 대장(issued_document)·봉투(edoc_envelope)와 잇는다.
+model DocumentBundleSendItem {
+  id               String  @id
+  sendId           String  @map("send_id")
+  position         Int
+  purpose          String
+  required         Boolean @default(true)
+  templateId       String? @map("template_id")
+  templateRevision String? @map("template_revision")
+  issuedDocumentId String? @map("issued_document_id")
+  envelopeId       String? @map("envelope_id")
+  /// PENDING · CREATED · BLOCKED · SKIPPED
+  status           String  @default("PENDING")
+  error            String?
+
+  send DocumentBundleSend @relation(fields: [sendId], references: [id], onDelete: Cascade)
+
+  @@unique([sendId, purpose])
+  @@index([envelopeId])
+  @@map("document_bundle_send_item")
+}

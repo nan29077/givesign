@@ -43,6 +43,8 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
   { key: '보고내용', label: '사업 결과(캠페인 전체)', example: '모인 후원금으로 연탄 3,000장을 전달했습니다.', hint: '사업 결과 보고' },
   { key: '참여내역', label: '본인 참여 합계', example: '후원 3회 · 합계 90,000원', hint: '사업 결과 보고·연 1회 통보' },
   { key: '사용요약', label: '기관 전체 후원금 사용 요약', example: '수입 12,000,000원 · 사용 10,500,000원', hint: '연 1회 통보' },
+  // 2026-11-12 4차 J — 서식 자동 인식의 연락처 칸. 항상 가린 번호다(원문 금지, 절대 규칙 6).
+  { key: '연락처', label: '후원자 연락처(가린 번호)', example: '010-****-5678', hint: '약정서·신청서·동의서' },
 ];
 
 export const MERGE_FIELD_KEYS = MERGE_FIELDS.map((f) => f.key);

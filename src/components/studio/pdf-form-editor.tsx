@@ -7,7 +7,9 @@ import {
   Undo2, Upload, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { Card, CardTitle, cx } from '@/components/ui';
-import { openPdf, pdfOpenErrorMessage } from '@/components/pdf/pdfjs';
+import { openPdf, pdfOpenErrorMessage, pdfjs } from '@/components/pdf/pdfjs';
+import { PdfFormDetectPanel } from '@/components/studio/pdf-form-detect-panel';
+import { acceptCandidates, dropWideSpaces, extractHorizontalLines, type FieldCandidate, type HLine } from '@/lib/pdf-form-detect';
 import {
   MAX_EDIT_TEXT, MAX_PDF_EDITS, coverOnlyNotice, displayFontName, matrixFontSize, pdfFontTierLabel, predictFontTier,
   stripSubsetTag, type PdfEdit, type PdfFontInfo, type PdfFontTier, type PdfLayout, type PdfMatrix,
@@ -47,6 +49,10 @@ interface PageState {
   runs: PdfTextRun[];
   /** 쪽 회전(/Rotate, 도). 새 글 방향을 화면 가로에 맞출 때 쓴다. */
   rotate: number;
+  /** 가로선(서식 자동 인식의 밑줄 판정, 4차 J1) */
+  lines: HLine[];
+  /** 자동 인식용 글자 묶음(넓은 빈칸에서 끊는다 — 편집용 runs 와 별개) */
+  detectRuns: PdfTextRun[];
 }
 
 type Active =
@@ -101,6 +107,7 @@ export function PdfFormEditor({
   variant = 'page',
   toolbarEnd,
   downloadName,
+  purpose,
 }: {
   source: PdfEditorSource;
   basePdfUrl: string;
@@ -114,6 +121,8 @@ export function PdfFormEditor({
   /** 도구 막대 오른쪽 끝(저장 버튼 등) */
   toolbarEnd?: React.ReactNode;
   downloadName: string;
+  /** 서식 용도(자동 인식 수락 뒤 발송 전 점검의 필수 항목 판정). 저장된 서식이면 서버가 서식 용도를 쓴다. */
+  purpose?: string | null;
 }) {
   const [past, setPast] = React.useState<PdfLayout[]>([]);
   const [future, setFuture] = React.useState<PdfLayout[]>([]);
@@ -135,6 +144,9 @@ export function PdfFormEditor({
   const [fit, setFit] = React.useState(1.2);
   const [zoom, setZoom] = React.useState(1);
   const [uploadingFont, setUploadingFont] = React.useState<string | null>(null);
+  // 서식 자동 인식 후보(4차 J1) — 수락하기 전에는 편집 기록에 들어가지 않는다.
+  const [candidates, setCandidates] = React.useState<FieldCandidate[]>([]);
+  const [focusCandidate, setFocusCandidate] = React.useState<string | null>(null);
   const scale = fit * zoom;
 
   const wrapRef = React.useRef<HTMLDivElement>(null);
@@ -172,6 +184,7 @@ export function PdfFormEditor({
         const doc = await openPdf(basePdfUrl);
         if (cancelled) return;
         setBaseDoc(doc);
+        const OPS = (await pdfjs()).OPS;
         const out: PageState[] = [];
         for (let n = 1; n <= doc.numPages; n++) {
           const page = await doc.getPage(n);
@@ -179,7 +192,7 @@ export function PdfFormEditor({
           // 글꼴 객체(commonObjs)는 연산 목록을 처리할 때 채워진다. 그리지 않고 목록만 받아
           // 원본 글꼴 이름(BaseFont)을 읽는다 — 이걸 빼면 pdf.js 내부 이름(g_d0_f2)으로 대체되어
           // 편집기가 "대체 글꼴"로 예측하고 서버도 원본 글꼴을 재사용하지 못한다(2026-11-05 회귀).
-          await page.getOperatorList();
+          const ops = await page.getOperatorList();
           const text = await page.getTextContent();
           const nameOf = (key: string) => {
             try {
@@ -192,7 +205,9 @@ export function PdfFormEditor({
           const items = text.items.filter(
             (it): it is typeof it & { str: string; transform: number[]; width: number; fontName: string } => 'str' in it,
           );
-          out.push({ pageNo: n, widthPt: vp1.width, heightPt: vp1.height, runs: groupTextRuns(n, items, nameOf), rotate: page.rotate ?? 0 });
+          const lines = extractHorizontalLines(n, ops, OPS);
+          const detectRuns = groupTextRuns(n, dropWideSpaces(items), nameOf);
+          out.push({ pageNo: n, widthPt: vp1.width, heightPt: vp1.height, runs: groupTextRuns(n, items, nameOf), rotate: page.rotate ?? 0, lines, detectRuns });
           page.cleanup();
           if (cancelled) return;
         }
@@ -340,6 +355,21 @@ export function PdfFormEditor({
     commit({ ...cur, edits: exists ? cur.edits.map((e) => (e.id === edit.id ? edit : e)) : [...cur.edits, edit] });
   };
   const removeEdit = (id: string) => commit({ ...layoutRef.current, edits: layoutRef.current.edits.filter((e) => e.id !== id) });
+
+  /** 자동 인식 후보 수락(4차 J1): 바꾸는 자리는 원본 색을 읽어 덮고, 넣는 자리는 주변 글자색으로. 담당자가 누를 때만 기록이 바뀐다. */
+  const acceptDetected = async (list: FieldCandidate[]): Promise<PdfLayout | null> => {
+    const colors = new Map<string, { cover: [number, number, number]; color: [number, number, number] }>();
+    for (const c of list) colors.set(c.id, await colorsAt(c.page, coverPolygon({ matrix: c.matrix, width: c.kind === 'replace' ? c.width : c.matrix[0] * 2 })));
+    const r = acceptCandidates(layoutRef.current, list, 'all', (c) => {
+      const got = colors.get(c.id);
+      return got ? (c.kind === 'replace' ? got : { cover: [1, 1, 1], color: got.color }) : undefined;
+    });
+    if (r.skippedForLimit) setNotice(`수정은 ${MAX_PDF_EDITS}곳까지 할 수 있어 ${r.skippedForLimit}곳은 넣지 못했습니다.`);
+    if (!r.added) return null;
+    commit(r.layout);
+    setFocusCandidate(null);
+    return r.layout;
+  };
 
   /**
    * 원본 그림에서 그 자리의 바탕·글자색을 읽는다.
@@ -750,6 +780,8 @@ export function PdfFormEditor({
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
                   dragBox={dragBox?.page === p.pageNo ? dragBox : null}
+                  candidates={showOriginal ? [] : candidates.filter((c) => c.page === p.pageNo)}
+                  focusCandidate={focusCandidate}
                   hint={
                     activePrediction && active ? (
                       <EditHint
@@ -802,6 +834,23 @@ export function PdfFormEditor({
               })}
             </div>
           </div>
+        ) : null}
+
+        {view === 'edit' ? (
+          <PdfFormDetectPanel
+            source={source}
+            pages={pages.map((p) => ({ page: p.pageNo, width: p.widthPt, height: p.heightPt, runs: p.detectRuns, lines: p.lines }))}
+            layout={layout}
+            candidates={candidates}
+            setCandidates={setCandidates}
+            focusId={focusCandidate}
+            onFocus={(c) => {
+              setFocusCandidate(c.id);
+              scrollToPage(c.page);
+            }}
+            onAccept={acceptDetected}
+            purpose={purpose}
+          />
         ) : null}
 
         <Card>
@@ -1037,7 +1086,7 @@ function useRenderedPage(doc: PDFDocumentProxy | null, pageNo: number, size: { s
 
 function PageView({
   page, scale, doc, mode, edits, active, draft, setDraft, finish, onRun, onEdit, onMove, onClick,
-  onPointerDown, onPointerMove, onPointerUp, dragBox, hint,
+  onPointerDown, onPointerMove, onPointerUp, dragBox, hint, candidates = [], focusCandidate = null,
 }: {
   page: PageState;
   scale: number;
@@ -1057,6 +1106,8 @@ function PageView({
   onPointerUp: () => void;
   dragBox: { left: number; top: number; w: number; h: number } | null;
   hint: React.ReactNode;
+  candidates?: FieldCandidate[];
+  focusCandidate?: string | null;
 }) {
   const { canvasRef, vp } = useRenderedPage(doc, page.pageNo, { scale });
 
@@ -1165,6 +1216,29 @@ function PageView({
         {vp && interactive && active && activePage(active) === page.pageNo ? (
           <InlineInput vp={vp} active={active} draft={draft} setDraft={setDraft} finish={finish} hint={hint} />
         ) : null}
+
+        {vp
+          ? candidates.map((c) => {
+              const b = boxOf(vp, coverPolygon({ matrix: c.matrix, width: c.kind === 'replace' ? c.width : c.matrix[0] * Math.max(3, c.text.length * 0.6) }));
+              return (
+                <div
+                  key={c.id}
+                  data-editor-ui
+                  title={`자동 인식 후보: ${c.fieldLabel} (신뢰도 ${c.confidence === 'low' ? '낮음' : '높음'}) — 오른쪽 목록에서 수락`}
+                  className={cx(
+                    'pointer-events-none absolute rounded-[2px] border-2 border-dashed',
+                    c.confidence === 'low' ? 'border-warning-500 bg-warning-500/15' : 'border-brand-500 bg-brand-500/10',
+                    focusCandidate === c.id ? 'ring-2 ring-offset-1 ring-brand-400' : '',
+                  )}
+                  style={{ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top }}
+                >
+                  <span className={cx('absolute -top-4 left-0 whitespace-nowrap rounded px-1 text-[9.5px] font-bold text-white', c.confidence === 'low' ? 'bg-warning-500' : 'bg-brand-600')}>
+                    {c.text}
+                  </span>
+                </div>
+              );
+            })
+          : null}
 
         {dragBox ? (
           <div className="pointer-events-none absolute border border-danger-500 bg-danger-500/10" style={{ left: dragBox.left, top: dragBox.top, width: dragBox.w, height: dragBox.h }} />
