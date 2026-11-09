@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import bundledFfmpeg from 'ffmpeg-static';
 import { ffmpegPath } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { newObjectName, putObject } from '@/server/uploads';
@@ -11,7 +12,7 @@ import { newObjectName, putObject } from '@/server/uploads';
  *
  * 장면 SVG → PNG(sharp) → 장면 길이대로 이어 붙인 9:16 mp4(H.264, yuv420p, faststart).
  * 자막·"AI 생성 콘텐츠 · 모집등록번호" 표시는 장면 SVG 에 이미 그려져 있다. 음성 파일이 있으면 합친다.
- * FFMPEG_PATH 가 없거나 sharp 를 불러오지 못하면 만들지 않고 그 사실을 돌려준다(만든 척하지 않는다).
+ * 기본 FFmpeg를 사용한다. 조립이 꺼져 있거나 도구를 불러오지 못하면 그 사실을 돌려준다.
  * 외부 계약이 필요 없는 로컬 처리라 mock·llm 공급자 모두 같은 함수를 쓴다.
  */
 
@@ -92,10 +93,12 @@ export async function svgToPng(svg: string, width?: number, height?: number): Pr
 }
 
 export async function assembleVideo(input: AssembleInput): Promise<AssembleResult> {
-  const bin = ffmpegPath();
+  // 기본 설치에 포함된 바이너리를 사용하고, 운영에서는 FFMPEG_PATH로 덮어쓸 수 있다.
+  const configured = ffmpegPath();
+  const bin = configured === 'off' ? null : configured || bundledFfmpeg;
   const count = input.scenes.length;
   if (!bin) {
-    return { available: false, note: `영상(mp4) 조립 도구(FFMPEG_PATH)가 설정되지 않아 영상을 만들지 않았습니다. 장면 ${count}개 이미지와 자막(SRT)으로 미리보기·내려받기가 됩니다.`, costKrw: 0 };
+    return { available: false, note: `영상 조립이 꺼져 있어 MP4를 만들지 않았습니다. 장면 ${count}개와 자막(SRT)을 확인할 수 있습니다.`, costKrw: 0 };
   }
   const sharp = await loadSharp();
   if (!sharp) return { available: false, note: '이미지 변환 도구(sharp)를 불러오지 못해 영상을 만들지 않았습니다.', costKrw: 0 };

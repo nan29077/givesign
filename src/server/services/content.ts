@@ -186,6 +186,23 @@ export function aiFooter(regNo: string | null) {
  * sharp 로 144px PNG 로 줄인다(장면마다 들어가므로 작게). 못 읽으면 로고 없이 그린다.
  */
 const logoCache = new Map<string, string | null>();
+const artworkCache = new Map<number, string | null>();
+/** 직접 제작한 기본 일러스트만 쓴다. 캠페인에 올린 수혜자 사진을 SNS로 재사용하지 않는다. */
+async function campaignArtwork(title: string): Promise<string | null> {
+  const index = /아이|아동|학교|교육/.test(title) ? 2 : /어르신|노인/.test(title) ? 3 : /돌봄|이웃/.test(title) ? 5 : 1;
+  if (artworkCache.has(index)) return artworkCache.get(index)!;
+  let uri: string | null = null;
+  try {
+    const { promises: fs } = await import('node:fs');
+    const path = await import('node:path');
+    const sharp = await loadSharp();
+    const source = await fs.readFile(path.join(process.cwd(), 'public', 'assets', 'givesign', 'presets', `banner-${index}.webp`));
+    const png = sharp ? await sharp(source).resize(1080, 608, { fit: 'cover' }).png().toBuffer() : null;
+    if (png) uri = `data:image/png;base64,${png.toString('base64')}`;
+  } catch { /* 일러스트가 없어도 텍스트 지면으로 만든다. */ }
+  if (uri) artworkCache.set(index, uri);
+  return uri;
+}
 export async function logoDataUri(avatarUrl: string | null | undefined): Promise<string | null> {
   if (!avatarUrl) return null;
   if (logoCache.has(avatarUrl)) return logoCache.get(avatarUrl)!;
@@ -355,6 +372,7 @@ function renderScenes(
   color: string,
   regNo: string | null,
   logo: string | null = null,
+  artwork: string | null = null,
 ): Scene[] {
   const format = kindFormat(kind);
   return captions.map((s, i) => ({
@@ -362,7 +380,7 @@ function renderScenes(
     durationSec: s.durationSec,
     ...(s.label ? { label: s.label } : {}),
     ...(typeof s.progress === 'number' ? { progress: s.progress } : {}),
-    svg: renderSceneSvg({ caption: s.caption, index: i, total: captions.length, merchantName, color, footer: aiFooter(regNo), format, label: s.label, progress: s.progress, logo }),
+    svg: renderSceneSvg({ caption: s.caption, index: i, total: captions.length, merchantName, color, footer: aiFooter(regNo), format, label: s.label, progress: s.progress, logo, artwork }),
   }));
 }
 
@@ -417,7 +435,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
 
     let scenes: Scene[] | null = (await jobDone(itemId, 'SCENES')) ? (item.scenes as unknown as Scene[]) : null;
     if (!scenes || scenes.length === 0) {
-      scenes = renderScenes(script.scenes, kind, brief.merchantName, color, brief.regNo, logo);
+      scenes = renderScenes(script.scenes, kind, brief.merchantName, color, brief.regNo, logo, await campaignArtwork(brief.campaignTitle));
       await recordJob(itemId, 'SCENES', 'givesign-svg', 'DONE', { count: scenes.length });
     }
 
@@ -443,7 +461,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         videoUrl = videoUrl ?? ((assembled.output as { videoUrl?: string } | null)?.videoUrl ?? null);
       }
     }
-    if (!(await jobDone(itemId, 'COVER'))) await recordJob(itemId, 'COVER', 'givesign-svg', 'DONE', { from: 'scene-2' });
+    if (!(await jobDone(itemId, 'COVER'))) await recordJob(itemId, 'COVER', 'givesign-svg', 'DONE', { from: 'scene-1' });
 
     const setting = await getContentSetting(item.merchantId);
     const tags = [...new Set([...script.hashtags, ...setting.hashtags])].slice(0, 12);
@@ -473,7 +491,7 @@ export async function runContentPipeline(itemId: string, toneOverride?: Tone) {
         caption,
         platformCaptions: platformCaptions ? (platformCaptions as unknown as Prisma.InputJsonObject) : undefined,
         videoUrl,
-        coverSvg: scenes[Math.min(1, scenes.length - 1)]!.svg,
+        coverSvg: scenes[0]!.svg,
         aiLabeled: true,
         regNoIncluded,
         costKrw: { increment: cost },
@@ -613,7 +631,12 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
     page?.color ?? '#28634e',
     merchant.fundraisingRegNo ?? null,
     await logoDataUri(merchant.avatarUrl),
+    await campaignArtwork(item.title),
   );
+  const revisedVideo = item.kind === 'SHORTFORM'
+    ? await getContentAdapter().assemble({ scenes, audio: null })
+    : null;
+  if (revisedVideo) await recordJob(id, 'ASSEMBLE', getContentAdapter().info().provider, 'DONE', revisedVideo, revisedVideo.costKrw);
   return prisma.contentItem.update({
     where: { id },
     data: {
@@ -623,8 +646,8 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
       // 담당자가 고친 캡션이 기준이 된다. 플랫폼별 캡션은 고친 캡션에서 규칙으로 다시 만든다.
       platformCaptions: Prisma.DbNull,
       // 장면 글이 바뀌었으므로 예전 자막으로 조립한 영상은 쓰지 않는다.
-      videoUrl: null,
-      coverSvg: scenes[Math.min(1, scenes.length - 1)]!.svg,
+      videoUrl: revisedVideo?.videoUrl ?? null,
+      coverSvg: scenes[0]!.svg,
       status: 'REVIEW',
       approvedAt: null,
       approvedBy: null,
@@ -763,7 +786,7 @@ export async function schedulePublish(merchantId: string, id: string, platforms:
     if (!connected.has(p)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 채널이 연결되어 있지 않습니다.${snsIsMockNow() ? '' : ' (mock 시절 연결은 실연동 게시에 쓸 수 없어 다시 연결해야 합니다)'}`);
     if (!PLATFORM_KINDS[p].includes(item.kind)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p} 에는 이 형식을 올릴 수 없습니다.`);
     // 영상이 없는 숏폼을 영상 플랫폼에 예약하면 배치에서 세 번 실패하고 끝난다 — 예약 단계에서 막는다(2026-11-06 점검 낮음).
-    if (needsVideo(item.kind, item.videoUrl)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p}: 숏폼 영상 파일이 없어 예약할 수 없습니다. (영상 조립 FFMPEG_PATH 설정 후 다시 만들거나 장면을 내려받아 직접 올려 주세요)`);
+    if (needsVideo(item.kind, item.videoUrl)) throw new ContentError(`${PLATFORM_LABEL[p] ?? p}: 숏폼 영상 파일이 없어 예약할 수 없습니다. 영상 생성 상태와 FFmpeg 설치를 확인한 뒤 다시 만들어 주세요.`);
     const existing = await prisma.contentPublish.findUnique({ where: { itemId_platform: { itemId: id, platform: p } } });
     // 결과 미확인(UNKNOWN)은 실제로 올라갔을 수 있다 — 예약으로 덮지 않고 "다시 게시"/"게시됨으로 표시" 로만 푼다.
     if (existing && ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING', 'UNKNOWN'].includes(existing.status)) continue;

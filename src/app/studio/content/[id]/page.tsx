@@ -86,13 +86,13 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
 
       <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <Card>
-          <ScenePlayer scenes={scenes} format={format} />
-          {item.videoUrl ? (
-            <div className="mt-4">
+          {item.kind === 'SHORTFORM' && item.videoUrl ? (
+            <div>
               <p className="mb-1.5 text-[12.5px] font-bold text-ink-700">조립된 영상 (9:16 mp4)</p>
               <video src={item.videoUrl} controls preload="metadata" className="mx-auto aspect-[9/16] w-full max-w-[300px] rounded-2xl bg-ink-900" />
             </div>
-          ) : null}
+          ) : item.kind === 'SHORTFORM' ? <Notice tone="warning" title="영상 파일이 아직 없습니다">아래 장면은 영상 제작용 미리보기입니다. 영상 생성 상태를 확인한 뒤 다시 만들어 주세요.</Notice> : null}
+          {item.kind === 'SHORTFORM' ? <details className="mt-4"><summary className="cursor-pointer text-sm font-bold text-ink-700">영상 장면·자막 보기</summary><div className="mt-3"><ScenePlayer scenes={scenes} format={format} /></div></details> : <ScenePlayer scenes={scenes} format={format} />}
           <div className="mt-4 space-y-1.5 text-[12.5px]">
             {item.kind === 'SHORTFORM' ? (
               <>

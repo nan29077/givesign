@@ -105,7 +105,7 @@ export function factScenes(b: ContentBrief) {
       progress: pct,
     } satisfies SceneSpec,
     how: { caption: how, durationSec: 6, label: '참여 방법' } satisfies SceneSpec,
-    howWithCloser: { caption: `${how} ${CLOSERS[b.tone]}`, durationSec: 7 } satisfies SceneSpec,
+    howWithCloser: { caption: `${how} ${CLOSERS[b.tone]}`, durationSec: 7, label: '참여 방법' } satisfies SceneSpec,
   };
 }
 
@@ -142,11 +142,11 @@ export function mockScenes(b: ContentBrief, kind: ContentKind): SceneSpec[] {
     return [clean({ caption: `${b.campaignTitle} · ${firstSentence(b.summary, 40) ?? ''}`.trim(), durationSec: 6, progress: progressPct(b) })];
   }
   const scenes: SceneSpec[] = [
-    { caption: OPENERS[b.tone], durationSec: 5 },
-    { caption: `${b.merchantName} · ${b.campaignTitle}`, durationSec: 5 },
-    { caption: story, durationSec: 7 },
-    ...(b.usagePlan ? [{ caption: `후원금은 이렇게 쓰입니다. ${firstSentence(b.usagePlan, 40)}`, durationSec: 7 }] : []),
-    { caption: facts.progress.caption, durationSec: 6 },
+    { caption: firstSentence(b.summary, 60) ?? OPENERS[b.tone], durationSec: 5, label: '표지' },
+    { caption: `${b.merchantName} · ${b.campaignTitle}`, durationSec: 5, label: '캠페인' },
+    { caption: story, durationSec: 7, label: '사연' },
+    ...(b.usagePlan ? [{ caption: `후원금은 이렇게 쓰입니다. ${firstSentence(b.usagePlan, 40)}`, durationSec: 7, label: '사용계획' }] : []),
+    facts.progress,
     facts.howWithCloser,
   ].map(clean);
   return kind === 'SHORTFORM' ? scenes : [scenes[1]!, scenes[2]!, scenes[scenes.length - 1]!];
