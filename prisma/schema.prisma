@@ -4800,6 +4800,7 @@ model OutboundQueue {
   @@index([merchantId, createdAt])
   @@index([mtMessageId])
   @@map("outbound_queue")
+}
 
 /// 정기후원 변경 이력 (2026-11-09 2차 F). 후원자 셀프서비스·복구 링크에서 바꾼 내용을 시간순으로 남긴다(append-only 로 쓴다).
 /// 원천 상태는 recurring_donation 이고, 이 표는 "언제 누가 무엇을 바꿨는지" 를 보여 주기 위한 기록이다.

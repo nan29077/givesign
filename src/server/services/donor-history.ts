@@ -34,12 +34,12 @@ g.donationHistorySources = sources;
 
 /** 다른 출처 붙이기(예: 2차 E 계좌이체 확정분). 같은 이름이면 덮어쓴다. */
 export function registerDonationHistorySource(name: string, fn: DonationHistorySource, label = name) {
-  if (name === 'CHARGE') throw new Error('CHARGE 는 기본 출처입니다.');
+  if (name === 'CHARGE' || name === 'OFFLINE') throw new Error(`${name} 는 기본 출처입니다.`);
   sources.set(name, { label, fn });
 }
 
 export function registeredDonationHistorySources(): string[] {
-  return ['CHARGE', ...sources.keys()];
+  return ['CHARGE', 'OFFLINE', ...sources.keys()];
 }
 
 const CHANNEL_LABEL: Record<string, string> = { MO: '문자 후원', WEB: '웹 후원', RECURRING: '정기후원' };
@@ -62,6 +62,30 @@ const chargeSource: DonationHistorySource = async ({ payerId, merchantId, from, 
     title: c.campaign?.title ?? CHANNEL_LABEL[c.channel] ?? '후원',
     detail: [c.message && c.message !== '정기후원' ? c.message : null, c.anonymous ? '익명' : null].filter(Boolean).join(' · ') || null,
     reference: c.transactionNo,
+  }));
+};
+
+/** 2차 E 계좌이체 확정분(기관 통장 입금 맞추기). 확정(CONFIRMED)만 — 되돌린 건 제외. 2차 통합에서 붙임. */
+const offlineSource: DonationHistorySource = async ({ payerId, merchantId, from, to }) => {
+  const rows = await prisma.offlineDonation.findMany({
+    where: { payerId, ...(merchantId ? { merchantId } : {}), status: 'CONFIRMED', donatedAt: { gte: from, lt: to } },
+    orderBy: { donatedAt: 'desc' },
+    take: 500,
+    select: { id: true, merchantId: true, amount: true, donatedAt: true, campaignId: true },
+  });
+  const campaignIds = [...new Set(rows.map((r) => r.campaignId).filter((x): x is string => !!x))];
+  const campaigns = campaignIds.length ? await prisma.campaign.findMany({ where: { id: { in: campaignIds } }, select: { id: true, title: true } }) : [];
+  const title = new Map(campaigns.map((c) => [c.id, c.title]));
+  return rows.map((r) => ({
+    id: r.id,
+    source: 'OFFLINE',
+    sourceLabel: '계좌이체',
+    merchantId: r.merchantId,
+    amount: r.amount,
+    at: r.donatedAt,
+    title: (r.campaignId && title.get(r.campaignId)) || '계좌이체 후원',
+    detail: null,
+    reference: null,
   }));
 };
 
@@ -90,7 +114,7 @@ export async function donorDonationHistory(payerId: string, opts: { merchantId?:
   const thisYear = kstYear(now);
   // 연도별 합계는 최근 6년까지(결제 + 등록 출처)
   const span = { from: kstYearRange(thisYear - 5).from, to: kstYearRange(thisYear).to };
-  const all: Array<{ name: string; label: string; fn: DonationHistorySource }> = [{ name: 'CHARGE', label: '결제', fn: chargeSource }, ...[...sources.entries()].map(([name, v]) => ({ name, ...v }))];
+  const all: Array<{ name: string; label: string; fn: DonationHistorySource }> = [{ name: 'CHARGE', label: '결제', fn: chargeSource }, { name: 'OFFLINE', label: '계좌이체', fn: offlineSource }, ...[...sources.entries()].map(([name, v]) => ({ name, ...v }))];
   const failedSources: string[] = [];
   const lists = await Promise.all(
     all.map((s) =>
