@@ -31,7 +31,9 @@ export type ApprovalKind =
   | 'ANNUAL_NOTICE_SEND'
   // 2026-11-11 G: 주간 운영 계획 제안 — 승인해도 캘린더 설정·검토 대기 콘텐츠만 만든다(게시·발송 없음)
   | 'WEEKLY_PLAN_SLOT'
-  | 'WEEKLY_PLAN_TOPIC';
+  | 'WEEKLY_PLAN_TOPIC'
+  // 2026-11-12 4차 I: 캠페인 목표 달성 → 감사·결과 안내 초안 준비(승인해도 초안만 — 발송 없음)
+  | 'CAMPAIGN_GOAL_FOLLOWUP';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -45,6 +47,7 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   ANNUAL_NOTICE_SEND: '후원금 연간 통보 발송',
   WEEKLY_PLAN_SLOT: '주간 계획 — 콘텐츠 슬롯 추가',
   WEEKLY_PLAN_TOPIC: '주간 계획 — 콘텐츠 주제 제안',
+  CAMPAIGN_GOAL_FOLLOWUP: '캠페인 목표 달성 — 감사·결과 안내 준비',
 };
 
 export interface ApprovalRow {

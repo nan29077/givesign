@@ -101,6 +101,16 @@ export const CRON_JOBS: CronDef[] = [
     intervalSec: 3600, lockTtlSec: 600,
     description: '라이브 바자회 매칭 수락 기한 만료 → 기부 건을 접수 상태로 되돌림',
   },
+  {
+    name: 'campaign-ops', path: '/api/cron/campaign-ops', schedule: '1시간마다', eventBridge: 'cron(25 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 900,
+    description: '캠페인 콘텐츠 일정 — 슬롯 7일 전 콘텐츠 생성(검토 대기, 승인해야 게시), 기간 70% 경과·진행률 미달 캠페인 기관 알림(캠페인당 1회)',
+  },
+  {
+    name: 'self-check', path: '/api/cron/self-check', schedule: '매일 08:00', eventBridge: 'cron(0 23 * * ? *)',
+    intervalSec: 86_400, lockTtlSec: 900,
+    description: '자가 진단 — SNS 연결 만료 7일 전 안내, 전자문서 잔액 7일 안 소진 예상, 문자 후원 수신 급감(같은 요일 평균 30% 미만) 기관·관리자 알림(같은 알림 1회)',
+  },
 ];
 
 export function cronDef(name: string): CronDef | undefined {

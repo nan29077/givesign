@@ -59,7 +59,7 @@ export const DOMAIN_EVENT_TYPES = [
   'receipt.issued',
   /** 연간 영수증 승인 요청 생성 — receipt-batch.ts. 소비자: merchant-alert */
   'receipt.batch_ready',
-  /** 캠페인 목표 달성 — campaign-goal 소비자. 소비자: merchant-alert */
+  /** 캠페인 목표 달성 — campaign-goal 소비자. 소비자: merchant-alert, campaign-goal-followup(감사·결과 안내 준비 승인 요청 — 4차 I) */
   'campaign.goal_reached',
   /** 콘텐츠 승인 — content.ts. 기록만 */
   'content.approved',

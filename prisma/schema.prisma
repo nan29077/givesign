@@ -2473,6 +2473,18 @@ model Campaign {
   archivedAt    DateTime?      @map("archived_at") @db.Timestamptz(3)
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// 2026-11-12 4차 I — 종료(CLOSED 또는 종료일 지남) 뒤 들어온 후원: GENERAL(기관 일반 후원으로 받기, 기본 = 예전 동작) · REJECT(받지 않고 안내만)
+  afterEndPolicy    String    @default("GENERAL") @map("after_end_policy")
+  /// 결과 보고 예정일(KST 날짜). 이 날부터 승인 대기함 "결과 보고 작성" 묶음에 오른다(보고가 승인되면 빠짐)
+  resultReportDueOn DateTime? @map("result_report_due_on") @db.Date
+  /// 기간 70% 경과 · 진행률 미달 제안을 보낸 시각(캠페인당 1회 — 조건부 선점)
+  paceAlertAt       DateTime? @map("pace_alert_at") @db.Timestamptz(3)
+  /// 이 캠페인 후원 감사 문자(비우면 기관 기본 감사 문구). 치환자는 기관 감사 문구와 같다
+  thanksMessage     String?   @map("thanks_message")
+  /// 개설 마법사의 콘텐츠 일정 {weeklyCount, postHour} — 기간이 바뀌면 이 규칙으로 슬롯을 더하거나 보류한다. 없으면 일정 없음
+  contentPlan       Json?     @map("content_plan")
+  /// 개설 마법사 제출 키(같은 제출을 두 번 처리하지 않는다)
+  setupKey          String?   @unique @map("setup_key")
 
   merchant  MerchantProfile     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   charges   Charge[]
@@ -5049,4 +5061,63 @@ model ContentAsset {
 
   @@index([merchantId, archivedAt, createdAt])
   @@map("content_asset")
+}
+
+/// 기관 서류(고유번호증·사업자등록증) 자동 읽기 기록 (2026-11-12 4차 I2). 원본은 비공개 저장소(object_name)에만 둔다.
+/// candidates 는 입력칸 채우기 후보(이름·번호·대표자·주소) — 주민번호 꼴은 가린 값만. 저장은 담당자가 기관 정보 화면에서 한다.
+model OrgDocScan {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  /// 비공개 저장소 객체 이름
+  objectName String   @map("object_name")
+  mime       String
+  sizeBytes  Int      @map("size_bytes")
+  /// 읽은 공급자(anthropic 등). mock 은 읽지 않으므로 행을 만들지 않는다
+  provider   String
+  /// READ(후보 있음) · EMPTY(읽었지만 후보 없음) · FAILED
+  status     String
+  /// {name, businessNo, representative, address} 각 {value, confidence} — 가린 값
+  candidates Json     @default("{}")
+  error      String?
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, createdAt])
+  @@map("org_doc_scan")
+}
+
+/// 도입 시험(시험 후원·시험 문서) 실행 기록 (2026-11-12 4차 I2). 시험 거래는 sandbox_charge(물리 분리)에만 생기고
+/// charge·정산 원장·영수증·집계에는 아무것도 생기지 않는다. 번호는 마스킹 값만.
+model OnboardingTestRun {
+  id            String   @id
+  merchantId    String   @map("merchant_id")
+  phoneMasked   String   @map("phone_masked")
+  /// 결제·문자 공급자가 mock 이었는가(시뮬레이션)
+  simulated     Boolean  @default(true)
+  /// [{key: MO|REPLY|PAYMENT|DOCUMENT, ok, message}]
+  steps         Json     @default("[]")
+  moOk          Boolean  @default(false) @map("mo_ok")
+  paymentOk     Boolean  @default(false) @map("payment_ok")
+  documentOk    Boolean  @default(false) @map("document_ok")
+  /// 시험 거래번호(sandbox_charge.transaction_no, TEST 접두)
+  transactionNo String?  @map("transaction_no")
+  createdBy     String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, createdAt])
+  @@map("onboarding_test_run")
+}
+
+/// 자가 진단 알림 기록 (2026-11-12 4차 I2-6). 같은 알림은 dedupe_key 유니크로 1회.
+model SelfCheckAlert {
+  id         String   @id
+  merchantId String   @map("merchant_id")
+  /// SNS_TOKEN_EXPIRING · EDOC_RUNWAY · MO_DROP · CAMPAIGN_PACE
+  kind       String
+  dedupeKey  String   @unique @map("dedupe_key")
+  detail     Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([merchantId, kind, createdAt])
+  @@map("self_check_alert")
 }

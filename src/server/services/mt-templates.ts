@@ -84,6 +84,8 @@ export const MT_TEMPLATE = {
   VOLUNTEER_THANKS: 'VOLUNTEER_THANKS',
   /** 기관 대표 담당자에게 보내는 주간 운영 보고 준비 안내(정보성, 2026-11-11 G) */
   WEEKLY_REPORT: 'WEEKLY_REPORT',
+  /** 종료 후 후원을 받지 않는 캠페인 키워드 문자에 대한 안내(결제 없음, 2026-11-12 4차 I) */
+  CAMPAIGN_ENDED: 'CAMPAIGN_ENDED',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -528,6 +530,13 @@ export function tplAccountInactive(merchantName: string): TemplateOutput {
   return { code: MT_TEMPLATE.ACCOUNT_INACTIVE, text, masked: text, vars: { 사회복지기관: merchantName } };
 }
 
+/** 종료 후 후원을 받지 않는 캠페인 키워드 문자 안내(결제 없음). 지정 목적 변경은 후원자가 직접 고르게 한다 — 다른 캠페인으로 옮기지 않는다. */
+export function tplCampaignEnded(merchantName: string, campaignTitle: string): TemplateOutput {
+  const title = campaignTitle.length > 20 ? `${campaignTitle.slice(0, 20)}…` : campaignTitle;
+  const text = `[기브싸인] ${merchantName} '${title}' 모금은 끝났습니다. 이 문자는 후원으로 처리되지 않았습니다. 기관 일반 후원은 키워드 없이 보내 주세요.`;
+  return { code: MT_TEMPLATE.CAMPAIGN_ENDED, text, masked: text };
+}
+
 export function tplLimitBlocked(merchantName: string, reason: string): TemplateOutput {
   const text = `[기브싸인] ${merchantName} 후원이 제한되었습니다. 사유: ${reason} 후원은 진행되지 않았습니다.`;
   return { code: MT_TEMPLATE.LIMIT_BLOCKED, text, masked: text, vars: { 사회복지기관: merchantName, 사유: reason } };
@@ -956,6 +965,13 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '매주 월요일 09시 기관 대표 담당자에게 지난주 후원 건수와 이번 주 승인할 일 건수, 콘솔 보고 화면 링크를 보냅니다.',
     editable: false,
     defaultBody: '{사회복지기관} 이번 주 운영 보고가 준비되었습니다 — 지난주 후원 N건 · 이번 주 승인할 일 M건. 확인: [링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.CAMPAIGN_ENDED]: {
+    label: '모금 종료 캠페인 안내',
+    description: '종료 후 후원을 받지 않기로 한 캠페인 키워드로 문자가 오면 보냅니다. 결제는 만들지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} \'캠페인\' 모금은 끝났습니다. 이 문자는 후원으로 처리되지 않았습니다. 기관 일반 후원은 키워드 없이 보내 주세요.',
     variables: [V.merchant],
   },
 };

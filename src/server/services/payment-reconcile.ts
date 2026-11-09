@@ -10,6 +10,7 @@ import { sendMtForPayer, setStatus } from './charge-flow';
 import * as tpl from './mt-templates';
 import { emitChargePaid } from './charge-events';
 import { recordFunnelStep } from './funnel';
+import { campaignThanksText } from './campaign-after-end';
 
 /**
  * 결과 미확인(UNKNOWN / TIMEOUT) 결제의 수동 대사.
@@ -236,7 +237,7 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
         amount: charge.amount,
         message: charge.message,
         cumulative: link?.totalAmount ?? charge.amount,
-        custom: charge.merchant.thanksMtMessage,
+        custom: (await campaignThanksText(charge.campaignId)) ?? charge.merchant.thanksMtMessage,
       }),
       charge.id,
       charge.merchantId,

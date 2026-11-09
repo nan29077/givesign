@@ -208,6 +208,8 @@ export async function buildSuggestions(merchantId: string, weekStartKey: string,
     }
   }
 
+  // 2026-11-12 4차 I — 기간 70% 경과·진행률 미달 캠페인(최근 7일 안에 알림을 받은 것) 연장·콘텐츠 보강 제안(정보만)
+  out.push(...(await (await import('./campaign-setup')).campaignPaceSuggestions(merchantId, now).catch(() => [])));
   if (m.recurring.actionRequired > 0) {
     out.push({ key: 'recurring:action', type: 'INFO', title: `정기 출금 조치 필요 ${m.recurring.actionRequired}명`, detail: '결제수단 재등록 링크는 이미 자동으로 보냈습니다. 기한이 다가오는 후원자는 직접 연락해 주세요.', href: '/studio/recurring?recovery=ACTION_REQUIRED' });
   }

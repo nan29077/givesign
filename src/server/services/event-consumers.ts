@@ -13,6 +13,7 @@ import { registerMarketingConsentConsumer } from './marketing-consent';
 import { registerOfflineDepositConsumers } from './deposits';
 import { registerImpactLegalHandlers } from './impact-legal-approvals';
 import { registerWeeklyPlanApprovalHandlers } from './weekly-plan';
+import { registerCampaignSetupHandlers } from './campaign-setup';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -172,5 +173,7 @@ export function registerDefaultConsumers() {
   registerImpactLegalHandlers();
   // 2026-11-11 G: 주간 운영 계획 제안 승인(캘린더 요일 추가 · 주제 → 검토 대기 콘텐츠). 게시·발송을 만들지 않는다.
   registerWeeklyPlanApprovalHandlers();
+  // 2026-11-12 4차 I: 캠페인 목표 달성 → 감사·결과 안내 준비 승인 요청(campaign-goal-followup), 승인 → 결과 보고 초안만(발송 없음)
+  registerCampaignSetupHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

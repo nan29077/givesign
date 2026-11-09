@@ -7,10 +7,14 @@ import { CampaignForm } from '@/components/studio/campaign-form';
 import { QrCard } from '@/components/studio/qr-card';
 import { campaignUrl } from '@/server/services/qr';
 import { PageHeader } from '@/components/layout/console-shell';
-import { Badge, Card, DataRow, Notice } from '@/components/ui';
+import { Badge, Card, DataRow, Field, Input, Notice, Select, Textarea } from '@/components/ui';
 import { campaignProgress, campaignStatusLabel, kstToday } from '@/lib/fundraising';
 import { formatNumber, formatWon } from '@/lib/money';
 import { aiDraftAvailability } from '@/server/services/ai-drafts';
+import { CampaignChangePanel } from '@/components/studio/campaign-change-panel';
+import { ActionForm } from '@/components/studio/action-form';
+import { saveCampaignFollowupAction } from '@/app/actions/campaign-setup';
+import { AFTER_END_DESCRIPTION, AFTER_END_LABEL, AFTER_END_POLICIES, readContentPlan } from '@/server/services/campaign-setup';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +53,32 @@ export default async function CampaignEditPage({ params }: { params: Promise<{ i
             <QrCard title={`${c.title} QR 코드`} subtitle="이 캠페인 페이지로 바로 연결됩니다" qrPath={`/api/qr/${org.code}/campaigns/${c.id}`} targetUrl={campaignUrl(org.code, c.id)} compact />
           </div>
         </Card>
+      ) : null}
+      {c && c.status !== 'ARCHIVED' ? (
+        <div className="mb-5 grid gap-5 lg:grid-cols-2">
+          <Card>
+            <p className="mb-1 text-[13px] font-bold text-ink-900">기간·목표 바꾸기 · 모금 종료</p>
+            <p className="mb-3 text-[12px] leading-relaxed text-ink-500">반영 전에 후원페이지 문구·예약 콘텐츠·문자 키워드·결과 보고 예정일에 미칠 영향을 보여 줍니다.{readContentPlan(c.contentPlan) ? ` 콘텐츠 일정: 주 ${readContentPlan(c.contentPlan)!.weeklyCount}건 ${readContentPlan(c.contentPlan)!.postHour}시.` : ''}</p>
+            <CampaignChangePanel id={c.id} endsOn={c.endsOn.toISOString().slice(0, 10)} goalAmount={Number(c.goalAmount)} canClose={c.status === 'ACTIVE'} />
+          </Card>
+          <Card>
+            <p className="mb-3 text-[13px] font-bold text-ink-900">종료 후 처리 · 감사 문자 · 결과 보고</p>
+            <ActionForm action={saveCampaignFollowupAction} submitLabel="저장">
+              <input type="hidden" name="id" value={c.id} />
+              <Field label="종료 후 들어온 후원" hint={AFTER_END_DESCRIPTION[(AFTER_END_POLICIES as readonly string[]).includes(c.afterEndPolicy) ? (c.afterEndPolicy as 'GENERAL' | 'REJECT') : 'GENERAL']}>
+                <Select name="afterEndPolicy" defaultValue={c.afterEndPolicy}>
+                  {AFTER_END_POLICIES.map((v) => <option key={v} value={v}>{AFTER_END_LABEL[v]}</option>)}
+                </Select>
+              </Field>
+              <Field label="이 캠페인 감사 문자" hint="비우면 기관 기본 감사 문구. {후원자} 치환자를 넣어 주세요.">
+                <Textarea name="thanksMessage" rows={3} maxLength={300} defaultValue={c.thanksMessage ?? ''} />
+              </Field>
+              <Field label="결과 보고 예정일" hint="이 날부터 승인 대기함에 '결과 보고 작성' 이 올라옵니다.">
+                <Input type="date" name="resultReportDueOn" defaultValue={c.resultReportDueOn ? c.resultReportDueOn.toISOString().slice(0, 10) : ''} />
+              </Field>
+            </ActionForm>
+          </Card>
+        </div>
       ) : null}
       <CampaignForm initial={c} today={kstToday()} ai={aiDraftAvailability()} />
       <div className="mt-5">
