@@ -17,6 +17,7 @@ import {
   type RelationalKind,
 } from './classify';
 import { autoPauseReason } from './pause';
+import { PAID_STATUSES } from '@/components/studio/shared';
 import { isOutboundQuietHour, nextOutboundMorning } from './quiet';
 
 /**
@@ -256,6 +257,49 @@ async function defer(item: QueueRow, now: Date, reason: string, skipPropagate: b
  * 한 후원자의 기한 된 대기분을 묶어 보낸다. 다른 실행이 잡고 있으면 아무것도 하지 않는다.
  * @returns 실제로 나간 문자 수
  */
+/**
+ * 대기열 안내의 원천이 아직 유효한가(2026-11-09 최종 시뮬레이션에서 찾은 버그 수정).
+ * 저니 엔진은 대기열에 쌓는 순간 결제·계좌이체 상태를 보지만, 묶음 대기(기본 10분) 사이에 환불·확정 취소가 일어나면
+ * 저니 실행은 이미 끝났거나 다음 단계라 취소 소비자가 대기열을 건드리지 못한다. 그래서 보내기 직전에 원천을 다시 본다.
+ * 유효하지 않으면 이유 문자열, 유효하면 null. 조회 실패는 보내지 않는 쪽(이유 반환)이 아니라 예전 동작(null)으로 둔다.
+ */
+async function queuedSourceProblem(it: QueueRow): Promise<string | null> {
+  try {
+    let runId: string | null = null;
+    let triggerKey: string | null = null;
+    if (it.source === 'journey') runId = it.sourceId;
+    else if (it.source === 'issued_document' && it.sourceId) {
+      const doc = await prisma.issuedDocument.findUnique({ where: { id: it.sourceId }, select: { dedupeKey: true, status: true } });
+      if (!doc) return '발급 문서 없음';
+      if (['DECLINED', 'EXPIRED', 'CANCELLED'].includes(doc.status)) return '발급 문서가 취소·만료됨';
+      if (doc.dedupeKey.startsWith('journey:')) {
+        const rest = doc.dedupeKey.slice('journey:'.length);
+        const cut = rest.lastIndexOf(':');
+        triggerKey = cut > 0 ? rest.slice(0, cut) : null;
+      }
+    }
+    if (!runId && !triggerKey) return null;
+    const run = runId
+      ? await prisma.journeyRun.findUnique({ where: { id: runId }, select: { status: true, context: true } })
+      : await prisma.journeyRun.findUnique({ where: { triggerKey: triggerKey! }, select: { status: true, context: true } });
+    if (!run) return null;
+    if (run.status === 'CANCELED') return '자동 안내가 취소됨(환불·확정 취소 등)';
+    const ctx = (run.context ?? {}) as { chargeId?: string; offlineDonationId?: string };
+    if (ctx.chargeId) {
+      const c = await prisma.charge.findUnique({ where: { id: ctx.chargeId }, select: { status: true } });
+      if (!c || !(PAID_STATUSES as readonly string[]).includes(c.status)) return '환불·취소된 후원';
+    }
+    if (ctx.offlineDonationId) {
+      const o = await prisma.offlineDonation.findUnique({ where: { id: ctx.offlineDonationId }, select: { status: true } });
+      if (!o || o.status !== 'CONFIRMED') return '확정 취소된 계좌이체';
+    }
+    return null;
+  } catch (e) {
+    logger.warn('대기열 원천 확인 실패 — 예전 동작으로 진행', { message: (e as Error).message });
+    return null;
+  }
+}
+
 export async function flushPayer(merchantId: string, payerId: string, now = new Date(), opts: { inlineItemId?: string } = {}): Promise<number> {
   const owner = `${Date.now()}:${generateToken(6)}`;
   const claimAt = new Date(Math.max(Date.now(), now.getTime()));
@@ -282,6 +326,17 @@ export async function flushPayer(merchantId: string, payerId: string, now = new 
     for (const it of items) await finish(it, 'SKIPPED', { lastReason: stop }, { reason: stop }, skipFor(it));
     return 0;
   }
+
+  // 1-1) 원천 재확인 — 환불·계좌이체 확정 취소·발급 취소된 안내는 보내지 않는다
+  const valid: QueueRow[] = [];
+  for (const it of items) {
+    const problem = await queuedSourceProblem(it);
+    if (problem) await finish(it, 'SKIPPED', { lastReason: problem }, { reason: problem }, skipFor(it));
+    else valid.push(it);
+  }
+  items.length = 0;
+  items.push(...valid);
+  if (items.length === 0) return 0;
 
   // 2) 야간 → 다음 날 9시(보류 횟수에 넣지 않음)
   if (isOutboundQuietHour(now)) {

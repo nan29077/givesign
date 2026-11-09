@@ -4,6 +4,7 @@ import { formatNumber } from '@/lib/money';
 import { registerConsumer, type StoredDomainEvent } from './events';
 import { issueSecureLink } from './secure-link';
 import { resolveRecoveryLink } from './recurring-recovery-link';
+import { assertIdentityForRecurring } from './identity';
 import {
   FAILURE_CLASS_GUIDE,
   FAILURE_CLASS_LABEL,
@@ -192,6 +193,8 @@ export async function changeFromRecovery(token: string, input: { dayOfMonth?: nu
   }
   if (input.amount !== undefined && input.amount !== r.amount) patch.amount = input.amount;
   if (patch.dayOfMonth === undefined && patch.amount === undefined) throw new RecoveryError('바꿀 내용이 없습니다. 출금일이나 금액을 바꿔 주세요.');
+  // 5차 L1: 정기 해지·변경 본인인증(IDENTITY_REQUIRED_FOR_RECURRING)은 복구 링크 경로에도 똑같이 적용한다(꺼짐이면 아무 일 없음).
+  await assertIdentityForRecurring(r.payerId);
   const updated = await updateRecurringDonation(r.payerId, r.id, patch, meta);
   const today = kstDateKey();
   const next = updated.nextChargeOn.toISOString().slice(0, 10);
@@ -215,6 +218,7 @@ export async function pauseFromRecovery(token: string, resumeOn: string): Promis
 /** 해지(사유 선택) → 결과 문장 */
 export async function cancelFromRecovery(token: string, reason?: string): Promise<string> {
   const { r } = await loadLinkedRecurring(token);
+  await assertIdentityForRecurring(r.payerId);
   await setRecurringStatus(r.payerId, r.id, 'CANCEL', reason);
   const sentence = `${r.merchant.displayName} 정기후원을 해지했습니다. 이후 출금은 일어나지 않습니다. 그동안 함께해 주셔서 감사합니다.`;
   await recordRecurringChange({ recurringId: r.id, merchantId: r.merchantId, payerId: r.payerId, actor: 'DONOR', via: 'RECOVER_LINK', kind: 'CANCEL', before: termsSnapshot(r), after: { ...termsSnapshot(r), status: 'CANCELED', resumeOn: null }, summary: sentence, reason: reason ?? null });

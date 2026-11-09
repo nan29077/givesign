@@ -5,7 +5,7 @@ import { requireMerchant, writeAudit } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { logger } from '@/lib/logger';
 import { AiDraftError, draftThanksMessage } from '@/server/services/ai-drafts';
-import { CampaignCodeTakenError } from '@/server/services/fundraising';
+import { CampaignCodeReservedError, CampaignCodeTakenError } from '@/server/services/fundraising';
 import {
   AFTER_END_LABEL,
   CampaignSetupError,
@@ -33,7 +33,7 @@ const checked = (f: FormData, k: string) => f.get(k) != null;
 
 function friendly(e: unknown): string {
   const message = (e as Error)?.message ?? '';
-  if (e instanceof CampaignSetupError || e instanceof CampaignCodeTakenError) return message;
+  if (e instanceof CampaignSetupError || e instanceof CampaignCodeTakenError || e instanceof CampaignCodeReservedError) return message;
   logger.error('캠페인 마법사 처리 오류', { message });
   return '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
 }

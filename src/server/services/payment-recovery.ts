@@ -70,8 +70,18 @@ export async function closeOrphanPreparedCharges(now = new Date(), olderThanMs =
     select: { id: true, status: true },
     take: 200,
   });
+  // 카드 결제창이 열려 있거나(PENDING, 아직 유효) 막 완료된(COMPLETED — 승인 처리 중) 건은 고아가 아니다(5차 검토).
+  // 카드 결제 건은 PIN 세션이 없어서 위 조건만으로는 걸러지지 않는다. 만료된 결제창은 카드 정리 배치가 닫는다.
+  const live = orphans.length
+    ? await prisma.cardCheckoutSession.findMany({
+        where: { chargeId: { in: orphans.map((o) => o.id) }, OR: [{ status: 'COMPLETED' }, { status: 'PENDING', expiresAt: { gt: now } }] },
+        select: { chargeId: true },
+      })
+    : [];
+  const liveCard = new Set(live.map((l) => l.chargeId));
   let count = 0;
   for (const c of orphans) {
+    if (liveCard.has(c.id)) continue;
     const reason =
       c.status === 'RECEIVED'
         ? '결제 인증 준비 중 중단되어 자동 취소(출금 없음)'

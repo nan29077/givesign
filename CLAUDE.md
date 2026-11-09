@@ -376,7 +376,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **변경 결과 문장은 `describeRecurringChange(before, after, now)`(`recurring-change-text.ts`, 순수 함수) 한 곳.** 저장 전 미리보기와 저장 후 확인이 같은 문장이다. 날짜 규칙을 바꾸면 recurring.ts 갱신 규칙과 이 함수를 함께 바꾼다. 결과 미확인(PENDING) 실행이 있으면 금액·출금일 변경은 보류(셀프서비스 경로만 — 기존 함수는 그대로), 정지·해지는 안내 문장과 함께 허용.
 - **변경·정지·재개·해지는 로그인 + 휴대폰 재확인 1회(10분)** — `self-service-stepup.ts`(대상 USER/MEMBER, 이미 연결된 번호로만 발송, 번호 해시와 묶음, 번호가 바뀌면 무효). 옛 액션 `updateRecurringAction`(금액·출금일이 바뀔 때)·`setRecurringStatusAction` 도 같은 재확인을 요구한다. 같은 약정 동시 변경은 `kv.setnx` 잠금으로 1건만.
 - **변경 이력 `recurring_change_log`**(actor `DONOR`·via `MY/MEMBER/RECOVER_LINK`·kind·전후 스냅샷·문장·사유). 기록 실패는 변경을 되돌리지 않는다(`recordRecurringChange` 안전 래퍼). 후원자 화면 카드와 기관 `/studio/recurring` "최근 변경 이력"(누가: "후원자 본인")에 보인다.
-- **알림 설정 한 곳**: `/my/notifications`·`/donate/[code]/my/settings` — 연락 선호 `payer_profile.preferred_channel`(`ALIMTALK_FIRST|SMS_ONLY`, 기본 알림톡 우선, 2차 D 와 같은 정의 — 마이그레이션은 `ADD COLUMN IF NOT EXISTS`) · 월간 안내 수신 거부(`notice_opt_out_at`) · (선택) 소식 수신 동의(1차 함수). 발송 경로가 선호값을 읽는 것은 D 의 몫이다. 결제 링크·인증번호는 항상 문자.
+- **알림 설정 한 곳**: `/my/notifications`·`/donate/[code]/my/settings` — 연락 선호 `payer_profile.preferred_channel`(`ALIMTALK|SMS`, 기본 알림톡 우선 — 2차 D 정의로 통합) · 월간 안내 수신 거부(`notice_opt_out_at`) · (선택) 소식 수신 동의(1차 함수). 발송 경로가 선호값을 읽는 것은 D 의 몫이다. 결제 링크·인증번호는 항상 문자.
 - 후원 내역(`donor-history.ts`)은 연도별 합계 + 건별(출처 표시). 원천은 결제 건이고 다른 출처(2차 E 계좌이체 확정분)는 `registerDonationHistorySource(name, fn, label)` 로 붙인다(실패한 출처만 빠짐). 영수증 발급 시기 안내는 `receiptScheduleNote(receiptCycle)` 하나.
 - 받은 문서(`donor-documents.ts`)는 감사장·확인서 + 약정서(SIGNED·NONE 판만). 회원 화면은 그 기관 문서만, `/donate/[code]/my/documents/[id](/file)`·`/agreements/[id]`. 만료된 `/l/[토큰]` 은 그 기관 회원 로그인·통합 로그인으로 받은 문서에 돌아오게 안내한다. 회원 화면의 영수증 정보 저장은 후원자 단위라 재확인 뒤에만(통합 `/my/receipts` 는 기존대로).
 - 후원자 화면 새 조각(`src/components/self-service/*`)은 본문 16px 이상·큰 버튼(lg)으로 만든다.
@@ -458,3 +458,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **계좌 자동 조회**(`adapters/bank-feed`, `services/bank-feed.ts`, 배치 `/api/cron/bank-feed` 하루 1회): mock 은 "연동 안 됨" 만(입금을 지어내지 않음, 테스트는 `setMockBankFeedFixture`). 받은 거래는 은행 파일과 같은 표로 바꿔 `importBankFeedRows`(deposits.ts — `parseStatementRows`·`depositHash`·`matchDeposits` 재사용)로 넣는다. 연결은 `bank_feed_link`(계좌 원문 없음).
 - **관계 확장 안내**(`relationship-messages.ts`, 배치 `/api/cron/relationship` 1시간) — 정책 결정 대기라 **전역 `system_setting 'relationship_messages.enabled'`(최고관리자, 확인 문구 "법무 확인 완료") + 기관 `relationship_message_setting` 둘 다 켜야** 계산·발송한다. 꺼지면 `/studio/relationship` 은 "법무 확인 후 켤 수 있습니다" 만. 저니에 넣지 않은 별도 서비스. 대상 = 1차 선택 동의자만, 제외 = 출금 실패·복구 중·환불(180일)·열린 문의·90일 내 해지·월간 안내 거부·차단·탈퇴·병합. 4종(일시→정기 1회·휴면 연 1회·증액 1주년 연 1회·봉사자→후원 1회), 한 묶음에 후원자당 1종. **항상 기관 승인**(`RELATIONSHIP_MESSAGE_BATCH`, 주 1회 dedupe `relationship:{기관}:{주 월요일}`, 지난 미승인 묶음은 만료하고 대상 행을 풀어 줌). 발송 = 문자만(`RELATIONSHIP_MESSAGE` 는 알림톡 정보성 템플릿 아님), 맨 앞 "(광고)", 끝 무료 수신 거부(`/u/[토큰]` 버튼 + 080 있으면 함께), 야간 21~8시 금지(끌 수 없음), 후원자당 월 1회(기관 무관), 그날 정보성 발송·대기열이 있으면 다음 날, 보내기 직전 동의·제외 재확인, APPROVED→SENDING 선점. 발송 분류는 `classify.ts` `PROMOTIONAL_TEMPLATES`(정보성 7일 상한과 따로). 발송 후 7일 수신 거부율 > 2% → 기관 자동 중지 + 기관·최고관리자 알림(해지율 2% 초과는 알림만).
 - **탈퇴하면 (선택) 소식 수신 동의를 모든 기관에서 철회**(`revokeMarketingConsents`, 탈퇴 트랜잭션, 이력 source `WITHDRAW`; 수신 거부 링크는 `OPT_OUT`).
+
+## 2026-11-09 고도화 최종 점검 조치 (검토·시뮬레이션)
+
+테스트 `tests/simulation-2026-11-09.test.ts`(업무 시나리오 8종) + 각 영역 테스트의 "(5차 검토)" 항목. E2E `e2e/upgrade-2026-11-09-e2e.mjs`.
+
+- **발송 대기열은 보내기 직전에 원천을 다시 본다**(`outbound/coordinator.ts` `queuedSourceProblem`). 저니 안내·자동 발급 문서 안내는 연결된 저니 실행이 취소됐거나, 그 실행의 결제가 `PAID_STATUSES` 가 아니거나, 계좌이체가 `CONFIRMED` 가 아니거나, 발급 문서가 취소·만료면 `SKIPPED`. 묶음 대기(기본 10분) 사이의 환불·확정 취소를 막는다.
+- 복구 링크(`/r/recover`)의 변경·해지도 `assertIdentityForRecurring`(본인인증 플래그)를 탄다. 개설 마법사도 상세 저장과 같은 키워드 규칙(`assertNewCampaignKeywordAllowed` — 문자 명령어·홍보물 키워드 금지).
+- 관계 안내 월 1회 상한에 걸린 행은 기간 키를 풀어(`skipped:{id}`) 다음 묶음에서 다시 제안될 수 있다. 카드 대사 수수료는 승인 요청 시점(`requestedAt`) 정책. 결과 미확인 알림톡 수동 재발송은 누르는 순간 탈퇴·차단을 다시 본다. 고아 결제 정리는 열린(유효) 또는 완료된 카드 결제창이 있는 건을 건드리지 않는다.
+- **마이그레이션 이름:** 이번 고도화 폴더가 `20261113100000_` 까지 미래 날짜로 붙어 있다. 새 마이그레이션은 `prisma migrate dev` 가 붙이는 오늘 날짜를 쓰지 말고 **가장 최근 폴더보다 뒤 시각**으로 이름을 직접 정한다(적용 순서가 꼬이지 않게).

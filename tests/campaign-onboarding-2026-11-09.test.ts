@@ -578,3 +578,12 @@ describe('I2-6 자가 진단', () => {
     expect(await prisma.notification.count({ where: { userId: admin.id } })).toBe(1);
   });
 });
+
+describe('(5차 검토) 개설 마법사 키워드 규칙 = 캠페인 상세 저장 규칙', () => {
+  it('문자 명령어(문의 등)·홍보물 키워드와 같은 새 키워드는 마법사로도 만들 수 없다', async () => {
+    await expect(createCampaignFromPlan(fx.merchantId, planInput({ code: '문의' }))).rejects.toThrow(/명령어/);
+    expect(await prisma.campaign.count()).toBe(0);
+    expect(await prisma.contentSlot.count()).toBe(0);
+  });
+});
+

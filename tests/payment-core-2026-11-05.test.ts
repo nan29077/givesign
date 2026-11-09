@@ -168,6 +168,30 @@ describe('PIN 인증 시작 (중간·낮음)', () => {
     expect((await prisma.charge.findUniqueOrThrow({ where: { id: b.chargeId! } })).status).toBe('PAYMENT_FAILED');
     expect((await prisma.charge.findUniqueOrThrow({ where: { id: live } })).status).toBe('PENDING_PIN');
   });
+
+  it('(5차 검토) 카드 결제창이 열려 있거나 막 완료된 결제 건은 PIN 세션이 없어도 고아로 닫지 않는다', async () => {
+    // 카드 결제 건처럼 만든다: PENDING_PIN + PIN 세션 없음 + 결제 거래 없음
+    const strip = async (id: string) => {
+      await prisma.paymentPinSession.deleteMany({ where: { chargeId: id } });
+      return id;
+    };
+    const open = await strip(await pendingPinCharge(10000n));
+    setChargeAmount(10000n);
+    const second = await inboundAndSelect(moPayload({ to: fx.moNumber, messageId: nextMsgId(), text: '두번째' }), fx.merchantId);
+    setChargeAmount(null);
+    const done = await strip(second.chargeId!);
+    const sess = (chargeId: string, status: string, expiresAt: Date) =>
+      prisma.cardCheckoutSession.create({ data: { id: newId(), chargeId, provider: 'mock', sessionId: newId(), amount: 10000n, status, checkoutUrlMasked: '/mock', expiresAt } });
+    await sess(open, 'PENDING', minutesLater(60));
+    await sess(done, 'COMPLETED', minutesLater(-10));
+    expect(await closeOrphanPreparedCharges(minutesLater(31))).toBe(0);
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: open } })).status).toBe('PENDING_PIN');
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: done } })).status).toBe('PENDING_PIN');
+    // 결제창이 만료되면(그 시각이 지나면) 예전처럼 고아로 닫는다
+    expect(await closeOrphanPreparedCharges(minutesLater(61))).toBe(1);
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: open } })).status).toBe('PAYMENT_FAILED');
+    expect((await prisma.charge.findUniqueOrThrow({ where: { id: done } })).status).toBe('PENDING_PIN');
+  });
 });
 
 describe('MO 수신·멱등키 예외 구분 (중간·낮음)', () => {

@@ -346,7 +346,12 @@ export async function sendApprovedRelationshipMessages(now = new Date(), limit =
     if (!payer || payer.onboardingStatus === 'WITHDRAWN' || !payer.phoneEnc) { await drop('탈퇴·번호 없음'); continue; }
     // 후원자당 월 1회(기관 무관)
     const monthly = await prisma.relationshipMessage.count({ where: { payerId: row.payerId, status: { in: ['SENT', 'SENDING'] }, sentAt: { gte: kstStartOfMonth(now) } } });
-    if (monthly > 0) { await drop('이번 달 관계 안내를 이미 받았습니다(월 1회)'); continue; }
+    if (monthly > 0) {
+      // 월 상한은 '이번 달' 사정이라 그 안내 자체를 영구히 막지 않는다 — 기간 키를 풀어 다음 묶음에서 다시 제안될 수 있게 한다(만료와 같은 방식).
+      await prisma.relationshipMessage.updateMany({ where: { id: row.id, status: 'APPROVED' }, data: { status: 'SKIPPED', skipReason: '이번 달 관계 안내를 이미 받았습니다(월 1회) — 다음 달 묶음에서 다시 제안', dedupeKey: `skipped:${row.id}` } });
+      out.dropped += 1;
+      continue;
+    }
     // 정보성 안내와 같은 날 겹치지 않게
     const today = kstStartOfDay(now);
     const [infoSent, infoQueued] = await Promise.all([

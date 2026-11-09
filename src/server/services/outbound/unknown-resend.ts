@@ -35,6 +35,18 @@ export async function resendUnknownAsSms(merchantId: string, id: string): Promis
     where: { id },
     select: { phoneEnc: true, phoneHash: true, phoneMasked: true, resendBodyEnc: true, templateCode: true, bodyMasked: true, chargeId: true },
   });
+  // 누르는 순간 다시 본다(5차 검토): 탈퇴·차단된 후원자에게는 다시 보내지 않는다. 선점은 풀어 두지 않는다(목록에서 빠짐).
+  const payer = await prisma.payerProfile.findUnique({ where: { phoneHash: row.phoneHash }, select: { id: true, onboardingStatus: true } });
+  if (payer) {
+    const [link, blocked] = await Promise.all([
+      prisma.payerMerchantLink.findUnique({ where: { payerId_merchantId: { payerId: payer.id, merchantId } }, select: { payerBlockedAt: true } }),
+      prisma.blockedPayer.findFirst({ where: { merchantId, payerId: payer.id }, select: { id: true } }),
+    ]);
+    if (payer.onboardingStatus === 'WITHDRAWN' || blocked || link?.payerBlockedAt) {
+      await prisma.mtOutboundMessage.update({ where: { id }, data: { resendBodyEnc: null } });
+      throw new UnknownResendError('탈퇴했거나 차단된 후원자라 다시 보내지 않습니다.');
+    }
+  }
   let to: string;
   let text: string;
   try {

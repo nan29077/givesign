@@ -139,7 +139,8 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
   }
 
   const approvedAt = new Date();
-  const fees = isCardProvider(txn.provider) ? await calculateCardFees(charge.merchantId, charge.amount) : await calculateFees(charge.merchantId, charge.amount);
+  // 카드 수수료는 승인 요청 시점 정책으로 계산한다 — 결과 미확인 사이에 정책이 끝나도 대사가 막히지 않게(5차 검토 4).
+  const fees = isCardProvider(txn.provider) ? await calculateCardFees(charge.merchantId, charge.amount, txn.requestedAt) : await calculateFees(charge.merchantId, charge.amount);
 
   await prisma.$transaction(async (tx) => {
     // 조건부 갱신으로 이 건을 **선점**한다.

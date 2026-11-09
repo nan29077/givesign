@@ -10,7 +10,7 @@ import { normalizeKeyword } from './content-filter';
 import { campaignEnded } from './campaign-after-end';
 
 export { campaignEnded, campaignThanksText, endedCampaignRejecting, endedCampaignRejectingSafe } from './campaign-after-end';
-import { CampaignCodeTakenError, campaignStats } from './fundraising';
+import { assertNewCampaignKeywordAllowed, CampaignCodeTakenError, campaignStats } from './fundraising';
 import { calendarSlots, DEFAULT_CALENDAR_KINDS, formatSlot } from './content-calendar';
 import { thanksDraftViolation } from './ai-drafts';
 import { donationPageUrl } from './qr';
@@ -247,6 +247,8 @@ export async function createCampaignFromPlan(merchantId: string, input: Campaign
     if (input.resultReportDueOn < c.endsOn) throw new CampaignSetupError('결과 보고 예정일은 종료일 이후로 정해 주세요.');
   }
   if (await keywordTaken(merchantId, c.code)) throw new CampaignCodeTakenError();
+  // 문자 명령어(영수증·내역·변경·해지·문의)·홍보물 키워드와 겹치는 새 키워드는 상세 저장과 똑같이 거절한다.
+  await assertNewCampaignKeywordAllowed(merchantId, c.code);
   if (input.startNow) {
     const mo = await prisma.merchantMoNumber.count({ where: { merchantId, status: 'ASSIGNED' } });
     if (mo === 0) throw new CampaignSetupError('배정된 MO 번호가 없어 문자 후원을 받을 수 없습니다. "바로 모금 시작" 을 끄고 저장하거나 관리자에게 번호 배정을 요청해 주세요.');

@@ -158,6 +158,16 @@ export class CampaignCodeReservedError extends Error {
   }
 }
 
+/**
+ * 새 캠페인 키워드가 문자 명령어(4차 K3)·홍보물 키워드와 겹치는지 — 겹치면 던진다.
+ * 캠페인 상세 저장(saveCampaign)과 개설 마법사(createCampaignFromPlan)가 같은 규칙을 쓴다.
+ */
+export async function assertNewCampaignKeywordAllowed(merchantId: string, rawCode: string) {
+  const code = normalizeCampaignCode(rawCode);
+  if (moCommandKind(code)) throw new CampaignCodeReservedError();
+  if (await promoKeywordTaken(merchantId, code)) throw new CampaignCodeTakenError('이미 같은 문자 키워드를 쓰는 홍보물이 있습니다.');
+}
+
 export async function saveCampaign(merchantId: string, input: CampaignInput, id?: string) {
   const code = normalizeCampaignCode(input.code);
   const dup = await prisma.campaign.findFirst({

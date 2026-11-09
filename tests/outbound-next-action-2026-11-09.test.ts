@@ -389,6 +389,14 @@ describe('[D2-5] 알림톡 결과 미확인 — 문자로 다시 보내기(수�
     expect(fresh).toMatchObject({ status: 'SENT', channel: 'SMS', fallback: true });
     await expect(resendUnknownAsSms(fx.merchantId, id)).rejects.toThrow(/이미 다시 보냈/);
   });
+
+  it('(5차 검토) 누르는 순간 탈퇴한 후원자면 다시 보내지 않는다', async () => {
+    const id = await unknownRow();
+    await prisma.payerProfile.update({ where: { id: payerId }, data: { onboardingStatus: 'WITHDRAWN' } });
+    await expect(resendUnknownAsSms(fx.merchantId, id)).rejects.toThrow(/탈퇴/);
+    expect(readMockOutbox(5)).toHaveLength(0);
+    expect((await prisma.mtOutboundMessage.findUniqueOrThrow({ where: { id } })).resendBodyEnc).toBeNull();
+  });
 });
 
 describe('[D2-5] 상태 5단계 집계', () => {

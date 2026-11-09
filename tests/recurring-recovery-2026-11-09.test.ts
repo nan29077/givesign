@@ -448,3 +448,25 @@ describe('후원자 복구 링크·화면', () => {
     expect(a.resumeOn).toBeNull();
   });
 });
+
+describe('(5차 검토) 복구 링크도 정기 해지·변경 본인인증 규칙을 탄다', () => {
+  it('IDENTITY_REQUIRED_FOR_RECURRING 이 켜져 있으면 본인인증 없이 복구 링크로 바꾸거나 해지할 수 없다(꺼짐이면 예전대로)', async () => {
+    const { payer, recurring } = await makeRecurring(10000n);
+    const link = await issueRecoveryLink(recurring.id, payer.id);
+    const prev = process.env.IDENTITY_REQUIRED_FOR_RECURRING;
+    process.env.IDENTITY_REQUIRED_FOR_RECURRING = 'true';
+    try {
+      await expect(changeFromRecovery(link.token, { dayOfMonth: 20 })).rejects.toThrow(/본인인증/);
+      await expect(cancelFromRecovery(link.token)).rejects.toThrow(/본인인증/);
+      const r = await row(recurring.id);
+      expect(r.status).toBe('ACTIVE');
+      expect(r.dayOfMonth).toBe(10);
+    } finally {
+      if (prev === undefined) delete process.env.IDENTITY_REQUIRED_FOR_RECURRING;
+      else process.env.IDENTITY_REQUIRED_FOR_RECURRING = prev;
+    }
+    await expect(cancelFromRecovery(link.token)).resolves.toMatch(/해지/);
+    expect((await row(recurring.id)).status).toBe('CANCELED');
+  });
+});
+
