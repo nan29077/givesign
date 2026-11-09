@@ -1,4 +1,5 @@
 import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components/my/payer';
+import { IdentityNotice } from '@/components/identity/identity-notice';
 import { prisma } from '@/server/db';
 import { Checkbox, EmptyState, Field, Input, LinkButton, Notice } from '@/components/ui';
 import { DonorActionForm } from '@/components/my/donor-action-form';
@@ -52,6 +53,7 @@ export default async function MyRecurringPage() {
       ) : (
         <>
           {hasLive ? <StepUpPanel verified={verified} phoneMasked={payer?.phoneMasked ?? null} /> : null}
+          {hasLive ? <IdentityNotice purpose="RECURRING" next="/my/recurring" /> : null}
           {items.map((item) => {
             const extra = extraOf.get(item.id);
             return (

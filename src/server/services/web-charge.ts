@@ -12,6 +12,7 @@ import { acquireIdempotency } from './idempotency';
 import { executePayment, loadBannedWords, startPinAuthorization } from './charge-flow';
 import { failPreparedCharge } from './payment-recovery';
 import { recordFunnelStep } from './funnel';
+import { cardOptionAvailable, startCardCheckout } from './card-payment';
 import { logger } from '@/lib/logger';
 import { allowLegacyWebInstantPay } from '@/lib/env';
 import type { ChargeStatus } from '@/generated/prisma/enums';
@@ -56,6 +57,11 @@ export interface WebChargeInput {
   contentItemId?: string | null;
   /** 홍보물 QR·링크 쿠키(2026-11-12 4차 K1). 이 기관 홍보물일 때만 남긴다. */
   promoId?: string | null;
+  /**
+   * 'CARD' = 카드 일시후원(2026-11-13 5차 L2, CARD_PAYMENT_ENABLED). 내통장결제 등록 없이도 되고,
+   * 카드 결제창 링크를 그 번호로 문자로 보낸다(번호 주인만 결제). 비우면 예전 그대로.
+   */
+  paymentMethod?: 'CARD' | null;
 }
 
 export interface WebChargeResult {
@@ -80,11 +86,17 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
   const payer = await prisma.payerProfile.findUnique({ where: { phoneHash: input.phoneHash } });
   if (!payer) return { ok: false, message: '등록된 후원자 정보가 없습니다. 내통장결제 가입을 먼저 완료해 주세요.' };
 
-  const token = await prisma.paymentMethodToken.findFirst({
-    where: { payerId: payer.id, status: 'ACTIVE' },
-    select: { id: true },
-  });
-  if (!token) {
+  const useCard = input.paymentMethod === 'CARD';
+  if (useCard && !(await cardOptionAvailable(merchant.id))) {
+    return { ok: false, message: '지금은 카드로 후원할 수 없습니다.' };
+  }
+  const token = useCard
+    ? null
+    : await prisma.paymentMethodToken.findFirst({
+        where: { payerId: payer.id, status: 'ACTIVE' },
+        select: { id: true },
+      });
+  if (!useCard && !token) {
     return { ok: false, message: '등록된 결제수단(내통장결제)이 없습니다. 가입을 먼저 완료해 주세요.' };
   }
 
@@ -162,6 +174,7 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
         source: input.source ?? 'WEB',
         contentItemId: await ownedContentItemId(merchant.id, input.contentItemId),
         promoId: await promoForAttribution(merchant.id, input.promoId),
+        ...(useCard ? { paymentMethod: 'CARD' } : {}),
       },
     });
   } catch (error) {
@@ -172,6 +185,19 @@ export async function createWebCharge(input: WebChargeInput): Promise<WebChargeR
   }
   await idem.release(charge.id);
   await recordFunnelStep({ step: 'AMOUNT_SELECTED', chargeId: charge.id }); // 단계 측정(2026-11-09) — 웹은 금액 제출부터
+
+  // 카드 일시후원(5차 L2): 결제창 링크를 문자로 보낸다. 출금은 결제창에서 인증한 뒤에만.
+  if (useCard) {
+    let card: Awaited<ReturnType<typeof startCardCheckout>>;
+    try {
+      card = await startCardCheckout(charge.id, { notify: true });
+    } catch (e) {
+      logger.error('웹 카드 결제창 시작 중 예외 — 결제를 실패로 닫습니다', { chargeId: charge.id, message: (e as Error).message });
+      const failed = await failPreparedCharge(charge.id, '카드 결제 준비 중 오류(출금 없음)').catch(() => false);
+      card = { ok: false, status: failed ? 'PAYMENT_FAILED' : 'RECEIVED', message: '카드 결제를 준비하지 못했습니다. 결제는 진행되지 않았습니다.' };
+    }
+    return { ok: card.ok, status: card.status, chargeId: charge.id, transactionNo: charge.transactionNo, message: card.message, pinExpiresAt: card.expiresAt, pinMock: card.mock };
+  }
 
   // 기본 경로: 결제사 PIN 입력 링크를 문자로 보낸다. 이 시점에는 출금이 일어나지 않는다.
   if (resolveWebChargeChannel() === 'PIN') {

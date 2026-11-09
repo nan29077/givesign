@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { identityForSigner } from './identity';
 import { prisma } from '@/server/db';
 import { emitDomainEvent } from './events';
 import { kv, consumeAttempt } from '@/server/redis';
@@ -96,6 +97,7 @@ export const edocEventLabel: Record<string, string> = {
   CANCELLED: '발송 취소',
   EXPIRED: '기한 만료',
   VALUES_VIEWED: '기관 담당자 입력값 열람',
+  IDENTITY_VERIFIED: '휴대폰 본인인증 확인',
 };
 
 const OPEN_STATUSES: EDocEnvelopeStatus[] = ['SENT', 'IN_PROGRESS'];
@@ -956,6 +958,13 @@ export async function signAsSigner(input: {
     valuesEnc = encrypt(JSON.stringify(checked.values));
   }
   if (!input.signature) throw new EDocError('서명란에 서명해 주세요.');
+  // 서명자 본인인증(2026-11-13 5차 L1, IDENTITY_REQUIRED_FOR_ESIGN — 꺼짐이면 null 이고 아무것도 바뀌지 않는다)
+  let identity: Awaited<ReturnType<typeof identityForSigner>> = null;
+  try {
+    identity = await identityForSigner({ phoneHash: s.phoneHash, name: decrypt(s.nameEnc) });
+  } catch (e) {
+    throw new EDocError((e as Error).message);
+  }
   const stored = await storeSignature(input.signature);
   if (!stored.ok) throw new EDocError(stored.message);
 
@@ -970,6 +979,10 @@ export async function signAsSigner(input: {
     // 봉투 행을 잠근 뒤 상태를 다시 본다. 선점 조건은 취소 트랜잭션이 커밋되기 전 스냅샷에서 통과할 수 있다.
     const locked = await lockEnvelope(tx, s.envelopeId);
     if (!locked || !OPEN_STATUSES.includes(locked)) throw new EDocError('진행 중인 문서가 아닙니다. 화면을 새로 고쳐 주세요.');
+    if (identity) {
+      // 본인인증 결과(방식·시각·CI 해시 앞자리·이름 일치)를 해시 체인 사건으로 남긴다. 원문은 없다.
+      await appendEvent(tx, s.envelopeId, { type: 'IDENTITY_VERIFIED', actor: `signer:${s.id}`, signerId: s.id, ip: input.ip, userAgent: input.userAgent, detail: identity });
+    }
     await appendEvent(tx, s.envelopeId, {
       type: 'SIGNED',
       actor: `signer:${s.id}`,

@@ -28,6 +28,9 @@ import { getPaymentAdapter } from '@/server/adapters/payment';
 import { formatMoNumber } from '@/lib/mo-number';
 import { headers } from 'next/headers';
 import { recordFunnelLinkOpened } from '@/server/services/funnel';
+import { cardOptionAvailable } from '@/server/services/card-payment';
+import { quickRepeatFor } from '@/server/services/quick-repeat';
+import { getCardAdapter } from '@/server/adapters/payment/card';
 
 /**
  * MT 문자로 발송된 1회용 보안링크 진입점.
@@ -345,6 +348,12 @@ async function SelectAmountScreen({ token }: { token: string }) {
   } catch {
     paymentMock = true;
   }
+  // 카드 일시후원·지난번 방법(2026-11-13 5차 L2) — 스위치가 꺼져 있으면 null(예전 화면 그대로)
+  const chargeMerchant = await prisma.charge.findUnique({ where: { id: ctx.chargeId }, select: { merchantId: true } });
+  const cardOption = chargeMerchant && (await cardOptionAvailable(chargeMerchant.merchantId).catch(() => false))
+    ? { mock: (() => { try { return getCardAdapter().info().mode === 'mock'; } catch { return true; } })() }
+    : null;
+  const quickRepeat = await quickRepeatFor(ctx).catch(() => null);
 
   return (
     <Card>
@@ -402,6 +411,8 @@ async function SelectAmountScreen({ token }: { token: string }) {
         suggestedCampaignId={ctx.suggestion?.campaignId ?? null}
         suggestedAmount={ctx.suggestion?.amount != null ? ctx.suggestion.amount.toString() : null}
         suggestionNote={ctx.suggestion?.note ?? null}
+        cardOption={cardOption}
+        quickRepeat={quickRepeat}
       />
     </Card>
   );

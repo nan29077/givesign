@@ -17,6 +17,7 @@ import { newId } from '@/lib/id';
 import type { ConsentType, DigitalProductType, ProductKind } from '@/generated/prisma/enums';
 import { recordReconsent, staleRequiredConsents } from './terms';
 import { recordFunnelStep } from './funnel';
+import { cardOptionAvailable, startCardCheckout } from './card-payment';
 
 /**
  * 상품·금액 선택.
@@ -297,6 +298,8 @@ export async function confirmChargeAmount(input: {
   anonymous?: boolean;
   /** 개정 약관에 동의한 유형(재동의). 필요한 유형이 빠져 있으면 확정하지 않는다. */
   reconsentTypes?: ConsentType[];
+  /** 'CARD' = 카드 일시후원(2026-11-13 5차 L2, CARD_PAYMENT_ENABLED 일 때만). 비우면 예전 그대로 내통장결제 PIN */
+  method?: 'CARD' | null;
   ip?: string;
   userAgent?: string;
 }): Promise<ConfirmAmountResult> {
@@ -425,6 +428,12 @@ export async function confirmChargeAmount(input: {
     select: { id: true, merchantId: true, payerId: true },
   });
   if (!charge.payerId) return { ok: false, message: '후원자 정보를 찾을 수 없습니다.' };
+  // 카드 선택은 스위치·카드 수수료 정책이 있을 때만(링크를 쓰기 전에 거절 — 같은 링크로 계좌 결제를 다시 고를 수 있게).
+  const useCard = input.method === 'CARD';
+  if (useCard) {
+    if (selected?.kind === 'PHYSICAL') return { ok: false, message: '카드는 후원(일시후원)에만 쓸 수 있습니다.' };
+    if (!(await cardOptionAvailable(charge.merchantId))) return { ok: false, message: '지금은 카드로 후원할 수 없습니다. 내통장결제로 진행해 주세요.' };
+  }
 
   const payer = await prisma.payerProfile.findUnique({ where: { id: charge.payerId } });
   if (!payer) return { ok: false, message: '후원자 정보를 찾을 수 없습니다.' };
@@ -481,6 +490,7 @@ export async function confirmChargeAmount(input: {
       pointStatus: initialPointStatus(selected?.kind),
       ...(campaignId !== undefined ? { campaignId } : {}),
       ...(input.anonymous !== undefined ? { anonymous: input.anonymous } : {}),
+      ...(useCard ? { paymentMethod: 'CARD' } : {}),
     },
   });
   if (claimed.count === 0) return { ok: false, message: '이미 처리된 결제입니다.' };
@@ -540,6 +550,22 @@ export async function confirmChargeAmount(input: {
   // 링크를 소진하고 금액을 확정(RECEIVED)한 뒤라, 여기서 예외가 밖으로 나가면 결제가 RECEIVED 고아로 남는다.
   // 승인 요청 전 단계(결제 거래 없음)의 예외이므로 출금 없는 실패로 닫는다.
   // (결제 거래가 생긴 뒤라면 실패로 닫지 않는다 — 정리 배치가 대사 큐로 올린다)
+  if (useCard) {
+    // 카드 결제창으로 바로 이동(문자를 한 번 더 보내지 않는다). 실패하면 출금 없는 실패로 닫는다.
+    let card: Awaited<ReturnType<typeof startCardCheckout>>;
+    try {
+      card = await startCardCheckout(charge.id, { notify: false });
+    } catch (e) {
+      logger.error('카드 결제창 시작 중 예외 — 결제를 실패로 닫습니다', { chargeId: charge.id, message: (e as Error).message });
+      await failPreparedCharge(charge.id, '카드 결제 준비 중 오류(출금 없음)').catch(() => false);
+      card = { ok: false, status: 'PAYMENT_FAILED', message: '카드 결제창을 준비하지 못했습니다. 결제는 진행되지 않았습니다.' };
+    }
+    if (!card.ok || !card.checkoutUrl) {
+      return { ok: false, message: `${card.message} 이 링크는 1회용이라 다시 쓸 수 없습니다. 사회복지기관 번호로 문자를 다시 보내 주세요.` };
+    }
+    return { ok: true, message: card.message, pinUrl: card.checkoutUrl, expiresAt: card.expiresAt, mock: card.mock };
+  }
+
   let pin: Awaited<ReturnType<typeof startPinAuthorization>>;
   try {
     pin = await startPinAuthorization(charge.id, { notify: false });

@@ -22,6 +22,8 @@ import { displayPayerName, defaultPayerName } from '@/lib/payer-name';
 import { resolvePolicy } from '@/server/services/limits';
 import { getPaymentAdapter } from '@/server/adapters/payment';
 import { resolveWebChargeChannel } from '@/server/services/web-charge';
+import { cardOptionAvailable } from '@/server/services/card-payment';
+import { getCardAdapter } from '@/server/adapters/payment/card';
 
 export const dynamic = 'force-dynamic';
 
@@ -283,6 +285,11 @@ export default async function MerchantChargePage({ params, searchParams }: Param
                   campaigns={campaigns}
                   defaultCampaignId={defaultCampaignId}
                   smsAvailable={Boolean(route)}
+                  cardOption={
+                    (await cardOptionAvailable(merchant.id).catch(() => false))
+                      ? { mock: (() => { try { return getCardAdapter().info().mode === 'mock'; } catch { return true; } })() }
+                      : null
+                  }
                 />
               ) : (
                 <WebChargePanel

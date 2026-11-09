@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { IdentityNotice } from '@/components/identity/identity-notice';
 import { headers } from 'next/headers';
 import { HeartHandshake } from 'lucide-react';
 import { formatWon } from '@/lib/money';
@@ -165,6 +166,7 @@ async function CommandScreen({ link, token }: { link: ReplyLinkRow; token: strin
       <Shell org={merchant.displayName} title={kind === 'CANCEL' ? '정기후원 해지' : '정기후원 변경'}>
         <p className="leading-relaxed text-ink-700">아래에서 바꾸거나 해지하면 처리 결과를 이 번호로 문자로 알려 드립니다. 문자 내용만으로는 처리하지 않습니다.</p>
         {recurringIsMock() ? <Notice tone="neutral">현재 mock 결제사입니다. 실제 출금 없이 흐름만 재현됩니다.</Notice> : null}
+        <IdentityNotice purpose="RECURRING" next={`/mo/${token}`} />
         {!data || data.items.length === 0 ? <p className="text-ink-500">이 기관에 등록된 정기후원이 없습니다.</p> : data.items.map((item) => (
           <RecurringManagerCard key={item.id} item={item} code={`sms:${token}`} hasActiveToken={data.hasActiveToken} agreementHref={null} />
         ))}

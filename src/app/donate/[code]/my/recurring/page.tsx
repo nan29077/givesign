@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { IdentityNotice } from '@/components/identity/identity-notice';
 import Link from 'next/link';
 import { DonorShell } from '@/components/public/donor-shell';
 import { Notice } from '@/components/ui';
@@ -38,6 +39,7 @@ export default async function DonorRecurringPage({ params }: { params: Promise<{
           <>
             {recurringIsMock() ? <Notice tone="neutral">현재 mock 결제사입니다. 실제 출금 없이 흐름만 재현됩니다.</Notice> : null}
             {hasLive ? <StepUpPanel code={ctx.org.code} verified={verified} phoneMasked={me.phoneMasked} /> : null}
+            {hasLive ? <IdentityNotice purpose="RECURRING" next={`${base}/my/recurring`} /> : null}
             {data.items.map((item) => (
               <RecurringManagerCard
                 key={item.id}

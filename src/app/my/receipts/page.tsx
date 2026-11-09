@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { IdentityNotice } from '@/components/identity/identity-notice';
 import { requirePayerContext, NO_PAYER_TITLE, NO_PAYER_DESC } from '@/components/my/payer';
 import { Badge, Card, Checkbox, EmptyState, Field, Input, LinkButton, Notice } from '@/components/ui';
 import { DonorActionForm } from '@/components/my/donor-action-form';
@@ -57,6 +58,7 @@ export default async function MyReceiptsPage({ searchParams }: { searchParams: P
             <p className="mt-1"><span className="text-ink-400">주소</span> {profile.address || '-'} · <span className="text-ink-400">연말정산 간소화 제출</span> {profile.hometaxOptIn ? '동의' : '종이 영수증만'}</p>
           </div>
         ) : null}
+        <div className="mt-3"><IdentityNotice purpose="RECEIPT" next="/my/receipts" /></div>
         <details className="mt-3" open={!profile}>
           <summary className="cursor-pointer text-[13px] font-bold text-brand-700">{profile ? '정보 수정' : '정보 등록하기'}</summary>
           <DonorActionForm action={saveReceiptProfileAction} submitLabel={profile ? '수정 저장' : '동의하고 등록'} className="mt-3">

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { receiptIdentityCheck } from './identity';
 import { prisma } from '@/server/db';
 import { emitDomainEvent } from './events';
 import { newId } from '@/lib/id';
@@ -70,6 +71,9 @@ export async function upsertReceiptProfile(payerId: string, input: ReceiptProfil
 
   const payer = await prisma.payerProfile.findUnique({ where: { id: payerId } });
   if (!payer) return { ok: false, message: '후원자 정보를 찾을 수 없습니다.' };
+  // 본인인증 성명·생년월일 일치(2026-11-13 5차 L1, IDENTITY_REQUIRED_FOR_RECEIPT). 꺼짐이면 바로 통과(예전 그대로).
+  const identityOk = await receiptIdentityCheck(payer.phoneHash, name, resident);
+  if (!identityOk.ok) return { ok: false, message: identityOk.message };
 
   // 같은 주민등록번호가 다른 후원자 계정에 이미 등록돼 있으면 막는다. 타인의 번호로 등록하면
   // 그 사람 명의로 영수증이 발급되고 국세청 명세에 실리기 때문이다.

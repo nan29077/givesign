@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { voidReceiptForRefundedCharge } from './receipts';
 import { revertRecurringTotals } from './recurring';
 import { newId } from '@/lib/id';
-import { getPaymentAdapter } from '@/server/adapters/payment';
+import { cancelAdapterFor } from '@/server/adapters/payment/card';
 import { calculateFees, postRefundSettlement } from './settlement';
 import { rollbackCounters } from './limits';
 import { sendMtForPayer } from './charge-flow';
@@ -106,7 +106,8 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
     throw new Error('이미 다른 처리가 진행 중인 환불입니다. 잠시 후 상태를 다시 확인해 주세요.');
   }
 
-  const adapter = getPaymentAdapter();
+  // 카드 거래(provider 'card:*', 2026-11-13 5차 L2)는 카드 취소로, 그 밖은 예전 결제 어댑터 그대로다.
+  const adapter = cancelAdapterFor(txn.provider);
   const res = await adapter.cancel({
     orderNo: txn.orderNo,
     providerTid: txn.providerTid ?? '',

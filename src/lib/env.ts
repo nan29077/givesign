@@ -437,6 +437,59 @@ export function ffmpegPath(): string {
   return str('FFMPEG_PATH');
 }
 
+/**
+ * 계약이 필요한 연동(2026-11-13 5차 L) — 본인인증·시점확인·카드 결제·계좌 거래내역 조회.
+ * 모두 꺼짐·mock 기본이다. 호출할 때마다 읽는다(테스트·운영 전환 시 재시작 없이 반영).
+ * 실연동 공급자 값(pass·nice 등)은 규격 수령 전이라 구현이 없다 — 지정하면 운영 부팅을 막는다(contractBootProblems).
+ */
+export function contractIntegrations() {
+  return {
+    /** mock | pass | nice */
+    identityProvider: str('IDENTITY_PROVIDER', 'mock').toLowerCase(),
+    identityRequired: {
+      receipt: bool('IDENTITY_REQUIRED_FOR_RECEIPT', false),
+      esign: bool('IDENTITY_REQUIRED_FOR_ESIGN', false),
+      recurring: bool('IDENTITY_REQUIRED_FOR_RECURRING', false),
+    },
+    /** mock (실연동 없음) */
+    timestampProvider: str('TIMESTAMP_PROVIDER', 'mock').toLowerCase(),
+    cardEnabled: bool('CARD_PAYMENT_ENABLED', false),
+    /** mock | (계약 PG 코드 — 규격 수령 후) */
+    cardProvider: str('CARD_PROVIDER', 'mock').toLowerCase(),
+    bankFeedEnabled: bool('BANK_FEED_ENABLED', false),
+    /** mock | (오픈뱅킹·펌뱅킹 기관 코드 — 계약 후) */
+    bankFeedProvider: str('BANK_FEED_PROVIDER', 'mock').toLowerCase(),
+    /** MO 확인 화면 "지난번 방법으로 후원" 바로가기(화면 단계만 줄인다 — PIN 규칙 그대로) */
+    moQuickRepeat: bool('MO_QUICK_REPEAT_ENABLED', false),
+    /** 관계 안내(광고성) 무료 수신 거부 080 번호. 비어 있으면 수신 거부 링크만 붙는다. */
+    relationshipOptOut080: str('RELATIONSHIP_OPTOUT_080'),
+  };
+}
+
+/** 지금 구현된 공급자(규격을 받아 만든 것). 여기 없는 값은 "규격 수령 후 구현" 이다. */
+const IMPLEMENTED_CONTRACT_PROVIDERS = { identity: ['mock'], timestamp: ['mock'], card: ['mock'], bankFeed: ['mock'] } as const;
+
+/**
+ * 계약 연동 부팅 점검(운영). 켰는데 mock 이거나, 구현되지 않은 공급자를 지정하면 문제로 올린다.
+ * 함수로 따로 둔 이유: 테스트가 env 를 바꿔 가며 직접 확인한다.
+ */
+export function contractBootProblems(): string[] {
+  const c = contractIntegrations();
+  const problems: string[] = [];
+  const impl = (k: keyof typeof IMPLEMENTED_CONTRACT_PROVIDERS, v: string) => (IMPLEMENTED_CONTRACT_PROVIDERS[k] as readonly string[]).includes(v);
+  const anyIdentity = c.identityRequired.receipt || c.identityRequired.esign || c.identityRequired.recurring;
+  if (anyIdentity && c.identityProvider === 'mock') {
+    problems.push('IDENTITY_REQUIRED_FOR_* 를 켰는데 IDENTITY_PROVIDER 가 mock 입니다. (모의 본인인증은 실제 본인 확인이 아닙니다)');
+  }
+  if (!impl('identity', c.identityProvider)) problems.push(`IDENTITY_PROVIDER=${c.identityProvider} 는 아직 구현되지 않았습니다(규격 수령 후 구현).`);
+  if (!impl('timestamp', c.timestampProvider)) problems.push(`TIMESTAMP_PROVIDER=${c.timestampProvider} 는 아직 구현되지 않았습니다(시점확인 미연동).`);
+  if (c.cardEnabled && c.cardProvider === 'mock') problems.push('CARD_PAYMENT_ENABLED=true 인데 CARD_PROVIDER 가 mock 입니다. (모의 카드 결제는 실제 승인이 아닙니다)');
+  if (!impl('card', c.cardProvider)) problems.push(`CARD_PROVIDER=${c.cardProvider} 는 아직 구현되지 않았습니다(카드 PG 규격 수령 후 구현).`);
+  if (c.bankFeedEnabled && c.bankFeedProvider === 'mock') problems.push('BANK_FEED_ENABLED=true 인데 BANK_FEED_PROVIDER 가 mock 입니다. (계좌 거래내역을 실제로 조회하지 않습니다)');
+  if (!impl('bankFeed', c.bankFeedProvider)) problems.push(`BANK_FEED_PROVIDER=${c.bankFeedProvider} 는 아직 구현되지 않았습니다(오픈뱅킹·펌뱅킹 계약 후 구현).`);
+  return problems;
+}
+
 /** 운영 배포 전 반드시 통과해야 하는 환경 점검 */
 export function assertProductionSafety(): string[] {
   const problems: string[] = [];
@@ -497,6 +550,7 @@ export function assertProductionSafety(): string[] {
     problems.push('CONTENT_PROVIDER=llm 인데 LLM_PROVIDER 가 mock 입니다.');
   }
   problems.push(...integrationBootProblems());
+  problems.push(...contractBootProblems()); // 2026-11-13 5차 L: 본인인증·시점확인·카드·계좌 조회
   // 결제사(헥토)를 붙였는데 PIN 인증만 mock 으로 남아 있으면, 실제 출금이 가능한 빌키를 든 채
   // 인증 단계만 모의 화면으로 통과시키게 된다. 조합 자체를 막는다.
   if (env.payment.provider === 'hecto' && isMockPinLink()) {

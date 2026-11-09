@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { IdentityNotice } from '@/components/identity/identity-notice';
+import { identityRequired, latestIdentity } from '@/server/services/identity';
 import { cookies } from 'next/headers';
 import { PdfPreview } from '@/components/pdf/pdf-preview';
 import { CircleX, FileText, Hourglass, Paperclip } from 'lucide-react';
@@ -133,6 +135,9 @@ export default async function SignPage({ params }: { params: Promise<{ token: st
       </Card>
 
       <Card className="mt-3">
+        {canSign && identityRequired('ESIGN') ? (
+          <div className="mb-3"><IdentityNotice purpose="ESIGN" next={`/sign/${token}`} verified={Boolean(await latestIdentity('ESIGN', s.phoneHash))} /></div>
+        ) : null}
         {canSign ? (
           <SignerSignForm token={token} fields={snapshot.fields} prefill={prefill} editable={isPrimary} />
         ) : (

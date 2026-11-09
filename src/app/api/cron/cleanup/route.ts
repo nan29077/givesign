@@ -6,6 +6,7 @@ import { expireStaleConfirmations, expireStaleAmountSelections } from '@/server/
 import { purgeExpiredIdempotencyKeys } from '@/server/services/idempotency';
 import { purgeExpiredResetTokens } from '@/server/services/password-reset';
 import { closeOrphanPreparedCharges, escalateStalePaymentTransactions } from '@/server/services/payment-recovery';
+import { expireStaleCardSessions } from '@/server/services/card-payment';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,8 +75,9 @@ export async function GET(req: Request) {
     const staleTransactions = await step('결과 미기록 결제 거래 대사 큐 이관', () => escalateStalePaymentTransactions());
     const orphanCharges = await step('고아 결제(승인 요청 전) 자동 취소', () => closeOrphanPreparedCharges());
     const staleESign = await step('오래된 전자서명 요청 만료', () => expireStaleESignRequests());
+    const cardSessions = await step('만료 카드 결제창 취소', () => expireStaleCardSessions()); // 2026-11-13 5차 L2(카드 끔이면 0건)
 
-    const steps = { pinSessions, confirmations, amountSelections, idempotencyKeys, resetTokens, staleTransactions, orphanCharges, staleESign };
+    const steps = { pinSessions, confirmations, amountSelections, idempotencyKeys, resetTokens, staleTransactions, orphanCharges, staleESign, cardSessions };
     const allOk = Object.values(steps).every((s) => s.ok);
     // 본문의 ok:false 만으로는 스케줄러·알람이 실패를 알아채지 못한다.
     // 한 단계라도 실패하면 상태 코드로도 드러낸다(EventBridge/CloudWatch 가 본문을 보지 않는다).

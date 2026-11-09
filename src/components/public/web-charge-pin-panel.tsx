@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Clock, MessageSquare, Pencil, Send, ShieldCheck, Smartphone } from 'lucide-react';
+import { Check, Clock, MessageSquare, Pencil, Send, ShieldCheck, Smartphone, CreditCard } from 'lucide-react';
 import { cx, Notice } from '@/components/ui';
 import { formatWon } from '@/lib/money';
 import {
@@ -41,6 +41,7 @@ export function WebChargePinPanel({
   campaigns = [],
   defaultCampaignId = '',
   smsAvailable = true,
+  cardOption = null,
 }: {
   merchantId: string;
   merchantName: string;
@@ -55,6 +56,8 @@ export function WebChargePinPanel({
   defaultCampaignId?: string;
   /** 기관에 후원 문자 번호가 배정되어 있는지. 하단 안내 문구에만 쓴다. */
   smsAvailable?: boolean;
+  /** 카드 일시후원 선택지(2026-11-13 5차 L2). null 이면 예전 화면 그대로 */
+  cardOption?: { mock: boolean } | null;
 }) {
   const min = BigInt(minAmount);
   const max = BigInt(maxAmount);
@@ -382,6 +385,15 @@ export function WebChargePinPanel({
                   <Send size={17} strokeWidth={1.8} />
                   {startPending ? 'PIN 링크 발송 중...' : 'PIN 입력 링크 문자로 받기'}
                 </button>
+                {cardOption ? (
+                  <div className="space-y-1.5">
+                    <button type="submit" name="payMethod" value="CARD" disabled={startPending || !composeValid} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-ink-200 bg-white text-[15px] font-bold text-ink-800 hover:bg-ink-50 disabled:cursor-not-allowed disabled:text-ink-300">
+                      <CreditCard size={17} strokeWidth={1.7} />
+                      카드로 후원 (결제 링크 문자로 받기)
+                    </button>
+                    <p className="text-center text-[11.5px] text-ink-400">카드는 일시후원만 됩니다. 정기후원은 내통장결제로 약정해 주세요.{cardOption.mock ? ' [MOCK] 카드사 연동 전 — 실제 승인은 일어나지 않습니다.' : ''}</p>
+                  </div>
+                ) : null}
                 {view.message && !view.ok ? (
                   // 버튼을 누른 뒤 오류가 조용히 렌더되면 스크린리더에는 아무 일도 없는 것으로 들린다.
                   <div role="alert" aria-live="assertive">
