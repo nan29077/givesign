@@ -3824,6 +3824,8 @@ model IssuedDocument {
   sendError        String?   @map("send_error")
   /// 값이 없어 빈칸으로 둔 머지 필드
   missingFields    String[]  @default([]) @map("missing_fields")
+  /// 발송 전 점검(document-preflight.ts) 경고 문구 — 보내기는 했지만 확인이 필요한 점(긴 이름·모르는 필드 등)
+  preflightWarnings String[] @default([]) @map("preflight_warnings")
   /// 같은 발송을 두 번 하지 않는 키
   dedupeKey        String    @unique @map("dedupe_key")
   subjectType      String?   @map("subject_type")
@@ -4471,4 +4473,28 @@ model BazaarReconcile {
 
   @@index([month, createdAt])
   @@map("bazaar_reconcile")
+}
+
+/// 승인 대기함 담당자 배정·처리 기한 (2026-11-09). 항목·묶음은 원천 테이블에서 모으고(복사하지 않음), 이 표는 배정만 담는다.
+/// item_key 는 승인 대기함 항목 키(`approval:{id}` 등) 또는 묶음 키(`group:{kind}`). (기관, 항목 키) 1행.
+/// 기한이 지나면 inbox 배치가 기관 소유자 계정에 콘솔 알림을 한 번 보낸다(overdue_notified_at 조건부 선점).
+model InboxAssignment {
+  id                String    @id
+  merchantId        String    @map("merchant_id")
+  itemKey           String    @map("item_key")
+  /// 담당자(기관 담당자 계정 app_user.id). 비우면 배정 없이 기한만
+  assigneeUserId    String?   @map("assignee_user_id")
+  dueAt             DateTime? @map("due_at") @db.Timestamptz(3)
+  memo              String?
+  /// 처리 완료(담당자 표시 또는 항목이 사라져 배치가 닫음)
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(3)
+  /// 기한 넘김 알림을 보낸 시각(한 번만). 기한을 바꾸면 비운다
+  overdueNotifiedAt DateTime? @map("overdue_notified_at") @db.Timestamptz(3)
+  createdBy         String?   @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, itemKey])
+  @@index([resolvedAt, dueAt])
+  @@map("inbox_assignment")
 }

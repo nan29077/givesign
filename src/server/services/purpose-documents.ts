@@ -89,7 +89,10 @@ export interface IssuePurposeDocumentInput {
 
 export type IssuePurposeDocumentResult =
   | { ok: true; issuedId: string; link: string | null; already?: boolean; signature: boolean }
-  | { ok: false; reason: string; blocked?: 'DISABLED' | 'NO_TEMPLATE' | 'EDOC_BALANCE' | 'WITHDRAWN' | 'NOT_READY' };
+  | { ok: false; reason: string; blocked?: 'DISABLED' | 'NO_TEMPLATE' | 'EDOC_BALANCE' | 'WITHDRAWN' | 'NOT_READY' | 'PREFLIGHT' };
+
+/** 발송 전 점검(document-preflight)에서 막혔을 때 사유 앞머리. 저니 기록·승인 대기함이 이 말로 "막힌 일" 을 찾는다. */
+export const PREFLIGHT_BLOCK_PREFIX = '발송 전 점검에서 막혔습니다';
 
 /**
  * 용도별 문서 발송(2단계 구현: issued-documents.ts). 이 파일은 계약만 두고 구현은 늦게 불러온다

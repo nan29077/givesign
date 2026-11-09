@@ -9,6 +9,7 @@ import { issuerReadiness } from '../receipts';
 import { issuePurposeDocument, DOCUMENT_PURPOSE_LABEL, type DocumentPurpose, type MergeContext } from '../purpose-documents';
 import type { JourneyDef, StepDef, StepEnv, StepOutcome, ParamValue } from './types';
 import type { StoredDomainEvent } from '../events';
+import { JourneyBlockedError } from './types';
 
 /**
  * 기본 저니 정의.
@@ -77,6 +78,9 @@ function documentStep(input: {
       if (r.ok) return { type: 'done', sent: !r.already, detail: r.already ? '이미 보낸 문서' : r.signature ? '서명 요청 발송' : '열람 링크 발송' };
       if (r.blocked === 'EDOC_BALANCE') return { type: 'retry', until: new Date(e.now.getTime() + DAY), detail: '전자문서 이용 잔액 부족 — 충전 후 다시 시도' };
       if (r.blocked === 'WITHDRAWN') return { type: 'stop', detail: '탈퇴한 후원자' };
+      // 발송 전 점검에서 막힘(필수 항목 빈칸·연락처 없음 등, 2026-11-09 C2): 건너뛰지 않고 실행을 "막힌 일" 로 남긴다.
+      // 승인 대기함이 journey_run.status=FAILED + last_error(PREFLIGHT_BLOCK_PREFIX) 로 모아 보여 주고, 기관이 고친 뒤 "다시 실행" 한다.
+      if (r.blocked === 'PREFLIGHT') throw new JourneyBlockedError(r.reason);
       return { type: 'skip', detail: r.reason };
     },
   };

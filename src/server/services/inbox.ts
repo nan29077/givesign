@@ -30,6 +30,11 @@ export interface InboxItem {
   /** 실행에 실패해 다시 실행할 수 있는 승인 요청 id */
   retryApprovalId?: string;
   error?: string | null;
+  /** 판단 정보(2026-11-09 C1) — 영향받는 후원자 수·관련 금액. 원천 값에서 읽은 것만(없으면 비움) */
+  affectedCount?: number;
+  amount?: bigint | null;
+  /** 막힌 자동 안내 실행 id(다시 실행) */
+  retryRunId?: string;
 }
 
 export async function inboxItems(merchantId: string) {
@@ -70,6 +75,7 @@ export async function inboxItems(merchantId: string) {
       href: a.kind === 'RECEIPT_BATCH' ? '/studio/receipts' : '/studio/journeys',
       approvalId: a.id,
       error: a.error,
+      ...approvalImpact(a.payload, a.payerId),
     })),
     ...contents.map((c) => ({
       key: `content:${c.id}`, kind: 'CONTENT_REVIEW', kindLabel: '콘텐츠 검토', title: c.title || '새 콘텐츠', summary: c.error, at: c.createdAt, href: `/studio/content/${c.id}`,
@@ -125,11 +131,25 @@ export async function inboxItems(merchantId: string) {
         retryApprovalId: a.id,
         error: a.error,
       })),
-    ...failedRuns.map((r) => ({ key: `run:${r.id}`, kind: 'JOURNEY_FAILED', kindLabel: '자동 안내 실패', title: r.journeyKey, summary: r.lastError, at: r.finishedAt ?? new Date(), href: '/studio/journeys' })),
+    ...failedRuns.map((r) => ({ key: `run:${r.id}`, kind: 'JOURNEY_FAILED', kindLabel: '자동 안내 실패', title: r.journeyKey, summary: r.lastError, at: r.finishedAt ?? new Date(), href: '/studio/journeys', retryRunId: r.id, affectedCount: 1 })),
     ...failedPublishes.map((p) => ({ key: `publish:${p.id}`, kind: 'PUBLISH_FAILED', kindLabel: 'SNS 게시 실패', title: `${p.item.title} · ${p.platform}`, summary: p.error, at: p.updatedAt, href: `/studio/content/${p.itemId}` })),
   ];
 
   return { actions, waiting, blocked };
+}
+
+/** 승인 요청 payload 에서 영향 수·금액(영수증 일괄 발급 readyCount·total, 후원자 1명짜리 요청은 1). */
+function approvalImpact(payload: unknown, payerId: string | null): { affectedCount?: number; amount?: bigint | null } {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const n = Number(p.readyCount);
+  let amount: bigint | null = null;
+  try {
+    if (p.total != null && /^\d+$/.test(String(p.total))) amount = BigInt(String(p.total));
+  } catch {
+    amount = null;
+  }
+  if (Number.isFinite(n) && n > 0) return { affectedCount: n, amount };
+  return payerId ? { affectedCount: 1, amount } : { amount };
 }
 
 /** 사이드바 배지용 — 승인할 일 건수(가벼운 count 만). 요청 단위 캐시. */

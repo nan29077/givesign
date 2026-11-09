@@ -723,7 +723,7 @@ describe('자동화 낮음 — 탈퇴·기관 정지·재발송 동시 클릭·�
     const t = await thanks();
     if (!t.ok) throw new Error(t.reason);
     const token = t.link!.split('/l/')[1]!;
-    const s = await issuePurposeDocument({ merchantId: fx.merchantId, purpose: 'SUPPORT_AGREEMENT', payerId, context: {}, dedupeKey: 'w:sign' });
+    const s = await issuePurposeDocument({ merchantId: fx.merchantId, purpose: 'SUPPORT_AGREEMENT', payerId, context: { amount: 20000n }, dedupeKey: 'w:sign' });
     if (!s.ok) throw new Error(s.reason);
     await prisma.payerProfile.update({ where: { id: payerId }, data: { onboardingStatus: 'WITHDRAWN' } });
     // 링크를 닫기 전에도 열람 화면이 탈퇴자를 거른다

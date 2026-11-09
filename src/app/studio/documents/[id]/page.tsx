@@ -130,6 +130,12 @@ export default async function EditDocumentTemplatePage({ params }: { params: Pro
             <Card className="mt-4">
               <CardTitle>이 서식 관리</CardTitle>
               <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Link
+                  href={`/studio/documents/${template.id}/preflight?mode=stress`}
+                  className="inline-flex h-9 items-center rounded-xl border border-ink-200 px-3 text-[13px] font-bold text-ink-800 hover:bg-ink-50"
+                >
+                  점검
+                </Link>
                 <InlineActionForm
                   action={toggleDocumentTemplateActiveAction}
                   submitLabel={template.active ? '사용 중지' : '사용하기'}

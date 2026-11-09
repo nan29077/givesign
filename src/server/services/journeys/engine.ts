@@ -7,7 +7,7 @@ import { registerConsumer, type StoredDomainEvent } from '../events';
 import { registerApprovalHandler, requestApproval, cancelApproval, ApprovalError, type ApprovalRow } from '../approvals';
 import { JOURNEYS, journeyDef, defaultParams } from './definitions';
 import { PAID_STATUSES } from '@/components/studio/shared';
-import type { JourneyContext, JourneyDef, ParamValue, StepDef, StepEnv, StepOutcome } from './types';
+import { JourneyBlockedError, type JourneyContext, type JourneyDef, type ParamValue, type StepDef, type StepEnv, type StepOutcome } from './types';
 
 /**
  * 저니 엔진.
@@ -341,6 +341,12 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
               try {
                 outcome = await step.run(env);
               } catch (e) {
+                // 발송 전 점검에서 막힘 — 보내지 않았다. 예약을 지워 상한·중복 키에서 뺀다(고친 뒤 다시 실행하면 보낸다).
+                if (e instanceof JourneyBlockedError) {
+                  await prisma.journeyStepLog.delete({ where: { id: r.id } }).catch(() => undefined);
+                  reservedId = null;
+                  throw e;
+                }
                 // 보냈는지 모르는 예외 — 예약을 남겨 두어 다시 보내지 않는다(월간 안내와 같은 기준).
                 await prisma.journeyStepLog.update({ where: { id: r.id }, data: { outcome: 'FAILED', detail: (e as Error).message.slice(0, 300) } }).catch(() => undefined);
                 reservedId = null;
@@ -359,6 +365,11 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
       }
     } catch (e) {
       const message = (e as Error).message;
+      // 고칠 일이 있어 막힘(발송 전 점검): 다시 시도해도 같다 — 재시도하지 않고 막힌 일(FAILED)로 둔다(2026-11-09 C2).
+      if (e instanceof JourneyBlockedError) {
+        await log(run, idx, step, 'BLOCKED', message);
+        return finish('FAILED', { attempts: run.attempts, lastError: message.slice(0, 500), finishedAt: now });
+      }
       const attempts = run.attempts + 1;
       logger.warn('저니 단계 실패', { runId, step: step.key, message });
       await log(run, idx, step, 'FAILED', message);
@@ -513,6 +524,26 @@ export async function cancelRunsForRefundedCharge(ev: StoredDomainEvent) {
       data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: '후원이 환불되어 멈춤', merchantId: ev.merchantId, payerId: run.payerId },
     });
   }
+}
+
+/**
+ * 막힌 실행 다시 하기(담당자, 승인 대기함 "다시 실행"). FAILED 실행만 조건부로 WAITING 으로 되돌려 같은 단계부터 다시 돈다.
+ * 보낸 단계는 발송 중복 키(journey:{runId}:{stepKey})·문서 dedupeKey 로 다시 보내지 않는다. (2026-11-09 C1)
+ */
+export async function retryJourneyRun(merchantId: string, runId: string) {
+  const r = await prisma.journeyRun.updateMany({
+    where: { id: runId, merchantId, status: 'FAILED' },
+    data: { status: 'WAITING', dueAt: new Date(), attempts: 0, lastError: null, finishedAt: null, lockedAt: null, lockedBy: null },
+  });
+  if (r.count !== 1) throw new JourneyError('다시 실행할 수 있는 안내가 아닙니다(이미 다시 실행했거나 끝났습니다).');
+  const run = await prisma.journeyRun.findUniqueOrThrow({ where: { id: runId }, select: { stepIndex: true, journeyKey: true, payerId: true } });
+  await prisma.journeyStepLog.create({
+    data: { id: newId(), runId, stepIndex: run.stepIndex, stepKey: journeyDef(run.journeyKey)?.steps[run.stepIndex]?.key ?? '-', outcome: 'RETRY', detail: '담당자가 다시 실행', merchantId, payerId: run.payerId },
+  });
+  return advanceRun(runId).catch((e) => {
+    logger.warn('다시 실행 진행 실패 — 배치가 이어 갑니다', { runId, message: (e as Error).message });
+    return null;
+  });
 }
 
 /** 실행 취소(담당자): 대기·승인 대기 중인 실행을 멈춘다. */

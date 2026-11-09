@@ -321,3 +321,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 날짜를 정한 일시정지(`resume_on`)는 정기후원 배치가 그날 재개하고 전날 안내 1회(`resume_notice_sent_at` 선점). 날짜 없는 일시정지·재개·해지는 `resume_on` 을 비운다. 결제수단이 없으면 자동 재개하지 않는다.
 - 승인 대기함 묶음은 `recurringRecoveryInboxGroup(merchantId)`(없으면 null) — 연결은 총괄.
 - **(선택) 기관 소식·후원 안내 수신 동의**는 (후원자, 기관) 단위 `payer_merchant_link.marketing_consent_*` + 이력 `marketing_consent_log`(문구·판). `consent_record`(약관 버전 필수·기관 구분 없음)·`notice_opt_out_at`(월간 안내)·기브싸인 MARKETING 동의와 다른 것이다. **아직 이 동의로 아무것도 보내지 않는다.** 체크칸은 `MarketingConsentField`(기본 해제·필수 동의와 분리), 체크하지 않으면 아무것도 바꾸지 않는다. 웹·MO 후원은 결제 건 의사(`marketing_consent_intent`) → `charge.paid` 소비자 `marketing-consent` 가 반영(본인 확인 전 동의 금지). 후원 회원 가입 체크는 휴대폰 인증으로 후원자와 이어질 때 옮기고, 철회한 적이 있으면 되살리지 않는다.
+
+## 2026-11-09 승인 대기함(예외 해결)·문서 발송 전 점검
+
+- **문서 발송 전 점검**(`src/lib/document-preflight.ts` 판정 + `src/server/services/document-preflight.ts`). `issuePurposeDocumentImpl` 이 잔액 확인·PDF 렌더 **전에** 점검한다. block → 보내지 않고 `blocked: 'PREFLIGHT'`(사유 앞머리 `PREFLIGHT_BLOCK_PREFIX`), warn → 보내고 `issued_document.preflight_warnings` 에 남긴다. 필수 필드(`PURPOSE_REQUIRED_FIELDS`)는 **서식이 실제로 쓰는 필드만** 본다. 약정서 출금일은 경고(`PURPOSE_RECOMMENDED_FIELDS`). 이름 없는 후원자는 기본 이름(`후원자{끝4자리}`)으로 채운다. 파일 서식 글자 폭은 `pdf-form/measure.ts`(원본 글꼴 /Widths → 대체 글꼴).
+- 저니 문서 단계가 PREFLIGHT 로 막히면 `JourneyBlockedError` → 재시도 없이 실행 `FAILED`(막힌 일), 발송 예약은 지운다. 기관이 고친 뒤 `retryJourneyRun`(FAILED 조건부)로 다시 실행한다.
+- **표본 미리보기**(`previewSamples` — 정상·빈칸·이름이 가장 긴 것 3건)와 서식 "점검"(`/studio/documents/[id]/preflight`, `?mode=stress` 가상의 긴 값)은 **저장·발송하지 않는다**(파일 서식 첫 쪽 PDF 는 메모리에서만).
+- **승인 대기함 원인별 묶음**(`inbox-groups.ts`): 형식 `InboxExceptionGroup`(다른 영역과 맞춘 것 — 바꾸지 않음), 다른 영역은 `registerInboxGroupProvider(name, fn, label)`. 제공자 실패·8초 초과는 그 묶음만 "불러오지 못함". 정렬 = 기한 넘김 → high → 영향 큰 순 → 오래된 순. 결과 미확인(UNKNOWN)은 "다시 실행" 없이 "결과 확인"만.
+- 묶음 바로 실행(`inbox-actions.ts`)은 기존 경로만: 영수증 정보 안내 = `receipt.info_needed`(연간 배치와 같은 dedupeKey, 수신 거부·차단·탈퇴·번호 없음 제외) → 저니, 막힌 안내 = `retryJourneyRun`, 서명 재안내 = `remindSigner` + 서명자·KST 날짜 하루 1회 선점(`kv.setnx`).
+- **담당·기한**(`inbox_assignment`, (기관, 항목 키) 유니크). 기한 넘김 알림은 `/api/cron/inbox`(1시간, `cron-registry.ts`)가 기관 소유자 계정에 콘솔 알림 1회(`overdue_notified_at` 조건부 선점, 기한을 바꾸면 다시). 처리돼 사라진 항목의 배정은 닫는다. 지금 기관당 담당자 계정은 1개라 화면은 기한·메모만.
+- 사이드바 배지(`inboxActionCount`)는 그대로 **항목 수**다(묶음 수가 아님). RECEIPT_BATCH 는 `/studio/inbox/approvals/[id]` 확인 화면(대상 수·표본·제외 이유·비용 0원)을 거쳐 승인한다 — 정보만, 발급 판정은 영수증 대장 규칙 그대로.

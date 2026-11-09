@@ -77,6 +77,11 @@ export const CRON_JOBS: CronDef[] = [
     description: '연 1회 영수증 기관의 전년도 일괄 발급 준비(승인 대기함) — 승인된 건 발급',
   },
   {
+    name: 'inbox', path: '/api/cron/inbox', schedule: '1시간마다', eventBridge: 'cron(20 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 600,
+    description: '승인 대기함 처리 기한 넘김 → 기관 대표 담당자 콘솔 알림(배정마다 1회), 처리된 항목의 배정 닫기',
+  },
+  {
     name: 'bazaar', path: '/api/cron/bazaar', schedule: '1시간마다(라이브 바자회 켜짐일 때만 일함)', eventBridge: 'cron(10 * * * ? *)',
     intervalSec: 3600, lockTtlSec: 600,
     description: '라이브 바자회 매칭 수락 기한 만료 → 기부 건을 접수 상태로 되돌림',

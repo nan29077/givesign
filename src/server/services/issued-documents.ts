@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { addDays } from '@/lib/datetime';
 import { decrypt, encrypt, generateToken, tokenHash } from '@/lib/crypto';
 import { maskSensitive, type MergeValues } from '@/lib/merge-fields';
+import { defaultPayerName } from '@/lib/payer-name';
 import { getPrivateObject } from '@/server/uploads';
 import { tplDocumentIssued } from './mt-templates';
 import { sendMtForPayer } from './charge-flow';
@@ -125,6 +126,7 @@ interface IssuedBase {
   pdfHash: string | null;
   signature: boolean;
   missingFields: string[];
+  preflightWarnings: string[];
   dedupeKey: string;
   subjectType: string | null;
   subjectId: string | null;
@@ -185,7 +187,16 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
   }
 
   const now = new Date();
-  const donorName = input.context.donorName ?? payer.displayName ?? null;
+  // 이름을 정하지 않은 후원자는 결제 건과 같은 기본 이름(후원자{끝 4자리})으로 부른다 — 빈칸 감사장이 나가거나
+  // 발송 전 점검(후원자명 필수)에 막히지 않게(2026-11-09 C2). 번호를 풀지 못하면 빈칸 그대로.
+  let donorName = input.context.donorName ?? payer.displayName ?? null;
+  if (!donorName) {
+    try {
+      donorName = defaultPayerName(decrypt(payer.phoneEnc));
+    } catch {
+      donorName = null;
+    }
+  }
   const values = mergeValuesFromContext(
     { ...input.context, donorName },
     { merchantName: merchant.displayName, representative: merchant.representativeName ?? null },
@@ -195,6 +206,19 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
   // 내부 전자서명 약정서: 서명 화면 본문은 약정서 스냅샷 본문이다(서명 대상 = 보관된 스냅샷).
   const body = input.bodyOverride ? { text: input.bodyOverride, missing: [] as string[] } : rendered;
   const missing = [...body.missing];
+
+  // 발송 전 점검(2026-11-09 C2): block 이면 보내지 않는다(잔액 차감·PDF 렌더 전에). warn 은 보내고 발급 행에 남긴다.
+  // 약정서 내부 서명(bodyOverride)은 스냅샷 본문을 기준으로 본다(서식 본문을 다시 머지하지 않는다).
+  const { preflightDocument, preflightReason, recipientFor } = await import('./document-preflight');
+  const preflight = await preflightDocument(
+    { ...template, body: input.bodyOverride ?? template.body },
+    { values, recipient: await recipientFor(merchant.id, payer.id), now },
+  );
+  if (preflight.level === 'block') {
+    logger.warn('발송 전 점검에서 막힘', { merchantId: merchant.id, purpose, codes: preflight.issues.filter((i) => i.severity === 'block').map((i) => i.code) });
+    return { ok: false, reason: preflightReason(preflight), blocked: 'PREFLIGHT' };
+  }
+  const preflightWarnings = preflight.issues.filter((i) => i.severity === 'warn').map((i) => i.message.slice(0, 200));
 
   // 서명 요청은 무거운 PDF 렌더 전에 잔액부터 본다(렌더한 뒤 잔액 부족으로 버려지는 파일이 생기지 않게 — 점검 A-M2).
   if (signature) {
@@ -256,6 +280,7 @@ async function issueInner(input: IssuePurposeDocumentInput): Promise<IssuePurpos
     pdfHash: pdf?.hash ?? null,
     signature,
     missingFields: missing,
+    preflightWarnings,
     dedupeKey,
     subjectType: input.subject?.type ?? null,
     subjectId: input.subject?.id ?? null,
