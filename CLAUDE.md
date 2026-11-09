@@ -380,3 +380,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 후원 내역(`donor-history.ts`)은 연도별 합계 + 건별(출처 표시). 원천은 결제 건이고 다른 출처(2차 E 계좌이체 확정분)는 `registerDonationHistorySource(name, fn, label)` 로 붙인다(실패한 출처만 빠짐). 영수증 발급 시기 안내는 `receiptScheduleNote(receiptCycle)` 하나.
 - 받은 문서(`donor-documents.ts`)는 감사장·확인서 + 약정서(SIGNED·NONE 판만). 회원 화면은 그 기관 문서만, `/donate/[code]/my/documents/[id](/file)`·`/agreements/[id]`. 만료된 `/l/[토큰]` 은 그 기관 회원 로그인·통합 로그인으로 받은 문서에 돌아오게 안내한다. 회원 화면의 영수증 정보 저장은 후원자 단위라 재확인 뒤에만(통합 `/my/receipts` 는 기존대로).
 - 후원자 화면 새 조각(`src/components/self-service/*`)은 본문 16px 이상·큰 버튼(lg)으로 만든다.
+
+## 2026-11-11 주간 운영 계획·보고 · 콘텐츠 성과 폐루프 (3차 G)
+
+테스트 `tests/weekly-plan-content-loop-2026-11-09.test.ts`. 화면 `/studio/weekly`(·`[id]`), `/studio/goals`, `/studio/content/performance`, `/studio/content/assets`.
+
+- **기관 목표**(`merchant_goal`, `goals.ts`)는 진행률 컬럼이 없다 — 정기후원자 수(ACTIVE 약정 후원자)·캠페인 모금액(캠페인 목표·마감 재사용, charge 기준)·봉사자 수(시작일 이후 승인·완료)·월 후원액(이번 달 결제, 계좌이체 제외)을 그때그때 센다. 속도 = 최근 4주.
+- **주간 계획**(`weekly-plan.ts`, 배치 `/api/cron/weekly-plan` 1시간): 월요일 07시(KST) 이후 `weekly_plan (merchant, week_start)` 유니크로 1건. 숫자는 원천 계산만 — LLM 이 실연동이면 문장만 다듬고, 입력에 없는 숫자가 나오면(`numbersPreserved`) 버리고 규칙 문장(`generated_by=RULES`). 비용 `ai_usage.weekly_report`. 저장 값에 후원자 이름·연락처 없음.
+- **계획 제안 실행은 승인 요청만**: `WEEKLY_PLAN_SLOT`(승인 → 캘린더 요일 추가, `applySlotAdd`) · `WEEKLY_PLAN_TOPIC`(승인 → 배치가 콘텐츠를 **검토 대기**로 생성, `createdBy=WEEKLY_PLAN:{승인 id}` 로 1회). 계획 승인으로 게시·발송되는 경로를 만들지 않는다. 안내 발송 제안(연말정산 등)은 기존 승인 대기함·저니 화면 링크만. 승인 대기함 묶음 `weekly-plan`.
+- **월요일 보고**: 09~21시(KST) `report_claimed_at` 조건부 선점으로 1통, 템플릿 `WEEKLY_REPORT`(정보성, `ALIMTALK_TEMPLATES` — 승인 전이면 문자 대체 그대로). 받는 사람 = 기관 소유 계정 휴대폰 → 없으면 기관 정보 담당자 연락처. 기관 담당자 대상이라 `classify.ts` 의 `STAFF_INFO_TEMPLATES`(후원자 7일 상한·`sendRelational` 대상 아님). 수신 끄기 `weekly_report_setting`(꺼도 계획·콘솔 알림은 남음).
+- **콘텐츠 귀속**(`content-performance.ts`): 게시 → `/go` 클릭 → 결제 건·약정 `content_item_id`. 유지 약정 = 약정 90일 뒤 ACTIVE + `recurring_run` SUCCESS 2회↑. 콘텐츠 id 가 없는 결제는 "미확인" 으로 따로 세고 배정하지 않는다. 게시 10건 이상일 때만 상위 요소(형식·주제·요일·시각·첫 문장 길이)를 `brief.wins` → 프롬프트 "잘된 것"(mock 은 `ai_cache content_wins` 저장·표시만).
+- **2안 비교**(`content-variants.ts`, 설정 `ab_test_enabled`): 캘린더 슬롯 A안을 만든 직후 캡션만 다른 B안(공급자 호출·비용 없음, 월 생성 건수에는 들어감). 각각 사람 승인. 둘 다 승인 → A안 예약 플랫폼 2개↑면 하나를 B안으로, 1개면 같은 플랫폼 3시간 뒤. A안 반려 + B안 승인 → B안이 슬롯을 넘겨받음. 승인되지 않은 안은 예약하지 않는다. 수정 요청 판은 묶음을 이어받는다.
+- **콘텐츠 소재**(`content_asset`, `content-assets.ts`): 비공개 저장소만(`/studio/content/assets/[id]/file`). 얼굴 여부는 담당자 체크(자동 인식 없음). 얼굴 소재는 `PORTRAIT_CONSENT`(새 용도 — 서명 필요·자동 발송 없음, 기본 세트 PORTRAIT_CONSENT 서식) 서명 요청 SENT·IN_PROGRESS·COMPLETED 와 연결해야 쓸 수 있고, 연결·승인 때마다 다시 본다(`approveContent` 가 `contentAssetsProblem` 으로 거절). 아동·이용자 기본 가림 필요, 수혜자(BENEFICIARY) 소재는 콘텐츠에 쓸 수 없다. 소재를 장면에 자동 합성하지 않는다.
