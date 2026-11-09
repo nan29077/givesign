@@ -6,7 +6,7 @@ import { Badge, Card, Input, Notice, StatTile } from '@/components/ui';
 import { ActionForm } from '@/components/studio/action-form';
 import { formatKst } from '@/lib/datetime';
 import { formatNumber, formatWon } from '@/lib/money';
-import { automationReadiness } from '@/server/services/inbox';
+import { readinessWithChecks } from '@/server/services/readiness-checks';
 import { inboxOverview, type DecoratedInboxGroup, type DecoratedInboxItem } from '@/server/services/inbox-overview';
 import { merchantStaffAccounts } from '@/server/services/inbox-assignments';
 import { decideApprovalAction, retryApprovalAction } from '@/app/actions/journeys';
@@ -25,7 +25,7 @@ export const dynamic = 'force-dynamic';
  */
 export default async function StudioInboxPage() {
   const { merchantId } = await requireMerchant();
-  const [ov, readiness, staff] = await Promise.all([inboxOverview(merchantId), automationReadiness(merchantId), merchantStaffAccounts(merchantId)]);
+  const [ov, readiness, staff] = await Promise.all([inboxOverview(merchantId), readinessWithChecks(merchantId), merchantStaffAccounts(merchantId)]);
   const missing = readiness.items.filter((i) => !i.ok);
   const groupsShown = ov.groups;
 
@@ -88,6 +88,13 @@ export default async function StudioInboxPage() {
                     {i.label} {!i.ok ? <Badge tone={i.required ? 'danger' : 'neutral'} className="ml-1">{i.required ? '필수' : '권장'}</Badge> : null}
                   </p>
                   {!i.ok && i.impact ? <p className="text-[12px] leading-relaxed text-ink-500">{i.impact}</p> : null}
+                  {/* 2026-11-12 4차 I — "설정됨" 과 "작동 확인됨"(실제로 돌아간 마지막 기록)을 나눠 보인다 */}
+                  {i.ok && i.checks.length ? (
+                    <p className="text-[12px] leading-relaxed text-ink-500">
+                      {i.verified ? '작동 확인됨 — ' : '설정됨 · 작동 확인 전 — '}
+                      {i.checks.map((c) => `${c.label} ${c.verifiedAt ? `${formatKst(c.verifiedAt)}${c.mock ? '(mock)' : ''}` : '기록 없음'}`).join(' · ')}
+                    </p>
+                  ) : null}
                 </div>
                 {!i.ok ? <Link href={i.href} className="shrink-0 text-[12.5px] font-semibold text-brand-700 hover:underline">설정</Link> : null}
               </li>
@@ -95,7 +102,7 @@ export default async function StudioInboxPage() {
           </ul>
         </Card>
       ) : (
-        <p className="mb-4 text-[12px] text-ink-400">자동화 준비도: 필수·권장 항목이 모두 준비되었습니다.</p>
+        <p className="mb-4 text-[12px] text-ink-400">자동화 준비도: 필수·권장 항목이 모두 준비되었습니다. 실제로 돌아갔는지는 <Link href="/studio/start" className="font-semibold text-brand-700 hover:underline">작동 점검</Link>에서 봅니다({readiness.items.filter((i) => i.verified).length}개 작동 확인됨).</p>
       )}
 
       <Section title="승인·처리할 일" empty="지금 처리할 일이 없습니다." items={ov.actions} staffCount={staff.length} />

@@ -10,6 +10,7 @@ const initial: ImportActionState = { ok: false };
  * 기관 보유 명단(CSV) 업로드.
  * 1) 파일을 골라 [미리보기] — 새로 등록 / 중복 / 오류를 줄마다 보여 준다.
  * 2) 동의 확인 체크 + 근거를 적고 [등록] — 같은 파일을 다시 보낸다(서버에 파일을 임시 보관하지 않는다).
+ *    이름 + 휴대폰 뒷자리가 같은 다른 번호는 "중복 후보" — 체크한 줄만 등록한다(2026-11-12 4차 I). 가져온 분들께 문자를 보내지 않는다.
  */
 export function SupporterImportForm() {
   const [state, action, pending] = React.useActionState(supporterImportAction, initial);
@@ -17,6 +18,7 @@ export function SupporterImportForm() {
   return (
     <form action={action} className="space-y-3.5">
       <input type="hidden" name="intent" value={intent} />
+      {state.preview ? <input type="hidden" name="candidateMode" value="1" /> : null}
       <Field label="CSV 파일" hint="열 순서: 이름, 휴대폰, 구분(후원자·봉사자·기타), 태그(; 로 구분), 메모. 첫 줄 머리글은 있어도 없어도 됩니다. 최대 2,000행.">
         <Input type="file" name="file" accept=".csv,text/csv" required className="pt-2.5" />
       </Field>
@@ -51,7 +53,21 @@ export function SupporterImportForm() {
                   <td className="px-3 py-1.5 font-mono">{r.phoneMasked || '-'}</td>
                   <td className="px-3 py-1.5">{{ DONOR: '후원자', VOLUNTEER: '봉사자', OTHER: '기타' }[r.role] ?? r.role}</td>
                   <td className="px-3 py-1.5">
-                    {r.status === 'NEW' ? <Badge tone="success">등록</Badge> : r.status === 'DUPLICATE' ? <Badge tone="neutral">중복</Badge> : <Badge tone="danger">{r.error}</Badge>}
+                    {r.status === 'NEW' ? (
+                      <Badge tone="success">등록</Badge>
+                    ) : r.status === 'DUPLICATE' ? (
+                      <Badge tone="neutral">중복</Badge>
+                    ) : r.status === 'CANDIDATE' ? (
+                      <label className="flex flex-col gap-1">
+                        <span className="flex items-center gap-1.5">
+                          <input type="checkbox" name="includeLine" value={r.line} className="h-4 w-4" />
+                          <Badge tone="warning">중복 후보 — 체크하면 등록</Badge>
+                        </span>
+                        <span className="text-[11.5px] text-ink-500">{r.candidateOf}</span>
+                      </label>
+                    ) : (
+                      <Badge tone="danger">{r.error}</Badge>
+                    )}
                   </td>
                 </tr>
               ))}

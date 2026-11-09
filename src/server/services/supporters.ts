@@ -8,6 +8,7 @@ import { env } from '@/lib/env';
 import { kv } from '@/server/redis';
 import * as tpl from './mt-templates';
 import { mergeTargets } from './payer-merge';
+import { importDuplicateCandidates } from './supporter-import-check';
 
 /**
  * 후원자·자원봉사자 통합 관리 (구성원).
@@ -271,8 +272,10 @@ export interface ImportPreviewRow {
   phoneMasked: string;
   role: string;
   tags: string[];
-  status: 'NEW' | 'DUPLICATE' | 'ERROR';
+  status: 'NEW' | 'DUPLICATE' | 'ERROR' | 'CANDIDATE';
   error?: string;
+  /** 중복 후보(이름 + 휴대폰 뒷자리가 같은 다른 번호)일 때 겹친 쪽(마스킹) — 2026-11-12 4차 I */
+  candidateOf?: string;
 }
 
 /** 따옴표를 지원하는 단순 CSV 파서 */
@@ -353,17 +356,20 @@ export async function previewSupporterImport(merchantId: string, csv: string) {
   );
   const seen = new Set<string>();
   const preview: ImportPreviewRow[] = [...errors];
+  const candidates = await importDuplicateCandidates(merchantId, rows);
   for (const r of rows) {
     const h = phoneHash(r.phone);
     const dup = existing.has(h) || seen.has(h);
     seen.add(h);
-    preview.push({ line: r.line, name: r.name, phoneMasked: maskPhone(r.phone), role: r.role, tags: r.tags, status: dup ? 'DUPLICATE' : 'NEW' });
+    const cand = !dup ? candidates.get(r.line) : undefined;
+    preview.push({ line: r.line, name: r.name, phoneMasked: maskPhone(r.phone), role: r.role, tags: r.tags, status: dup ? 'DUPLICATE' : cand ? 'CANDIDATE' : 'NEW', ...(cand ? { candidateOf: cand.matchedWith } : {}) });
   }
   preview.sort((a, b) => a.line - b.line);
   return {
     rows: preview,
     newCount: preview.filter((p) => p.status === 'NEW').length,
     duplicateCount: preview.filter((p) => p.status === 'DUPLICATE').length,
+    candidateCount: preview.filter((p) => p.status === 'CANDIDATE').length,
     errorCount: errors.length,
     truncated: parseCsv(csv).length - 1 > IMPORT_MAX_ROWS,
   };
@@ -378,6 +384,11 @@ export async function commitSupporterImport(input: {
   csv: string;
   consentConfirmed: boolean;
   consentBasis: string;
+  /**
+   * 중복 후보(이름 + 휴대폰 뒷자리) 중 등록할 줄 번호(2026-11-12 4차 I). 주면 목록에 없는 후보 줄은 건너뛴다.
+   * 주지 않으면 예전처럼 후보도 새로 등록한다(같은 번호만 건너뜀).
+   */
+  candidateLines?: number[];
 }) {
   if (!input.consentConfirmed) throw new ImportError('연락처 수집·이용 동의를 받은 명단인지 확인해 주세요.');
   const basis = input.consentBasis.trim();
@@ -394,12 +405,20 @@ export async function commitSupporterImport(input: {
   const payerByHash = new Map(payers.map((p) => [p.phoneHash, p.id]));
   const seen = new Set<string>();
   const fresh: ParsedContact[] = [];
+  const candidates = input.candidateLines ? await importDuplicateCandidates(input.merchantId, rows) : new Map<number, unknown>();
+  const allowed = new Set(input.candidateLines ?? []);
+  let candidatesSkipped = 0;
   for (const r of rows) {
     const h = phoneHash(r.phone);
     if (existingSet.has(h) || seen.has(h)) continue;
     seen.add(h);
+    if (candidates.has(r.line) && !allowed.has(r.line)) {
+      candidatesSkipped += 1;
+      continue;
+    }
     fresh.push(r);
   }
+  const duplicates = rows.length - fresh.length - candidatesSkipped;
   const importId = newId();
   await prisma.$transaction(async (tx) => {
     await tx.supporterImport.create({
@@ -439,7 +458,17 @@ export async function commitSupporterImport(input: {
       });
     }
   });
-  return { importId, accepted: fresh.length, duplicates: rows.length - fresh.length, errors: errors.length };
+  return {
+    importId,
+    accepted: fresh.length,
+    duplicates: rows.length - fresh.length,
+    errors: errors.length,
+    /** 결과 요약(2026-11-12 4차 I) — duplicates 는 예전 정의(받지 않은 줄 전체) 그대로, 아래는 나눈 값 */
+    sameNumber: duplicates,
+    candidatesSkipped,
+    candidatesAdded: fresh.filter((r) => candidates.has(r.line)).length,
+    linkedToDonor: fresh.filter((r) => payerByHash.has(phoneHash(r.phone))).length,
+  };
 }
 
 // ---------------------------------------------------------------------------
