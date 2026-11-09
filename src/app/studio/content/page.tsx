@@ -70,7 +70,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
     <>
       <PageHeader
         title="콘텐츠 만들기"
-        description="캠페인 이야기로 숏폼(9:16)과 캠페인 이미지를 자동으로 만듭니다. 기관 명의로 나가는 게시물이라 담당자가 검토·승인한 뒤 게시합니다."
+        description="사연에서 필요한 도움, 후원으로 만들 변화와 참여 안내까지. 스토리형 카드뉴스와 세로 숏폼 영상을 만들고, 검토·승인한 뒤 Instagram·Facebook 등에 게시합니다."
         action={
           <div className="flex flex-wrap gap-2">
             <LinkButton href="/studio/content/review" size="sm">주간 승인{c('REVIEW') ? ` (${c('REVIEW')})` : ''}</LinkButton>
@@ -80,7 +80,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
           </div>
         }
       />
-      {mock ? <Notice tone="warning" title="콘텐츠 생성 mock">AI 공급자(대본·이미지·음성) 연결 전입니다. 캠페인 내용으로 대본과 장면 이미지(SVG)를 만들고, 음성·영상(mp4)은 만들지 않습니다. 장면 이미지와 자막 파일은 바로 내려받아 쓸 수 있습니다.</Notice> : null}
+      {mock ? <Notice tone="warning" title="서식 기반 콘텐츠 생성">현재 AI 대본 공급자는 mock입니다. 입력한 캠페인으로 대본과 기본 일러스트 카드를 구성합니다. 숏폼은 영상 도구가 준비되면 자막이 포함된 MP4로 조립하며, 음성은 포함되지 않습니다. 생성 결과는 상세 화면에서 확인할 수 있습니다.</Notice> : null}
       {!merchant.fundraisingRegNo ? (
         <div className="mt-3"><Notice tone="warning" title="기부금품 모집등록번호가 없습니다">콘텐츠는 만들 수 있지만 승인(게시)은 할 수 없습니다. 모집 광고에는 등록번호 표시가 필요합니다. 기관 정보에서 모집등록번호를 넣어 주세요.</Notice></div>
       ) : null}
@@ -96,6 +96,7 @@ export default async function StudioContentPage({ searchParams }: { searchParams
       <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
         <Card>
           <h2 className="text-[16px] font-black text-ink-900">새로 만들기</h2>
+          <p className="mt-2 text-[12.5px] leading-6 text-ink-500">큰 제목으로 관심을 끌고, 사연·필요·사용 계획을 한 장에 하나씩 담습니다. 카드뉴스는 4:5 이미지 묶음, 숏폼은 9:16 MP4 영상으로 제작합니다.</p>
           {campaigns.length === 0 ? (
             <div className="mt-3"><EmptyState title="모금 중인 캠페인이 없습니다" description="캠페인을 먼저 만들면 그 이야기로 콘텐츠를 만들 수 있습니다." action={<LinkButton href="/studio/campaigns/new" size="sm">캠페인 만들기</LinkButton>} /></div>
           ) : (

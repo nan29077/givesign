@@ -505,8 +505,8 @@ describe('[6] 영상 조립 (ffmpeg)', () => {
     expect(() => buildFfmpegArgs({ frames: [], outFile: 'o.mp4' })).toThrow();
   });
 
-  it('FFMPEG_PATH 가 없으면 만들지 않았다고 남긴다', async () => {
-    process.env.FFMPEG_PATH = '';
+  it('영상 조립을 끄면 만들지 않았다고 남긴다', async () => {
+    process.env.FFMPEG_PATH = 'off';
     const r = await assembleVideo({ scenes: [{ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>', durationSec: 1 }] });
     expect(r.available).toBe(false);
     expect(r.videoUrl).toBeUndefined();

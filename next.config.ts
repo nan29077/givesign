@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   distDir: '.givesign-next',
   agentRules: false,
+  serverExternalPackages: ['ffmpeg-static'],
   experimental: {
     // 내장 DB와 함께 실행하는 로컬 Windows 빌드의 동시 워커 수를 제한한다.
     cpus: 2,
@@ -53,7 +54,7 @@ const nextConfig: NextConfig = {
    * standalone 출력은 import 로 추적되는 파일만 싣기 때문에 명시해서 함께 싣는다.
    */
   outputFileTracingIncludes: {
-    '/**/*': ['./assets/fonts/**/*'],
+    '/**/*': ['./assets/fonts/**/*', './node_modules/ffmpeg-static/ffmpeg*', './public/assets/givesign/presets/banner-*.webp'],
   },
 
   /**

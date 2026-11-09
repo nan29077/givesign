@@ -1,4 +1,5 @@
 import type { ContentKind } from '@/generated/prisma/enums';
+import { CAMPAIGN_STORY_FLOW } from '@/lib/campaign-storytelling';
 import { completeJson, type JsonAttempt, type LlmAdapter } from '../llm';
 import {
   CLOSERS,
@@ -28,6 +29,8 @@ export const CONTENT_SYSTEM_PROMPT = [
   '4. "AI 생성 콘텐츠" 표시와 기부금품 모집등록번호도 시스템이 붙인다. 직접 쓰지 않는다.',
   '5. 따뜻하고 존중하는 존댓말. 이모지·특수문자 장식을 쓰지 않는다.',
   '6. 금지어 목록의 단어는 어떤 형태로도 쓰지 않는다.',
+  `7. 캠페인 편집 흐름은 ${CAMPAIGN_STORY_FLOW}. 첫 장면은 주어진 캠페인의 핵심 필요를 짧게 전하고, 다음 장면은 사연과 필요, 마지막은 사용 계획과 참여로 이어 간다. 자료가 없는 사례·발언·통계·성과·선물은 만들지 않는다.`,
+  '8. 한 장에는 하나의 메시지만 담고, 큰 제목처럼 읽히는 짧은 문장을 사용한다. 인스타그램은 첫 문장의 공감과 저장·공유할 정보, 페이스북은 사연의 맥락과 후원으로 가능한 변화를 중심으로 쓴다.',
 ].join('\n');
 
 const PLATFORM_KEYS = ['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'TIKTOK', 'NAVER_BLOG', 'KAKAO_CHANNEL'] as const;

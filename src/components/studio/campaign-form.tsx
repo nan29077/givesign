@@ -47,12 +47,11 @@ export function CampaignForm({ initial: c, today, ai }: { initial?: Campaign | n
           </Field>
         </div>
       </Card>
-      <CampaignCardEditor initial={c?.cardNews} />
       <Card className="space-y-4">
         <Field label="지원 대상" hint="누구를 돕는 캠페인인지 한두 문장으로">
           <Input name="beneficiary" maxLength={300} defaultValue={c?.beneficiary ?? ''} />
         </Field>
-        <Field label="캠페인 이야기" hint="후원페이지 본문. 상황·필요·변화를 구체적으로 적을수록 참여가 늘어납니다.">
+        <Field label="캠페인 이야기" hint="사연 → 필요한 도움 → 후원으로 만들 변화 순서로, 문단 사이에 빈 줄을 넣어 주세요. 아래 스토리형 카드뉴스에도 반영할 수 있습니다.">
           <Textarea name="story" rows={8} maxLength={10000} defaultValue={c?.story ?? ''} />
         </Field>
         <Field label="후원금 사용 계획" hint="항목별 예산처럼 쓰임을 밝히면 신뢰가 높아집니다.">
@@ -67,6 +66,7 @@ export function CampaignForm({ initial: c, today, ai }: { initial?: Campaign | n
         )}
         <Checkbox name="featured" defaultChecked={c?.featured ?? false} label="후원페이지 맨 위에 강조" description="강조 캠페인은 후원페이지 첫 화면과 금액 선택 화면에서 가장 먼저 보입니다." />
       </Card>
+      <CampaignCardEditor initial={c?.cardNews} />
     </ActionForm>
   );
 }

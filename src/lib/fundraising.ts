@@ -89,6 +89,7 @@ export function normalizeCampaignCode(raw: string): string {
 }
 
 export const campaignCardSchema = z.object({
+  eyebrow: z.string().trim().max(40).optional(),
   imageUrl: safeImage.default(''),
   title: z.string().trim().max(100).default(''),
   body: z.string().trim().max(1500).default(''),

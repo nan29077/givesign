@@ -21,6 +21,8 @@ process.env.SOCIAL_PROVIDER = 'mock';
 process.env.ESIGN_ENABLED = 'true';
 process.env.ESIGN_PROVIDER = 'mock';
 process.env.CONTENT_PROVIDER = 'mock';
+// 일반 테스트는 인코딩하지 않는다. 영상 통합 테스트만 명시적으로 실행 경로를 지정한다.
+process.env.FFMPEG_PATH = 'off';
 // 저니 야간 보류는 시각에 따라 결과가 달라지므로 기본으로 끄고, 야간 테스트만 명시적으로 켠다.
 process.env.JOURNEY_QUIET_HOURS = 'off';
 // 통합 발송 관리(2026-11-09 D2): 정보성 안내 묶음 대기 시간은 운영 기본 10분이다. 테스트는 기본으로 0(쌓자마자 그 후원자 대기분을 보냄)으로 두고,

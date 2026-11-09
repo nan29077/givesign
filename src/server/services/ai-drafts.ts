@@ -124,6 +124,7 @@ export async function draftCampaign(merchantId: string, hint: { title?: string }
     `[금지어] ${banned.length ? banned.join(', ') : '(없음)'}`,
     '',
     '이 기관의 새 모금 캠페인 초안을 써라. 기관 소개·사업에 근거한 내용만, 구체적인 수혜자 정보 없이.',
+    '큰 제목과 짧은 문단으로 읽히는 스토리형 캠페인으로 쓴다. story 문단은 사연 → 현재 필요한 도움 → 후원으로 기대하는 변화 순서로 빈 줄을 넣어 나눈다. 첫 문단에 관심을 이끄는 핵심 메시지를 담고, 사용 계획과 참여 권유로 자연스럽게 연결한다. 확인되지 않은 사례·통계·인용·성과·후원 선물은 만들지 않는다.',
     '출력 JSON: {"title": "제목 40자 이내", "summary": "한 줄 소개 120자 이내", "story": "캠페인 이야기 3~5문단, 1500자 이내", "usagePlan": "후원금 사용 계획 항목 3~5개, 600자 이내 (금액은 쓰지 않는다)"}',
   ].filter((l) => l !== null).join('\n');
   const mockText = JSON.stringify({
