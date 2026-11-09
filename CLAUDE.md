@@ -309,3 +309,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **설정 검증.** `validateConfigInput` 이 범위(`BAZAAR_CONFIG_RANGES`)·요율 형식(`isFeeRateString`, `1e1` 거절)을 검사해 오류 문구로 돌려준다. 범위 밖 값을 기본값으로 바꿔 저장하지 않는다.
 - **그 밖.** 편성은 참여 승인 기관만(상품 없는 편성 포함), 방송 주소 변경·편성 승인/반려·종결은 감사로그. 가액 이력은 `valuationKindLabel`(영문 코드 노출 금지). 되돌릴 수 없는 버튼(수락·거절·가액 확정·약정·재발급·종결·반려·판매 종료·방송 완료·이월)은 `confirm` 필수. 입고일 귀속 연도가 지난해면 검수 확정 화면에 홈택스 명세 재생성 경고.
 - **결정 필요(코드는 안전한 쪽으로만).** ① 수수료 반올림은 판매 줄 단위(월 합계 반올림과 원 단위 차이) ② 원장 귀속 월 = 승인일 기준 열린 달(판매일 아님, 묶음 `month` 는 기관별 원장 월 목록) ③ 법인·사업자 현물 영수증은 홈택스 명세 파일 끝 별도 구역(`HOMETAX_CORPORATE_COLUMNS`)에만 두고 개인 주민번호 열에 넣지 않는다 — 제출 방식은 세무 확인 후.
+
+## 2026-11-09 정기후원 실패 복구 · (선택) 소식 수신 동의
+
+테스트 `tests/recurring-recovery-2026-11-09.test.ts` · `tests/marketing-consent-2026-11-09.test.ts`.
+
+- **실패 원인 분류는 `recurring-failure.ts` 한 곳**(결제 건 상태 + 최근 결제 거래 `result_code`). 결제사 코드표는 `RECURRING_CODES_INSUFFICIENT/_ACCOUNT/_AUTH/_TEMPORARY` 환경변수만, mock 기본표는 `provider='mock'` 거래에만. 모르는 코드·빈 코드표 = `UNKNOWN_REASON` = 예전 동작(3일·3회·같은 문자). 결과 미확인(PENDING)은 분류하지 않는다. 정책은 `RECURRING_FAILURE_POLICY` 표로만 바꾼다(업무 코드에 분기 추가 금지).
+- 일시 오류는 다음 날·문자 없음·주기 안 연속 2회까지 정지 횟수 제외. 잔액 부족은 `paydayRetryDate`(11·26·1일, 다음 주기 넘으면 3일). 계좌·인증·결제수단 없음은 자동 재시도 없이 `recovery_state=ACTION_REQUIRED` + `action_deadline_on`(오늘+14와 다음 주기 전날 중 이른 날) — 기한까지 새 결제수단(실패 뒤 `registered_at`)이 없으면 정지(`recurring.suspended`, 주기당 1회 키). 한도는 다음 날.
+- 결제수단 등록은 `payment_method.registered`(merchantId 는 등록 링크 기관, 없으면 빈 값) → `recurring-recovery` 소비자가 조치 필요 약정의 `next_charge_on` 을 오늘로 당긴다. 등록 함수에 정기후원 코드를 넣지 않는다. 같은 주기 실패 뒤 성공 = `recurring_run.recovered` + `recurring.recovered:{id}:{cycle}`, 복구 상태는 성공·재개·해지·정지 때 비운다.
+- 후원자 복구 링크 `/r/recover/[토큰]`(`recurring_recovery_link`, 해시만, 15일, 여러 번 열림, 새 링크가 이전 링크 무효). 링크는 그 약정 1건만. 버튼은 기존 업무 함수만 부른다(등록 = REGISTER_ACCOUNT 보안 링크). 복구 링크가 든 실패 문자는 vars 없음(관리자 본문 미적용) — 잔액 부족도 코드는 `RECURRING_FAILED`.
+- 날짜를 정한 일시정지(`resume_on`)는 정기후원 배치가 그날 재개하고 전날 안내 1회(`resume_notice_sent_at` 선점). 날짜 없는 일시정지·재개·해지는 `resume_on` 을 비운다. 결제수단이 없으면 자동 재개하지 않는다.
+- 승인 대기함 묶음은 `recurringRecoveryInboxGroup(merchantId)`(없으면 null) — 연결은 총괄.
+- **(선택) 기관 소식·후원 안내 수신 동의**는 (후원자, 기관) 단위 `payer_merchant_link.marketing_consent_*` + 이력 `marketing_consent_log`(문구·판). `consent_record`(약관 버전 필수·기관 구분 없음)·`notice_opt_out_at`(월간 안내)·기브싸인 MARKETING 동의와 다른 것이다. **아직 이 동의로 아무것도 보내지 않는다.** 체크칸은 `MarketingConsentField`(기본 해제·필수 동의와 분리), 체크하지 않으면 아무것도 바꾸지 않는다. 웹·MO 후원은 결제 건 의사(`marketing_consent_intent`) → `charge.paid` 소비자 `marketing-consent` 가 반영(본인 확인 전 동의 금지). 후원 회원 가입 체크는 휴대폰 인증으로 후원자와 이어질 때 옮기고, 철회한 적이 있으면 되살리지 않는다.
