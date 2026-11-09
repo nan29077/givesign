@@ -38,6 +38,11 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
   { key: '귀속연도', label: '영수증 귀속연도', example: '2026', hint: '연말 감사장' },
   { key: '영수증번호', label: '기부금영수증 번호', example: 'GIV-8K2M-2026-000123', hint: '연말 감사장' },
   { key: '배정', label: '봉사 배정 내용', example: '토요일 오전 · 배식 지원', hint: '봉사 신청서·확인서' },
+  // 2026-11-09 3차 H — 정보성 안내(결과 보고·연 1회 통보)
+  { key: '보고제목', label: '사업 진행 기록 제목', example: '겨울나기 연탄 나눔 결과', hint: '사업 결과 보고' },
+  { key: '보고내용', label: '사업 결과(캠페인 전체)', example: '모인 후원금으로 연탄 3,000장을 전달했습니다.', hint: '사업 결과 보고' },
+  { key: '참여내역', label: '본인 참여 합계', example: '후원 3회 · 합계 90,000원', hint: '사업 결과 보고·연 1회 통보' },
+  { key: '사용요약', label: '기관 전체 후원금 사용 요약', example: '수입 12,000,000원 · 사용 10,500,000원', hint: '연 1회 통보' },
 ];
 
 export const MERGE_FIELD_KEYS = MERGE_FIELDS.map((f) => f.key);

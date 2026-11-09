@@ -25,7 +25,10 @@ export type ApprovalKind =
   | 'CONTENT_CALENDAR'
   | 'VOLUNTEER_CERTIFICATE'
   | 'SUPPORTER_MERGE'
-  | 'AI_DRAFT';
+  | 'AI_DRAFT'
+  // 2026-11-09 3차 H — 대량 정보성 문서 발송(승인 대기함 확인 후 배치가 나눠 보냄)
+  | 'IMPACT_REPORT_SEND'
+  | 'ANNUAL_NOTICE_SEND';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -35,6 +38,8 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   VOLUNTEER_CERTIFICATE: '봉사활동 확인서 발급',
   SUPPORTER_MERGE: '후원자 병합',
   AI_DRAFT: 'AI 초안 검토',
+  IMPACT_REPORT_SEND: '후원금 사용 결과 보고 발송',
+  ANNUAL_NOTICE_SEND: '후원금 연간 통보 발송',
 };
 
 export interface ApprovalRow {

@@ -11,6 +11,7 @@ import { chargeDonorLabel } from './charge-events';
 import { registerRecurringRecoveryConsumer } from './recurring-recovery';
 import { registerMarketingConsentConsumer } from './marketing-consent';
 import { registerOfflineDepositConsumers } from './deposits';
+import { registerImpactLegalHandlers } from './impact-legal-approvals';
 
 /**
  * 기본 이벤트 소비자 (1단계).
@@ -166,5 +167,7 @@ export function registerDefaultConsumers() {
   registerMarketingConsentConsumer();
   // 2026-11-09 E: 계좌이체 후원 확정 → 기관 알림(여러 건이면 묶음 1건)
   registerOfflineDepositConsumers();
+  // 2026-11-09 3차 H: 사업 결과 보고·연 1회 통보 대량 발송 승인(QUEUED → 배치)
+  registerImpactLegalHandlers();
   logger.debug?.('기본 이벤트 소비자 등록');
 }

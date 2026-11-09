@@ -147,6 +147,10 @@ export function mergeValuesFromContext(ctx: MergeContext, issuer: IssuerMerge, i
     귀속연도: ctx.taxYear != null ? String(ctx.taxYear) : null,
     영수증번호: ctx.receiptNo ?? null,
     배정: ctx.assignment ?? null,
+    보고제목: ctx.reportTitle ?? null,
+    보고내용: ctx.reportBody ?? null,
+    참여내역: ctx.participation ?? null,
+    사용요약: ctx.usageSummary ?? null,
   };
 }
 
