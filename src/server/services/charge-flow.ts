@@ -29,6 +29,8 @@ import { recordChargeStatusStep, recordFunnelStep } from './funnel';
 import { handleMoCommand, moIntentHint, recordCommandStep, suggestForUnknownRoute } from './mo-commands';
 import { tagMoFlowPromo } from './promo-codes';
 import { prefersSmsOnly } from './outbound/preferred-channel';
+import { cardTransactionProvider, type CardPaymentAdapter } from '@/server/adapters/payment/card';
+import { calculateCardFees } from './card-fees';
 import type { ChargeStatus, MoProcessResult, PaymentMode, PaymentTxStatus } from '@/generated/prisma/enums';
 import type { TemplateOutput } from './mt-templates';
 
@@ -1235,7 +1237,18 @@ export interface PaymentOutcome {
   message: string;
 }
 
-export async function executePayment(chargeId: string): Promise<PaymentOutcome> {
+/**
+ * 카드 일시후원 승인 문맥(2026-11-13 5차 L2). 카드 결제창 완료 지점(card-payment.ts completeCardCheckout)만 넘긴다.
+ * 없으면(기존 호출 전부) 예전과 완전히 같은 계좌 빌키 승인 경로다.
+ */
+export interface CardApproveContext {
+  adapter: CardPaymentAdapter;
+  /** 결제창 인증 결과(승인에 쓰는 값). 저장·로그하지 않는다. */
+  authToken: string;
+}
+
+export async function executePayment(chargeId: string, opts: { card?: CardApproveContext } = {}): Promise<PaymentOutcome> {
+  const card = opts.card ?? null;
   const charge = await prisma.charge.findUnique({
     where: { id: chargeId },
     include: { merchant: true, payer: true },
@@ -1248,11 +1261,27 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     return { ok: true, status: charge.status, message: '이미 결제가 완료된 거래입니다.' };
   }
 
-  const token = await prisma.paymentMethodToken.findFirst({
-    where: { payerId: charge.payerId!, status: 'ACTIVE' },
-    orderBy: { registeredAt: 'desc' },
-  });
-  if (!token) {
+  // 카드 결제 건은 카드 결제창 완료 지점에서만 승인한다(계좌 빌키로 승인하지 않는다). 계좌 결제 건(paymentMethod 비어 있음)은 영향 없음.
+  if (charge.paymentMethod === 'CARD' && !card) {
+    return { ok: false, status: charge.status, message: '카드 결제 건은 카드 결제창에서만 승인합니다.' };
+  }
+  // 카드 수수료 정책은 승인 **전에** 확인한다(승인 뒤 정책이 없어 원장을 못 쓰는 일이 없게).
+  let cardFees: Awaited<ReturnType<typeof calculateCardFees>> | null = null;
+  if (card) {
+    cardFees = await calculateCardFees(charge.merchantId, charge.amount).catch(() => null);
+    if (!cardFees) {
+      await setStatus(chargeId, 'PAYMENT_FAILED', '카드 수수료 정책 없음(승인 전 중단, 출금 없음)');
+      return { ok: false, status: 'PAYMENT_FAILED', message: '카드 결제를 준비하지 못했습니다. 결제는 진행되지 않았습니다.' };
+    }
+  }
+
+  const token = card
+    ? null
+    : await prisma.paymentMethodToken.findFirst({
+        where: { payerId: charge.payerId!, status: 'ACTIVE' },
+        orderBy: { registeredAt: 'desc' },
+      });
+  if (!card && !token) {
     await setStatus(chargeId, 'UNREGISTERED', '활성 결제수단 없음');
     return { ok: false, status: 'UNREGISTERED', message: '등록된 결제수단이 없습니다.' };
   }
@@ -1330,7 +1359,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
           // 설정값이 아니라 실제로 이 건을 처리하는 어댑터를 남긴다.
           // SAFE_MODE=true 면 PAYMENT_PROVIDER 가 hecto 여도 mock 이 승인한다.
           // 설정값을 남기면 모의 승인을 실승인으로 오인해 정산·환불을 진행하게 된다.
-          provider: getPaymentAdapter().info().provider,
+          provider: card ? cardTransactionProvider(card.adapter) : getPaymentAdapter().info().provider,
           amount: charge.amount,
           // 한도 집계를 되돌릴 때 이 값을 기준 시각으로 쓴다(환불·대사 경로 포함).
           // DB 기본값(now())에 맡기면 예약에 쓴 reservedAt 과 KST 날짜가 갈릴 수 있고,
@@ -1419,7 +1448,13 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
   // 수동 대사(payment-reconcile)는 UNKNOWN·TIMEOUT 만 다루므로 이 건은 아무도 풀지 못한다.
   //
   // 결제대행을 부르기 전이라는 것이 확실한 구간이므로, 여기서는 조용히 되돌리는 것이 안전하다.
-  const adapter = getPaymentAdapter();
+  // 카드 승인(2026-11-13 5차 L2)은 같은 판정·조회·미확인 규칙을 타되 승인·조회만 카드 어댑터로 한다.
+  const adapter: Pick<ReturnType<typeof getPaymentAdapter>, 'approve' | 'inquire'> = card
+    ? {
+        approve: (req) => card.adapter.approve({ orderNo: req.orderNo, amount: req.amount, authToken: card.authToken }),
+        inquire: (orderNo) => card.adapter.inquire(orderNo),
+      }
+    : getPaymentAdapter();
   const started = Date.now();
   let attemptNo: number;
   try {
@@ -1489,7 +1524,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
     res = await adapter.approve({
       orderNo: txn.orderNo,
       amount: charge.amount,
-      billKey: decryptBillKey(token.billKeyEnc),
+      billKey: token ? decryptBillKey(token.billKeyEnc) : '',
       productName: `${charge.merchant.displayName} 문자후원`,
       buyerName: charge.displayName,
     });
@@ -1601,7 +1636,7 @@ export async function executePayment(chargeId: string): Promise<PaymentOutcome> 
   // 둘이 갈라져 있으면 그 사이에 프로세스가 죽었을 때
   // "결제는 성공인데 원장에는 없는" 상태가 되고, 앞쪽 조기 return 가드가
   // 재시도를 '이미 완료'로 되돌려 보내 사회복지기관이 그 금액을 영영 못 받는다.
-  const fees = await calculateFees(charge.merchantId, charge.amount);
+  const fees = cardFees ?? (await calculateFees(charge.merchantId, charge.amount));
   try {
     await prisma.$transaction(async (tx) => {
       await tx.paymentTransaction.update({

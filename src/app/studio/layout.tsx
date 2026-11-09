@@ -73,6 +73,7 @@ function buildGroups(pending: {
           : []),
         { href: '/studio/journeys', label: '자동 안내', icon: 'journeys' },
         { href: '/studio/notices', label: '알림톡·월간 안내', icon: 'notices' },
+        { href: '/studio/relationship', label: '관계 안내', icon: 'notices' }, // 5차 L4 — 전역 스위치 꺼짐이면 화면은 안내만
       ],
     },
     {

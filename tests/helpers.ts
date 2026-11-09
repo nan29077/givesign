@@ -2,6 +2,8 @@ import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
 import { encrypt, phoneHash, maskPhone, maskSecret } from '@/lib/crypto';
 import { resetMockPaymentState } from '@/server/adapters/payment';
+import { resetMockCardState } from '@/server/adapters/payment/card';
+import { setMockBankFeedFixture } from '@/server/adapters/bank-feed';
 import { resetMockPayoutState } from '@/server/adapters/payout';
 import { clearMockOutbox, readMockOutbox, setMockMtFailure } from '@/server/adapters/mt';
 import { clearMockAlimtalkOutbox } from '@/server/adapters/alimtalk';
@@ -40,6 +42,9 @@ export async function resetDb() {
     'campaign_promo', 'mo_reply_link', 'inquiry_auto_setting',
     // 2026-11-12 4차 J 문서 묶음 (기관 FK 없음 — 항목 표는 CASCADE)
     'document_bundle', 'document_bundle_send',
+    // 2026-11-13 5차 L 계약 연동·관계 안내 (FK 없음)
+    'identity_verification', 'document_timestamp', 'card_checkout_session', 'card_fee_policy', 'bank_feed_link',
+    'relationship_message_setting', 'relationship_message',
   ];
   // 정산 원장은 append-only 트리거로 DELETE 가 막혀 있으므로 트리거를 잠시 끈다.
   // 중간에 실패해도 트리거는 반드시 다시 켠다. 꺼진 채로 남으면 이후 테스트에서
@@ -53,6 +58,8 @@ export async function resetDb() {
 
   testChargeAmount = null;
   resetMockPaymentState();
+  resetMockCardState();
+  setMockBankFeedFixture(null);
   resetMockPayoutState();
   clearMockOutbox();
   clearMockAlimtalkOutbox();

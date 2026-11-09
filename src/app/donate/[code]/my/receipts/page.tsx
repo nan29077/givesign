@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { IdentityNotice } from '@/components/identity/identity-notice';
 import { CalendarClock, Receipt } from 'lucide-react';
 import { DonorShell } from '@/components/public/donor-shell';
 import { Badge } from '@/components/ui';
@@ -58,6 +59,7 @@ export default async function DonorReceiptsPage({ params }: { params: Promise<{ 
 
         {!scope ? <NeedPhoneNotice base={base} /> : (
           <>
+            <IdentityNotice purpose="RECEIPT" next={`${base}/my/receipts`} />
             <section className="rounded-[24px] border border-ink-100 bg-white p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-[18px] font-black text-ink-900">영수증 발급 정보</h2>

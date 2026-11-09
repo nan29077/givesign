@@ -92,6 +92,8 @@ export async function confirmChargeAmountAction(
     quantity: Number.isFinite(quantityRaw) ? quantityRaw : 1,
     optionValues: parseOptionValues(s('optionValues')),
     address,
+    // 카드로 후원 버튼(2026-11-13 5차 L2). 서버가 스위치·정책을 다시 본다.
+    method: s('payMethod') === 'CARD' ? 'CARD' : null,
     // XFF 의 첫 홉은 클라이언트가 임의로 써 넣을 수 있다.
     // 이 값은 SecureLink.usedIp 로 저장되어 "누가 이 결제를 확정했는가" 의 유일한 증거가 된다.
     ip: clientIpFrom((name) => h.get(name)) ?? undefined,

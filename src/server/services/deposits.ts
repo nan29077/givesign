@@ -983,3 +983,54 @@ export function registerOfflineDepositConsumers() {
   registered = true;
   registerConsumer({ name: 'offline-alert', types: ['offline.received'], handle: handleOfflineAlert });
 }
+
+// ---------------------------------------------------------------------------
+// 계좌 거래내역 자동 조회 경로(2026-11-13 5차 L3) — 파일과 **같은 정규화·중복 해시**
+// ---------------------------------------------------------------------------
+
+/** 자동 조회 줄을 은행 파일과 같은 표(줄×칸)로 바꿔 parseStatementRows 로 읽는다. 머리글 1줄 + 이 열 순서. */
+export const BANK_FEED_MAPPING: ColumnMapping = { header: 0, date: 0, name: 1, memo: 2, amountIn: 3, amountOut: 4, balance: 5 };
+
+/**
+ * 공급자가 준 거래(표 형식)를 입금 대사 표로 넣는다. 파일 올리기와 같은 열 읽기(parseStatementRows)·같은 입금 해시(depositHash, 묶음 안 순번)·
+ * 같은 맞추기(matchDeposits)를 탄다 — 같은 입금을 파일로 이미 넣었으면 건너뛴다. 같은 조회 결과를 두 번 넣지 않는다(feedKey 해시).
+ */
+export async function importBankFeedRows(input: { merchantId: string; provider: string; feedKey: string; rows: string[][]; now?: Date }) {
+  const parsed = parseStatementRows(input.rows, BANK_FEED_MAPPING);
+  if (parsed.deposits.length === 0) return { status: 'EMPTY' as const, newCount: 0, duplicateCount: 0, errors: parsed.errors.length };
+  const importId = newId();
+  const seen = new Map<string, number>();
+  const rows = parsed.deposits.map((d) => {
+    const base = `${d.occurredAt.toISOString()}|${d.amount}|${d.key}|${d.balance ?? ''}`;
+    const ordinal = seen.get(base) ?? 0;
+    seen.set(base, ordinal + 1);
+    return { d, txHash: depositHash(input.merchantId, d, ordinal) };
+  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.bankStatementImport.create({
+        data: {
+          id: importId, merchantId: input.merchantId, fileName: `계좌 자동 조회(${input.provider})`.slice(0, 120),
+          fileHash: sha256(`bank-feed:${input.provider}:${input.feedKey}`), format: '계좌 자동 조회', encoding: 'feed',
+          rowCount: parsed.deposits.length, skippedCount: parsed.skipped, errorCount: parsed.errors.length,
+          periodFrom: parsed.periodFrom, periodTo: parsed.periodTo, createdBy: 'SYSTEM',
+        },
+      });
+      await tx.bankDeposit.createMany({
+        data: rows.map(({ d, txHash }) => ({
+          id: newId(), merchantId: input.merchantId, importId, occurredAt: d.occurredAt, depositorName: d.name, depositorKey: d.key,
+          amount: d.amount, memo: d.memo, balance: d.balance, txHash,
+        })),
+        skipDuplicates: true,
+      });
+    });
+  } catch (e) {
+    if ((e as { code?: string }).code === 'P2002') return { status: 'ALREADY' as const, newCount: 0, duplicateCount: parsed.deposits.length, errors: parsed.errors.length };
+    throw e;
+  }
+  const fresh = await prisma.bankDeposit.findMany({ where: { importId }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }] });
+  const result = await matchDeposits(input.merchantId, fresh, { userId: 'SYSTEM', batchId: importId, now: input.now });
+  const counts = { newCount: fresh.length, duplicateCount: parsed.deposits.length - fresh.length, autoMatchedCount: result.autoMatched, suggestedCount: result.suggested, unmatchedCount: result.unmatched };
+  await prisma.bankStatementImport.update({ where: { id: importId }, data: counts });
+  return { status: 'DONE' as const, importId, newCount: counts.newCount, duplicateCount: counts.duplicateCount, errors: parsed.errors.length, autoMatched: result.autoMatched };
+}

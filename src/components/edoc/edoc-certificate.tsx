@@ -23,7 +23,13 @@ export interface CertificateData {
   chainOk: boolean;
   /** 파일 서식: 스냅샷 PDF 를 저장소에서 다시 읽어 pdfHash 와 대조한 결과(열람 때 1회). 파일 서식이 아니면 없음. */
   pdfCheck?: 'ok' | 'mismatch' | 'missing' | null;
-  signers: Array<{ order: number; roleLabel: string; nameMasked: string; phoneMasked: string; signedAt: Date | null; signIp: string | null; signatureUrl: string | null; otpVerifiedAt: Date | null }>;
+  signers: Array<{
+    order: number; roleLabel: string; nameMasked: string; phoneMasked: string; signedAt: Date | null; signIp: string | null; signatureUrl: string | null; otpVerifiedAt: Date | null;
+    /** 휴대폰 본인인증 결과(2026-11-13 5차 L1 — 해시 체인 IDENTITY_VERIFIED 사건). 없으면 표시하지 않는다. */
+    identity?: { method: string; verifiedAt: string; ciHashPrefix: string; mock: boolean; nameMatch: boolean } | null;
+  }>;
+  /** 완료 문서 해시 시점확인(TSA) 상태(5차 L1-4). 없으면 표시하지 않는다(예전 확인서 그대로). */
+  timestamp?: { label: string } | null;
   events: Array<{ at: Date; label: string; who: string; ip: string | null }>;
 }
 
@@ -76,6 +82,11 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
               {s.otpVerifiedAt ? ' · 문자 본인확인' : ''}
               {s.signIp ? ` · ${s.signIp}` : ''}
             </p>
+            {s.identity ? (
+              <p className="mt-0.5 text-[11px] text-ink-500">
+                {s.identity.mock ? '[MOCK] ' : ''}{s.identity.method} · {formatKst(new Date(s.identity.verifiedAt))} · CI 해시 <span className="font-mono">{s.identity.ciHashPrefix}</span>{s.identity.nameMatch ? ' · 이름 일치' : ' · 이름 불일치'}
+              </p>
+            ) : null}
           </div>
         ))}
       </section>
@@ -96,6 +107,7 @@ export function EDocCertificate({ d }: { d: CertificateData }) {
           {d.documentHash ? <div><dt className="inline font-bold text-ink-600">완료본 해시 </dt><dd className="inline break-all font-mono text-ink-500">{d.documentHash}</dd></div> : null}
           {d.lastEventHash ? <div><dt className="inline font-bold text-ink-600">감사추적 끝값 </dt><dd className="inline break-all font-mono text-ink-500">{d.lastEventHash}</dd></div> : null}
           <div><dt className="inline font-bold text-ink-600">해시 연결 </dt><dd className="inline">{d.chainOk ? '정상' : '불일치 — 기관에 문의하세요'}</dd></div>
+          {d.timestamp ? <div><dt className="inline font-bold text-ink-600">시점확인 </dt><dd className="inline">{d.timestamp.label}</dd></div> : null}
         </dl>
         <ol className="mt-3 space-y-0.5 text-[11px] text-ink-600">
           {d.events.map((e, i) => (

@@ -158,6 +158,26 @@ export async function startWebPinCharge(_prev: WebPinState, formData: FormData):
     };
   }
 
+  // 카드 일시후원(2026-11-13 5차 L2, CARD_PAYMENT_ENABLED): 내통장결제 등록 없이 그 번호로 카드 결제창 링크를 보낸다.
+  // 화면이 카드 버튼을 보낼 때만 이 경로다. 꺼져 있으면 createWebCharge 가 거절한다(아래 기존 경로는 그대로).
+  if (String(formData.get('payMethod') ?? '') === 'CARD') {
+    await prisma.payerProfile.upsert({
+      where: { phoneHash: ph },
+      update: {},
+      create: { id: newId(), phoneHash: ph, phoneEnc: encrypt(phone), phoneMasked: masked },
+    });
+    const attributionCard = await currentAttribution();
+    const r = await createWebCharge({
+      phoneHash: ph, merchantId, amount: BigInt(amountRaw), message, requestId, campaignId, anonymous,
+      source: attributionCard?.source ?? 'WEB', contentItemId: attributionCard?.contentItemId ?? null, promoId: attributionCard?.promoId ?? null,
+      paymentMethod: 'CARD',
+    });
+    if (!r.ok || !r.chargeId) return { ok: false, step: 'phone', phoneMasked: masked, message: r.message };
+    await setPinCookie(r.chargeId);
+    await recordMarketingIntent(marketingChecked(formData.get('marketingConsent')), { chargeId: r.chargeId, source: 'DONATE' });
+    return { ok: true, step: 'waiting', phoneMasked: masked, expiresAt: r.pinExpiresAt?.toISOString(), mock: r.pinMock, message: r.message };
+  }
+
   // 결제수단이 등록된 번호인지 먼저 확인한다.
   // 등록되지 않은 번호로는 PIN 링크를 만들 수 없으므로 가입 안내로 보낸다.
   const payer = await prisma.payerProfile.findUnique({ where: { phoneHash: ph }, select: { id: true } });

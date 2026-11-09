@@ -94,6 +94,10 @@ export const MT_TEMPLATE = {
   INQUIRY_ANSWER: 'INQUIRY_ANSWER',
   /** 문자 명령 링크에서 처리한 정기후원 변경·해지 결과(정보성, 2026-11-12 4차 K3) */
   RECURRING_SELF_RESULT: 'RECURRING_SELF_RESULT',
+  /** 웹 후원 카드 결제창 링크(2026-11-13 5차 L2, CARD_PAYMENT_ENABLED). 결제 링크라 문자로만 */
+  CARD_PAYMENT_LINK: 'CARD_PAYMENT_LINK',
+  /** 관계 확장 안내(광고성, 2026-11-13 5차 L4). 동의자·기관 승인 후·문자로만. 알림톡 정보성 템플릿에 넣지 않는다 */
+  RELATIONSHIP_MESSAGE: 'RELATIONSHIP_MESSAGE',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -517,6 +521,26 @@ export function tplInquiryAnswer(input: { merchantName: string; body: string }):
 export function tplRecurringSelfResult(input: { merchantName: string; text: string }): TemplateOutput {
   const text = `[기브싸인] ${input.merchantName} 정기후원 처리 결과입니다. ${input.text.slice(0, 300)}`;
   return { code: MT_TEMPLATE.RECURRING_SELF_RESULT, text, masked: text };
+}
+
+/** 웹 후원 카드 결제창 링크(5차 L2). 링크를 연 사람(번호 주인)만 카드로 결제한다. */
+export function tplCardPaymentLink(input: { merchantName: string; amount: bigint; link: string; ttlMin: number; mock: boolean }): TemplateOutput {
+  const tag = input.mock ? ' [MOCK]' : '';
+  const text = withLink(
+    `[기브싸인]${tag} ${input.merchantName}에 ${formatNumber(input.amount)}원 카드 후원을 진행합니다. 아직 결제되지 않았습니다. 카드 결제 링크: `,
+    `${input.link} (유효시간: ${input.ttlMin}분)`,
+  );
+  return { code: MT_TEMPLATE.CARD_PAYMENT_LINK, text, masked: maskLink(text) };
+}
+
+/**
+ * 관계 확장 안내(광고성, 5차 L4). 맨 앞 "(광고)", 끝에 무료 수신 거부 방법. 본문은 관계 안내 서비스가 정한 고정 문안이다.
+ * (정보통신망법 제50조 — 표기 위치·야간 제한은 relationship-messages.ts 가 지킨다. 법무 확인 전에는 전역 스위치가 꺼져 있다)
+ */
+export function tplRelationshipMessage(input: { body: string; optOutLink: string; optOut080?: string | null }): TemplateOutput {
+  const tail = input.optOut080 ? `무료 수신거부 ${input.optOut080} 또는 ` : '무료 수신거부: ';
+  const text = withLink(`(광고)[기브싸인] ${input.body}\n${tail}`, input.optOutLink);
+  return { code: MT_TEMPLATE.RELATIONSHIP_MESSAGE, text, masked: maskLink(text) };
 }
 
 export function tplVolunteerReceived(input: { merchantName: string }): TemplateOutput {
@@ -1023,6 +1047,20 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     description: '문자 "문의" 로 접수한 문의에 기관이 답하거나 자동 답변이 나가면 답변 내용을 문자로 보냅니다.',
     editable: false,
     defaultBody: '{사회복지기관} 문의 답변입니다. (답변 내용)',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.CARD_PAYMENT_LINK]: {
+    label: '카드 후원 결제 링크 (웹 후원)',
+    description: '웹 후원에서 카드를 고르면 그 번호로 카드 결제창 링크를 보냅니다. 링크가 들어가므로 본문을 바꾸지 않습니다.',
+    editable: false,
+    defaultBody: '{사회복지기관}에 카드 후원을 진행합니다. 아직 결제되지 않았습니다. 카드 결제 링크: [보안링크]',
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.RELATIONSHIP_MESSAGE]: {
+    label: '관계 확장 안내 (광고성 — 동의자·기관 승인 후)',
+    description: '(선택) 소식 수신에 동의한 후원자에게만, 기관이 승인한 뒤 문자로 보냅니다. 맨 앞 (광고)·끝에 무료 수신 거부. 법무 확인 전에는 전역 스위치가 꺼져 있어 보내지 않습니다.',
+    editable: false,
+    defaultBody: '(광고) {사회복지기관} 안내 ... 무료 수신거부: [링크]',
     variables: [V.merchant],
   },
   [MT_TEMPLATE.RECURRING_SELF_RESULT]: {

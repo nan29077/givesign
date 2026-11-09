@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { FileSignature, Pencil, Package, Truck } from 'lucide-react';
+import { FileSignature, Pencil, Package, Truck, CreditCard } from 'lucide-react';
 import { cx } from '@/components/ui';
 import { formatWon } from '@/lib/money';
 import { confirmChargeAmountAction, type SelectAmountState } from '@/app/actions/charge-select';
@@ -82,6 +82,8 @@ export function SelectAmountPanel({
   suggestedCampaignId = null,
   suggestedAmount = null,
   suggestionNote = null,
+  cardOption = null,
+  quickRepeat = null,
 }: {
   token: string;
   merchantName: string;
@@ -110,6 +112,10 @@ export function SelectAmountPanel({
   suggestedCampaignId?: string | null;
   suggestedAmount?: string | null;
   suggestionNote?: string | null;
+  /** 카드 일시후원 선택지(2026-11-13 5차 L2, CARD_PAYMENT_ENABLED). null 이면 예전 화면 그대로 */
+  cardOption?: { mock: boolean } | null;
+  /** 지난번 방법으로 후원(5차 L2-4, MO_QUICK_REPEAT_ENABLED). 금액만 미리 고른다 — PIN 은 그대로 */
+  quickRepeat?: { productId: string | null; amount: string; label: string } | null;
 }) {
   const [campaignId, setCampaignId] = React.useState(defaultCampaignId ?? suggestedCampaignId ?? '');
   const [anonymous, setAnonymous] = React.useState(false);
@@ -632,6 +638,20 @@ export function SelectAmountPanel({
         </div>
       ) : null}
 
+      {quickRepeat && !state.ok ? (
+        <form action={formAction} className="rounded-2xl border border-brand-200 bg-brand-50/60 p-3.5">
+          <input type="hidden" name="token" value={token} />
+          <input type="hidden" name="reconsentTypes" value={agreedTypes.join(',')} />
+          <input type="hidden" name="productId" value={quickRepeat.productId ?? ''} />
+          <input type="hidden" name="customAmount" value={quickRepeat.productId ? '' : quickRepeat.amount} />
+          <p className="text-[13px] font-bold text-ink-900">지난번 방법으로 후원</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-600">{quickRepeat.label} · 다음 화면에서 PIN 을 입력해야 결제됩니다.</p>
+          <button type="submit" disabled={!reconsentDone || pending} className="mt-2 inline-flex h-12 w-full items-center justify-center rounded-xl bg-brand-400 text-[15px] font-extrabold text-ink-900 hover:bg-brand-500 disabled:cursor-not-allowed disabled:bg-ink-100 disabled:text-ink-300">
+            {formatWon(BigInt(quickRepeat.amount))} 지난번처럼 후원하기
+          </button>
+        </form>
+      ) : null}
+
       <form action={formAction}>
         <input type="hidden" name="token" value={token} />
         <input type="hidden" name="reconsentTypes" value={agreedTypes.join(',')} />
@@ -676,6 +696,21 @@ export function SelectAmountPanel({
                     ? '옵션을 선택해 주세요'
                     : '상품을 선택해 주세요'}
         </button>
+        {cardOption && !isPhysical ? (
+          <div className="mt-2 space-y-1">
+            <button
+              type="submit"
+              name="payMethod"
+              value="CARD"
+              disabled={!valid || !reconsentDone || pending || state.ok}
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-ink-200 bg-white text-[15px] font-bold text-ink-800 hover:bg-ink-50 disabled:cursor-not-allowed disabled:text-ink-300"
+            >
+              <CreditCard size={17} strokeWidth={1.7} />
+              카드로 후원
+            </button>
+            <p className="text-center text-[11.5px] text-ink-400">카드는 일시후원만 됩니다.{cardOption.mock ? ' [MOCK] 카드사 연동 전 — 실제 승인은 일어나지 않습니다.' : ''}</p>
+          </div>
+        ) : null}
       </form>
 
       <p className="text-[11.5px] leading-relaxed text-ink-400">

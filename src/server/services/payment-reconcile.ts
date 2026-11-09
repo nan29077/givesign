@@ -11,6 +11,8 @@ import * as tpl from './mt-templates';
 import { emitChargePaid } from './charge-events';
 import { recordFunnelStep } from './funnel';
 import { campaignThanksText } from './campaign-after-end';
+import { isCardProvider } from '@/server/adapters/payment/card';
+import { calculateCardFees } from './card-fees';
 
 /**
  * 결과 미확인(UNKNOWN / TIMEOUT) 결제의 수동 대사.
@@ -59,6 +61,7 @@ export async function reconcileUnknownPayment(
       amount: true,
       requestedAt: true,
       chargeId: true,
+      provider: true,
     },
   });
   if (!txn) throw new Error('결제 거래를 찾을 수 없습니다.');
@@ -102,6 +105,8 @@ type TxnRow = {
   amount: bigint;
   requestedAt: Date;
   chargeId: string;
+  /** 카드 거래(card:*)는 카드 수수료 정책으로 계산한다(2026-11-13 5차 L2). 그 밖은 예전 그대로. */
+  provider?: string;
 };
 
 type ChargeRow = {
@@ -134,7 +139,7 @@ async function confirmApproved(txn: TxnRow, charge: ChargeRow, memo: string): Pr
   }
 
   const approvedAt = new Date();
-  const fees = await calculateFees(charge.merchantId, charge.amount);
+  const fees = isCardProvider(txn.provider) ? await calculateCardFees(charge.merchantId, charge.amount) : await calculateFees(charge.merchantId, charge.amount);
 
   await prisma.$transaction(async (tx) => {
     // 조건부 갱신으로 이 건을 **선점**한다.

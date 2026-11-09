@@ -1,4 +1,5 @@
 import { prisma } from '@/server/db';
+import { assertIdentityForRecurring } from './identity';
 import { kv } from '@/server/redis';
 import { kstDateKey, kstMonthKey } from '@/lib/datetime';
 import { AGREEMENT_CHANGES_PER_DAY } from './agreements';
@@ -116,6 +117,8 @@ export interface ApplyMeta {
 export async function applyRecurringChange(scope: SelfServiceScope, id: string, after: RecurringAfter, meta: ApplyMeta = {}, now = new Date()): Promise<{ message: string; description: RecurringChangeDescription }> {
   const r = await scopedRecurring(scope, id);
   await assertStepUp(stepUpSubjectOf(scope));
+  // 해지·변경은 휴대폰 재확인에 더해 본인인증(2026-11-13 5차 L1, IDENTITY_REQUIRED_FOR_RECURRING — 꺼짐이면 그대로)
+  if (after.action === 'CHANGE' || after.action === 'CANCEL') await assertIdentityForRecurring(r.payerId);
   // 같은 약정에 동시에 들어온 변경(두 번 누름·두 화면)은 하나만 처리한다. 상태는 잡은 뒤 다시 읽는다.
   const lockKey = `selfsvc:lock:${r.id}`;
   if (!(await kv.setnx(lockKey, String(Date.now()), 30))) throw new SelfServiceError('같은 정기후원의 다른 변경을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.');

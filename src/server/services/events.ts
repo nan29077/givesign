@@ -67,7 +67,7 @@ export const DOMAIN_EVENT_TYPES = [
   'content.published',
   /** 약정서 전자서명 완료 — agreements.ts. 소비자: merchant-alert */
   'agreement.signed',
-  /** 전자문서 봉투 완료 — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign·bundle-status(문서 묶음 상태, 4차 J) */
+  /** 전자문서 봉투 완료 — edoc.ts(같은 트랜잭션). 소비자: purpose-document-sign·bundle-status(문서 묶음 상태, 4차 J)·document-timestamp(시점확인 자리, 5차 L) */
   'document.signed',
   /** 연초: 지난해 후원자 중 영수증 정보 미등록자(영수증 배치가 낸다). 소비자: journeys */
   'receipt.info_needed',

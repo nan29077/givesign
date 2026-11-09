@@ -117,6 +117,18 @@ export const CRON_JOBS: CronDef[] = [
     intervalSec: 86_400, lockTtlSec: 900,
     description: '자가 진단 — SNS 연결 만료 7일 전 안내, 전자문서 잔액 7일 안 소진 예상, 문자 후원 수신 급감(같은 요일 평균 30% 미만) 기관·관리자 알림(같은 알림 1회)',
   },
+  {
+    // 2026-11-13 5차 L3 — BANK_FEED_ENABLED 꺼짐이면 일하지 않음
+    name: 'bank-feed', path: '/api/cron/bank-feed', schedule: '매일 07:30 (BANK_FEED_ENABLED 일 때만 일함)', eventBridge: 'cron(30 22 * * ? *)',
+    intervalSec: 86_400, lockTtlSec: 900,
+    description: '기관 통장 거래내역 자동 조회(오픈뱅킹·펌뱅킹 계약 전 — mock 은 연동 안 됨) → 입금 맞추기 표(파일과 같은 정규화·중복 해시)',
+  },
+  {
+    // 2026-11-13 5차 L4 — 전역 스위치 relationship_messages.enabled 꺼짐이면 일하지 않음
+    name: 'relationship', path: '/api/cron/relationship', schedule: '1시간마다(관계 안내 켜짐일 때만 일함)', eventBridge: 'cron(35 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 600,
+    description: '관계 확장 안내(광고) — 동의자 주간 대상 묶음 승인 요청, 승인분 문자 발송(야간 21~8시 금지·월 1회·정보성과 같은 날 피함), 수신 거부율 2% 초과 자동 중지',
+  },
 ];
 
 export function cronDef(name: string): CronDef | undefined {

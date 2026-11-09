@@ -4,7 +4,8 @@ import { requireMerchant, writeAudit } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { PageHeader } from '@/components/layout/console-shell';
 import { PrintButton } from '@/components/receipts/print-button';
-import { EDocCertificate } from '@/components/edoc/edoc-certificate';
+import { EDocCertificate, type CertificateData } from '@/components/edoc/edoc-certificate';
+import { TIMESTAMP_STATUS_LABEL, timestampLabel } from '@/server/services/document-timestamp';
 import { checkSnapshotPdf, edocEventLabel, edocRoleLabel, envelopeValues, readSnapshot, snapshotPdfHref, verifyEnvelopeChain } from '@/server/services/edoc';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,14 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
   const [values, chain, pdfCheck] = await Promise.all([envelopeValues(e.id), verifyEnvelopeChain(e.id), checkSnapshotPdf(snapshot)]);
   await writeAudit({ adminUserId: user.id, action: 'EDOC_CERTIFICATE_VIEW', targetType: 'edoc_envelope', targetId: e.id });
   const who = new Map(e.signers.map((s) => [s.id, `${edocRoleLabel[s.role]} ${s.nameMasked}`]));
+  // 본인인증 결과(5차 L1)는 해시 체인 사건에서 읽는다 — 서명자마다 마지막 것
+  const identityOf = new Map<string, NonNullable<CertificateData['signers'][number]['identity']>>();
+  for (const ev of e.events) {
+    if (ev.type !== 'IDENTITY_VERIFIED' || !ev.signerId || !ev.detail) continue;
+    const d = ev.detail as Record<string, unknown>;
+    identityOf.set(ev.signerId, { method: String(d.method ?? '휴대폰 본인인증'), verifiedAt: String(d.verifiedAt ?? ev.createdAt.toISOString()), ciHashPrefix: String(d.ciHashPrefix ?? ''), mock: d.mock === true, nameMatch: d.nameMatch === true });
+  }
+  const tsLabel = e.status === 'COMPLETED' ? ((await timestampLabel(e.id)) ?? TIMESTAMP_STATUS_LABEL.NOT_CONNECTED) : null;
   return (
     <>
       <div className="print:hidden">
@@ -44,7 +53,8 @@ export default async function EDocCertificatePage({ params }: { params: Promise<
           lastEventHash: e.lastEventHash,
           chainOk: chain.ok,
           pdfCheck,
-          signers: e.signers.map((s) => ({ order: s.order, roleLabel: edocRoleLabel[s.role], nameMasked: s.nameMasked, phoneMasked: s.phoneMasked, signedAt: s.signedAt, signIp: s.signIp, signatureUrl: s.signatureUrl, otpVerifiedAt: s.otpVerifiedAt })),
+          signers: e.signers.map((s) => ({ order: s.order, roleLabel: edocRoleLabel[s.role], nameMasked: s.nameMasked, phoneMasked: s.phoneMasked, signedAt: s.signedAt, signIp: s.signIp, signatureUrl: s.signatureUrl, otpVerifiedAt: s.otpVerifiedAt, identity: identityOf.get(s.id) ?? null })),
+          timestamp: tsLabel ? { label: tsLabel } : null,
           events: e.events.filter((ev) => ev.type !== 'VALUES_VIEWED').map((ev) => ({ at: ev.createdAt, label: edocEventLabel[ev.type] ?? ev.type, who: ev.signerId ? who.get(ev.signerId) ?? '' : '', ip: ev.ip })),
         }}
       />
