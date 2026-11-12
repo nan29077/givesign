@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { requireMerchant, writeAudit } from '@/server/auth';
 import { prisma } from '@/server/db';
 import { logger } from '@/lib/logger';
@@ -23,6 +24,7 @@ import {
   saveContentSetting,
   schedulePublish,
   updateContentDraft,
+  reassembleContentVideo,
   CONTENT_KINDS,
 } from '@/server/services/content';
 import { PLATFORMS } from '@/server/adapters/sns';
@@ -211,8 +213,13 @@ export async function requestContentAction(_p: StudioActionState, f: FormData) {
 export async function updateContentAction(_p: StudioActionState, f: FormData) {
   return withMerchant(async (merchantId) => {
     const id = text(f, 'id');
-    await updateContentDraft(merchantId, id, { captions: f.getAll('scene').map(String), caption: String(f.get('caption') ?? '') });
+    const updated = await updateContentDraft(merchantId, id, { captions: f.getAll('scene').map(String), caption: String(f.get('caption') ?? '') });
     revalidatePath(`/studio/content/${id}`);
+    if (updated.kind === 'SHORTFORM') {
+      // 영상은 응답을 보낸 뒤 만든다(요청을 붙잡지 않음). 끊기면 이벤트 배치(1분)·콘텐츠 배치가 이어 만든다(2026-11-12).
+      after(() => reassembleContentVideo(id).then(() => undefined).catch(() => undefined));
+      return { ok: true, message: '수정 내용으로 장면을 다시 그렸습니다. 영상은 잠시 뒤(보통 1~2분) 준비되고, 준비되면 승인할 수 있습니다.' };
+    }
     return { ok: true, message: '수정 내용으로 장면을 다시 그렸습니다. 검토 후 승인해 주세요.' };
   });
 }

@@ -50,15 +50,16 @@ function buildGroups(pending: {
         { href: '/studio/charges', label: '후원 내역', icon: 'charges' },
         // 기관 통장 계좌이체·CMS 입금을 거래내역 파일로 후원자와 맞춘다(2026-11-09 E)
         { href: '/studio/deposits', label: '입금 맞추기', icon: 'deposits' },
-        { href: '/studio/supporters', label: '후원자·봉사자', icon: 'supporters' },
-        // 기관 후원 회원(후원페이지 로그인 회원)과 후원자별 상세 분석
-        { href: '/studio/donors', label: '후원자 관리·회원', icon: 'donors' },
+        // 메뉴 이름 정리(2026-11-12 결정): 한 사람 기준 통합 명단 = "후원자·봉사자 명단",
+        // 후원자별 누적·정기·영수증 준비 + 후원페이지 회원 = "후원자별 현황·회원". 아이콘도 후원 내역과 겹치지 않게.
+        { href: '/studio/supporters', label: '후원자·봉사자 명단', icon: 'supporters' },
+        { href: '/studio/donors', label: '후원자별 현황·회원', icon: 'donors' },
         { href: '/studio/recurring', label: '정기후원', icon: 'recurring' },
         ...(volunteer ? [{ href: '/studio/volunteers', label: '자원봉사', icon: 'volunteers' as const, badge: pending.volunteers }] : []),
         { href: '/studio/agreements', label: '약정서·신청서', icon: 'agreements' },
         { href: '/studio/messages', label: '문자 관리', icon: 'messages' },
         // 문자 '문의' 로 접수한 문의 응대·자동 답변 설정(2026-11-12 4차 K4)
-        { href: '/studio/inquiries', label: '문의 응대', icon: 'messages' },
+        { href: '/studio/inquiries', label: '문의 응대', icon: 'inquiries' },
       ],
     },
     {

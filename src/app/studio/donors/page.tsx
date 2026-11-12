@@ -18,7 +18,7 @@ const SORTS = ['recent', 'amount', 'count'] as const;
 type Sort = (typeof SORTS)[number];
 
 /**
- * 후원자 관리.
+ * 후원자별 현황·회원 (메뉴 이름 2026-11-12 정리 — 예전 "후원자 관리·회원").
  *
  * 기관이 보는 후원자 정보는 표시 이름 · 마스킹 번호 · 누적 · 최근 후원 · 정기후원 여부 · 영수증 정보 등록 여부까지다.
  * 전화번호 원문과 주민등록번호는 어떤 화면에서도 보여 주지 않는다.
@@ -100,7 +100,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
 
   return (
     <>
-      <PageHeader title="후원자 관리" description="기관에 후원한 분들의 누적·최근 후원과 정기후원·영수증 준비 상태입니다. 전화번호 원문은 표시하지 않습니다." />
+      <PageHeader title="후원자별 현황·회원" description="기관에 후원한 분들의 누적·최근 후원과 정기후원·영수증 준비 상태, 후원페이지 회원입니다. 봉사자·기관 명단까지 한 사람 기준으로 모은 목록은 후원자·봉사자 명단에서 봅니다. 전화번호 원문은 표시하지 않습니다." />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="전체 후원자" value={`${formatNumber(totalDonors)}명`} tone="brand" />
@@ -109,7 +109,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
         <StatTile label="영수증 정보 등록" value={`${formatNumber(receiptReady.size)}명`} sub="기부금영수증 발급 가능" />
       </div>
       <p className="-mt-2 mb-4 text-[12.5px] text-ink-500">
-        {offlineOnly ? <>계좌이체만 한 후원자 <Link href="/studio/supporters" className="font-bold underline">{formatNumber(offlineOnly)}명</Link>은 후원자·봉사자 화면에 있습니다. · </> : null}
+        {offlineOnly ? <>계좌이체만 한 후원자 <Link href="/studio/supporters" className="font-bold underline">{formatNumber(offlineOnly)}명</Link>은 후원자·봉사자 명단에 있습니다. · </> : null}
         후원페이지 회원 <strong className="text-ink-800">{formatNumber(memberCount)}명</strong> · 아래 표의 <Badge tone="brand">회원</Badge> 표시는 휴대폰을 인증해 후원 내역이 연결된 회원입니다.
       </p>
 

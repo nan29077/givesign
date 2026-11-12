@@ -6,7 +6,7 @@ import { ImageUploadField } from './image-upload-field';
 import { CampaignCardNews } from '@/components/public/campaign-card-news';
 import { hasCardGuidance, readCampaignCards, type CampaignCard } from '@/lib/fundraising';
 import { DONATION_BANNERS } from '@/lib/visual-presets';
-import { campaignStoryCards, CAMPAIGN_STORY_FLOW } from '@/lib/campaign-storytelling';
+import { campaignStoryCards, CAMPAIGN_STORY_FLOW, CAMPAIGN_STORY_GUIDE } from '@/lib/campaign-storytelling';
 
 type Entry = CampaignCard & { key: number };
 const emptyCard = (): CampaignCard => ({ imageUrl: '', title: '', body: '', alt: '', layout: 'editorial', theme: 'cream' });
@@ -59,9 +59,20 @@ export function CampaignCardEditor({ initial }: { initial?: unknown }) {
     <div className="mt-5 rounded-2xl bg-[#faf5e9] p-5">
       <p className="text-sm font-black text-ink-900">이야기로 공감하고, 후원으로 이어지는 캠페인</p>
       <p className="mt-2 text-xs leading-6 text-ink-600">{CAMPAIGN_STORY_FLOW}. 큰 제목과 이미지, 짧은 문단을 번갈아 배치합니다.</p>
-      <p className="mt-1 text-xs leading-6 text-ink-500">입력한 제목·소개·이야기·사용 계획으로 6장을 구성합니다. 빈 항목에는 작성 안내가 들어가며, 안내 문구를 실제 내용으로 바꿔야 저장됩니다.{cards.length ? '현재 카드를 교체하려면 먼저 모두 삭제해 주세요.' : '본문을 먼저 입력하면 카드에도 반영됩니다.'}</p>
+      <p className="mt-1 text-xs leading-6 text-ink-500">입력한 제목·소개·이야기·사용 계획으로 6장을 구성합니다. 빈 항목에는 작성 안내가 들어가며, 안내 문구를 실제 내용으로 바꿔야 저장됩니다. {cards.length ? '현재 카드를 교체하려면 먼저 모두 삭제해 주세요.' : '본문을 먼저 입력하면 카드에도 반영됩니다.'}</p>
       <button type="button" disabled={cards.length > 0} onClick={buildStory} className="mt-3 rounded-xl bg-brand-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">캠페인 내용으로 스토리형 6장 만들기</button>
-      <a href="https://www.worldvision.or.kr/campaign/26-1000girls" target="_blank" rel="noreferrer" className="ml-3 inline-block text-xs font-bold text-brand-700 underline underline-offset-4">참고 캠페인 보기</a>
+      <details className="mt-4 rounded-xl bg-white/70 px-4 py-3">
+        <summary className="cursor-pointer text-xs font-bold text-brand-700">6장 구성 예시 보기</summary>
+        <p className="mt-2 text-xs leading-5 text-ink-500">아래 예시는 가상의 사업입니다. 카드에 자동으로 들어가지 않으니 기관의 실제 내용으로 작성해 주세요.</p>
+        <ol className="mt-2 space-y-2">
+          {CAMPAIGN_STORY_GUIDE.map((g, i) => (
+            <li key={g.step} className="text-xs leading-5 text-ink-700">
+              <span className="font-bold text-ink-900">{i + 1}. {g.step}</span> — {g.tip}
+              <span className="mt-0.5 block text-ink-500">예) {g.example}</span>
+            </li>
+          ))}
+        </ol>
+      </details>
     </div>
     {!cards.length ? <div className="mt-5 rounded-2xl bg-[#f6f8f2] p-5">
       <p className="text-sm font-bold">이야기 템플릿으로 시작하기</p><p className="mt-1 text-xs leading-6 text-ink-500">사진·내용·색상은 모두 바꿀 수 있습니다. 예시 문구는 기관의 실제 계획에 맞게 수정해 주세요.</p>

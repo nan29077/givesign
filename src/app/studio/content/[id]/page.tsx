@@ -1,3 +1,4 @@
+import { RefreshWhile } from '@/components/studio/refresh-while';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireMerchant } from '@/server/auth';
@@ -11,7 +12,7 @@ import { formatKst, kstDateKey } from '@/lib/datetime';
 import { formatWon } from '@/lib/money';
 import { PLATFORM_KINDS, PLATFORM_LABEL, PLATFORMS, snsIsMock } from '@/server/adapters/sns';
 import { kindFormat } from '@/server/adapters/content';
-import { CONTENT_KIND_LABEL, CONTENT_STATUS_LABEL, PUBLISH_STATUS_LABEL, contentConversions, renderCaption, type Scene } from '@/server/services/content';
+import { CONTENT_KIND_LABEL, CONTENT_STATUS_LABEL, PUBLISH_STATUS_LABEL, REASSEMBLE_STEP, contentConversions, renderCaption, type Scene } from '@/server/services/content';
 import {
   approveContentAction,
   archiveContentAction,
@@ -64,7 +65,11 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
   const editable = item.status === 'REVIEW' || item.status === 'APPROVED';
   const canPublish = ['APPROVED', 'SCHEDULED', 'PUBLISHED'].includes(item.status);
   const voice = item.jobs.find((j) => j.step === 'VOICE')?.output as { available?: boolean; note?: string } | undefined;
-  const assemble = item.jobs.find((j) => j.step === 'ASSEMBLE')?.output as { available?: boolean; note?: string } | undefined;
+  // 담당자 수정 뒤 재조립 기록이 있으면 그것이 지금 영상의 상태다(2026-11-12 — 요청 밖에서 조립).
+  const rebuildJob = item.jobs.find((j) => j.step === REASSEMBLE_STEP);
+  const rebuilding = item.kind === 'SHORTFORM' && (rebuildJob?.status === 'QUEUED' || rebuildJob?.status === 'RUNNING');
+  const rebuildFailed = item.kind === 'SHORTFORM' && rebuildJob?.status === 'FAILED';
+  const assemble = ((rebuildJob?.status === 'DONE' ? rebuildJob.output : null) ?? item.jobs.find((j) => j.step === 'ASSEMBLE')?.output) as { available?: boolean; note?: string } | undefined;
   const connected = new Set(channels.map((c) => c.platform));
   const platforms = PLATFORMS;
   const captionTargets = PLATFORMS.filter((p) => PLATFORM_KINDS[p].includes(item.kind));
@@ -115,7 +120,12 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
               <p className="mb-1.5 text-[12.5px] font-bold text-ink-700">조립된 영상 (9:16 mp4)</p>
               <video src={item.videoUrl} controls preload="metadata" className="mx-auto aspect-[9/16] w-full max-w-[300px] rounded-2xl bg-ink-900" />
             </div>
+          ) : rebuilding ? (
+            <Notice tone="brand" title="영상 준비 중">고친 자막으로 영상을 다시 만들고 있습니다(보통 1~2분). 이 화면은 준비되면 저절로 바뀝니다. 영상이 준비된 뒤 승인할 수 있습니다.</Notice>
+          ) : rebuildFailed ? (
+            <Notice tone="warning" title="영상을 다시 만들지 못했습니다">자막을 한 번 더 저장하면 다시 시도합니다. 계속 실패하면 콘텐츠를 다시 만들어 주세요.</Notice>
           ) : item.kind === 'SHORTFORM' ? <Notice tone="warning" title="영상 파일이 아직 없습니다">아래 장면은 영상 제작용 미리보기입니다. 영상 생성 상태를 확인한 뒤 다시 만들어 주세요.</Notice> : null}
+          <RefreshWhile active={rebuilding} />
           {item.kind === 'SHORTFORM' ? <details className="mt-4"><summary className="cursor-pointer text-sm font-bold text-ink-700">영상 장면·자막 보기</summary><div className="mt-3"><ScenePlayer scenes={scenes} format={format} /></div></details> : <ScenePlayer scenes={scenes} format={format} />}
           <div className="mt-4 space-y-1.5 text-[12.5px]">
             {item.kind === 'SHORTFORM' ? (
@@ -170,6 +180,7 @@ export default async function StudioContentDetailPage({ params }: { params: Prom
             ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {item.status === 'REVIEW' ? (
+                rebuilding ? <p className="text-[13px] font-bold text-ink-500">영상 준비가 끝나면 승인할 수 있습니다.</p> :
                 <ActionForm action={approveContentAction} submitLabel="승인" confirmMessage="이 콘텐츠를 기관 명의 게시물로 승인합니다.">
                   <input type="hidden" name="id" value={item.id} />
                   {pastDue ? (

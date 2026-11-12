@@ -168,7 +168,7 @@ export async function receiptInfoGroup(ctx: InboxGroupContext): Promise<InboxExc
     href: '/studio/receipts',
     recommendedAction: s.contactable.length
       ? `${s.contactable.length}명에게 영수증 정보 등록 방법을 안내하세요. 등록하면 다음 영수증 준비에 포함됩니다.`
-      : '연락이 닿지 않는 후원자는 후원자 관리에서 연락처·수신 여부를 확인하세요.',
+      : '연락이 닿지 않는 후원자는 후원자별 현황에서 연락처·수신 여부를 확인하세요.',
     actions: s.contactable.length ? [{ label: `${s.contactable.length}명에게 등록 안내 보내기`, action: 'receipt.send_info', payload: { taxYear: String(taxYear) } }] : [],
     severity: month <= 2 ? 'high' : 'normal',
   };

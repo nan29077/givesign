@@ -56,9 +56,9 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
   return (
     <>
       <PageHeader
-        title="후원자·봉사자"
+        title="후원자·봉사자 명단"
         description="후원·정기 약정·자원봉사·기관 명단을 한 사람 기준으로 모아 봅니다. 세그먼트로 다음에 할 일을 고르세요. 전화번호 원문은 표시하지 않습니다."
-        action={<Link href="/studio/donors" className="text-[13px] font-bold text-brand-700">후원자 상세 분석</Link>}
+        action={<Link href="/studio/donors" className="text-[13px] font-bold text-brand-700">후원자별 현황·회원</Link>}
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
@@ -99,7 +99,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
           <input type="hidden" name="seg" value={seg} />
           {consentOnly ? <input type="hidden" name="consent" value="1" /> : null}
           {nextOnly ? <input type="hidden" name="next" value="1" /> : null}
-          <Input name="q" defaultValue={q} aria-label="후원자·봉사자 검색" placeholder="이름 · 번호 끝자리 · 태그" />
+          <Input name="q" defaultValue={q} aria-label="후원자·봉사자 명단 검색" placeholder="이름 · 번호 끝자리 · 태그" />
           <Select name="role" aria-label="구성원 구분" defaultValue={role}>
             <option value="all">구분 전체</option>
             {(['DONOR', 'VOLUNTEER', 'BOTH', 'CONTACT'] as const).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}

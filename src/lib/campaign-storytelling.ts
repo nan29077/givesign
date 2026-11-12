@@ -1,7 +1,20 @@
 import type { CampaignCard } from './fundraising';
 
-/** 참고 캠페인의 편집 흐름만 적용한다. 사례·수치·문구는 기관이 입력한 자료로 채운다. */
+/** 스토리형 카드뉴스의 편집 흐름. 사례·수치·문구는 기관이 입력한 자료로 채운다. */
 export const CAMPAIGN_STORY_FLOW = '핵심 메시지 → 사연 → 필요한 도움 → 후원으로 만드는 변화 → 사용 계획 → 참여 안내';
+
+/**
+ * 6장 구성 예시(편집기 "구성 예시 보기"). 다른 단체 캠페인 외부 링크 대신 화면 안에서 보여 준다(2026-11-12 결정).
+ * 예시 문장은 가상의 사업이며 카드에 자동으로 넣지 않는다.
+ */
+export const CAMPAIGN_STORY_GUIDE: ReadonlyArray<{ step: string; tip: string; example: string }> = [
+  { step: '핵심 메시지', tip: '캠페인 제목과 한 문장 소개. 무엇을 위해 모으는지 바로 보이게.', example: '홀몸 어르신 300가구에 겨울 김장김치를 전합니다' },
+  { step: '사연', tip: '도움이 필요한 상황을 확인된 사실로. 개인을 알아볼 수 있는 정보는 넣지 않습니다.', example: '혼자 겨울을 나는 어르신 가구가 지난해보다 늘었습니다.' },
+  { step: '필요한 도움', tip: '왜 지금 도움이 필요한지, 무엇이 모자란지.', example: '배추·양념값이 올라 올해는 준비할 수 있는 양이 절반에 그칩니다.' },
+  { step: '후원으로 만드는 변화', tip: '후원으로 할 활동과 기대하는 변화. 아직 일어나지 않은 일을 성과처럼 쓰지 않습니다.', example: '모인 후원금으로 김장 재료를 사서 봉사자와 함께 담가 전합니다.' },
+  { step: '사용 계획', tip: '항목·일정·예산 등 기관이 확인한 계획.', example: '재료비 70% · 용기·배송 20% · 행사 운영 10%, 12월 둘째 주 전달' },
+  { step: '참여 안내', tip: '후원 방법 안내. 기본 문구가 자동으로 들어갑니다.', example: '아래 후원하기에서 캠페인에 참여해 주세요.' },
+];
 
 export function campaignStoryCards(input: {
   title: string; summary: string; story: string; usagePlan: string; imageUrl?: string;

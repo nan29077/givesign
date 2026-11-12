@@ -72,7 +72,7 @@ export default async function StudioDepositsPage() {
 
       <div className="mb-4">
         <Notice tone="brand" title="기브싸인 결제와 따로 셉니다">
-          통장으로 바로 들어온 돈은 기브싸인이 받은 돈이 아니어서 정산·후원 내역·캠페인 모금액에는 들어가지 않습니다. 후원자 관리와 대시보드에는 &quot;계좌이체&quot; 로 나눠 보입니다. 감사 안내는{' '}
+          통장으로 바로 들어온 돈은 기브싸인이 받은 돈이 아니어서 정산·후원 내역·캠페인 모금액에는 들어가지 않습니다. 후원자별 현황과 대시보드에는 &quot;계좌이체&quot; 로 나눠 보입니다. 감사 안내는{' '}
           <Link href="/studio/journeys" className="font-bold underline">자동 안내</Link> 의 &quot;계좌이체 확인분에도 보내기&quot; 를 켰을 때만 나갑니다(기본 끔).
         </Notice>
       </div>

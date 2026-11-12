@@ -24,6 +24,7 @@ import {
   Inbox,
   Workflow,
   Landmark,
+  UserRoundSearch,
 } from 'lucide-react';
 import { Logo } from '@/components/brand/logo';
 import { ConsoleCornerMascot, MascotAccent } from '@/components/brand/mascot-decorations';
@@ -108,7 +109,7 @@ const CONSOLE_ICONS = {
   campaigns: Megaphone,
   recurring: Repeat,
   receipts: ReceiptText,
-  donors: HeartHandshake,
+  donors: UserRoundSearch,
   building: Building2,
   supporters: Contact,
   volunteers: HandHeart,

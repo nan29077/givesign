@@ -9,7 +9,7 @@ import { mockContentAdapter, renderSceneSvg } from '@/server/adapters/content';
 import { assembleVideo } from '@/server/adapters/content/video';
 import { prisma } from '@/server/db';
 import { newId } from '@/lib/id';
-import { updateContentDraft } from '@/server/services/content';
+import { reassembleContentVideo, updateContentDraft } from '@/server/services/content';
 import { resetDb, seedBasics } from './helpers';
 
 it('캠페인의 사연·필요·변화·사용 계획을 각 카드에 담고 구간 이름을 보존한다', () => {
@@ -50,7 +50,8 @@ it('설정 없이도 기본 FFmpeg로 자막이 포함된 9:16 MP4를 실제 생
   }
 }, 60000);
 
-it('숏폼 자막을 수정하면 새 장면으로 MP4를 조립하고 이전 영상과 승인 상태를 교체한다', async () => {
+it('숏폼 자막을 수정하면 요청 안에서는 이전 영상만 비우고, 재조립 작업이 새 장면으로 MP4를 만든다', async () => {
+  // 2026-11-12 결정: 요청 안에서 MP4 를 다시 조립하지 않는다(재조립은 응답 뒤·배치).
   await resetDb();
   const fx = await seedBasics();
   const id = newId();
@@ -61,10 +62,15 @@ it('숏폼 자막을 수정하면 새 장면으로 MP4를 조립하고 이전 �
   const assemble = vi.spyOn(mockContentAdapter, 'assemble').mockResolvedValue({ available: true, note: '새 자막 영상', costKrw: 0, videoUrl: '/api/media/revised.mp4' });
   try {
     const result = await updateContentDraft(fx.merchantId, id, { captions: ['수정한 자막'], caption: '후원하기 {링크}\nAI 생성 콘텐츠' });
-    expect(assemble.mock.calls[0][0].scenes[0].svg).toContain('수정한 자막');
-    expect(result.videoUrl).toBe('/api/media/revised.mp4');
+    expect(assemble).not.toHaveBeenCalled();
+    expect(result.videoUrl).toBeNull();
     expect(result.status).toBe('REVIEW');
-    const job = await prisma.contentJob.findFirstOrThrow({ where: { itemId: id, step: 'ASSEMBLE' } });
+    expect(await reassembleContentVideo(id)).toBe('DONE');
+    expect(assemble.mock.calls[0][0].scenes[0].svg).toContain('수정한 자막');
+    const item = await prisma.contentItem.findUniqueOrThrow({ where: { id } });
+    expect(item.videoUrl).toBe('/api/media/revised.mp4');
+    const job = await prisma.contentJob.findFirstOrThrow({ where: { itemId: id, step: 'REASSEMBLE' } });
+    expect(job.status).toBe('DONE');
     expect(job.output).toMatchObject({ note: '새 자막 영상' });
   } finally { assemble.mockRestore(); }
 });

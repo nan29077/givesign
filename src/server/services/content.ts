@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { env, featureContentEnabled } from '@/lib/env';
 import { newId } from '@/lib/id';
 import { logger } from '@/lib/logger';
@@ -85,6 +86,7 @@ export const PUBLISH_STATUS_LABEL: Record<string, string> = {
 
 const TONES: Tone[] = ['WARM', 'HOPEFUL', 'CALM', 'URGENT'];
 type Step = 'SCRIPT' | 'SCENES' | 'VOICE' | 'ASSEMBLE' | 'COVER';
+// 담당자 수정 뒤 재조립은 REASSEMBLE_STEP('REASSEMBLE') — 아래 재조립 절.
 const INSTAGRAM_DAILY_LIMIT = 50;
 const PUBLISH_MAX_ATTEMPTS = 3;
 
@@ -647,11 +649,19 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
     await logoDataUri(merchant.avatarUrl),
     await campaignArtwork(item.title),
   );
-  const revisedVideo = item.kind === 'SHORTFORM'
-    ? await getContentAdapter().assemble({ scenes, audio: null })
-    : null;
-  if (revisedVideo) await recordJob(id, 'ASSEMBLE', getContentAdapter().info().provider, 'DONE', revisedVideo, revisedVideo.costKrw);
-  return prisma.contentItem.update({
+  // 숏폼 영상은 요청 안에서 다시 조립하지 않는다(수십 초 — 2026-11-12 결정). 재조립 작업을 쌓고
+  // 응답 뒤(after)·배치(`reassembleQueuedVideos`)가 만든다. 준비되는 동안 승인은 막힌다(`approveContent`).
+  // 작업 행을 먼저 잡고(배치의 마무리와 같은 순서) 콘텐츠를 바꾼다.
+  return prisma.$transaction(async (tx) => {
+    if (item.kind === 'SHORTFORM') {
+      const output = { hash: scenesHash(scenes), attempts: 0 };
+      await tx.contentJob.upsert({
+        where: { itemId_step: { itemId: id, step: REASSEMBLE_STEP } },
+        create: { id: newId(), itemId: id, step: REASSEMBLE_STEP, status: 'QUEUED', provider: getContentAdapter().info().provider, output },
+        update: { status: 'QUEUED', provider: getContentAdapter().info().provider, output, error: null, costKrw: 0 },
+      });
+    }
+    return tx.contentItem.update({
     where: { id },
     data: {
       scenes: scenes as unknown as object,
@@ -659,15 +669,120 @@ export async function updateContentDraft(merchantId: string, id: string, input: 
       caption: input.caption.slice(0, 2000),
       // 담당자가 고친 캡션이 기준이 된다. 플랫폼별 캡션은 고친 캡션에서 규칙으로 다시 만든다.
       platformCaptions: Prisma.DbNull,
-      // 장면 글이 바뀌었으므로 예전 자막으로 조립한 영상은 쓰지 않는다.
-      videoUrl: revisedVideo?.videoUrl ?? null,
+      // 장면 글이 바뀌었으므로 예전 자막으로 조립한 영상은 쓰지 않는다(새 영상은 재조립 작업이 채운다).
+      videoUrl: null,
       coverSvg: scenes[0]!.svg,
       status: 'REVIEW',
       approvedAt: null,
       approvedBy: null,
       error: null,
     },
+    });
   });
+}
+
+// ---------------------------------------------------------------------------
+// 숏폼 영상 재조립 (담당자 수정 뒤 — 2026-11-12)
+// ---------------------------------------------------------------------------
+
+/** 재조립 작업 단계 이름(content_job.step). 처음 생성의 ASSEMBLE 기록과 따로 둔다. */
+export const REASSEMBLE_STEP = 'REASSEMBLE';
+/** 예외로 끝난 재조립의 재시도 상한. 넘으면 FAILED — 승인은 풀리고 영상 없는 숏폼은 예전처럼 예약이 막힌다. */
+export const REASSEMBLE_MAX_ATTEMPTS = 3;
+/** RUNNING 이 이보다 오래면 멈춘 것으로 보고 다시 잡는다. */
+const REASSEMBLE_LEASE_MS = 10 * 60_000;
+
+function scenesHash(scenes: Array<Pick<Scene, 'svg' | 'durationSec'>>): string {
+  return createHash('sha256').update(JSON.stringify(scenes.map((s) => [s.svg, s.durationSec]))).digest('hex');
+}
+
+export type VideoRebuildState = 'NONE' | 'PREPARING' | 'FAILED';
+
+/** 화면 표시·승인 판단용. PREPARING = 대기·조립 중(멈춘 RUNNING 도 다시 잡힐 때까지 준비 중으로 본다). */
+export async function videoRebuildState(itemId: string): Promise<VideoRebuildState> {
+  const job = await prisma.contentJob.findUnique({ where: { itemId_step: { itemId, step: REASSEMBLE_STEP } }, select: { status: true } });
+  if (!job) return 'NONE';
+  if (job.status === 'QUEUED' || job.status === 'RUNNING') return 'PREPARING';
+  if (job.status === 'FAILED') return 'FAILED';
+  return 'NONE';
+}
+
+type ReassembleOutcome = 'DONE' | 'NO_VIDEO' | 'SKIPPED' | 'STALE' | 'RETRY' | 'FAILED';
+
+/**
+ * 한 콘텐츠의 재조립. 선점(QUEUED 또는 멈춘 RUNNING → RUNNING) → 조립 → 마무리(작업 행 FOR UPDATE 후
+ * 아직 RUNNING 이고 장면 해시가 같을 때만 영상 주소를 넣는다). 조립 중에 담당자가 다시 고치면 작업이
+ * QUEUED·새 해시로 바뀌어 이 결과는 버려지고 다음 실행이 새 장면으로 만든다.
+ */
+export async function reassembleContentVideo(itemId: string, now = new Date()): Promise<ReassembleOutcome> {
+  const claimed = await prisma.contentJob.updateMany({
+    where: { itemId, step: REASSEMBLE_STEP, OR: [{ status: 'QUEUED' }, { status: 'RUNNING', updatedAt: { lt: new Date(now.getTime() - REASSEMBLE_LEASE_MS) } }] },
+    data: { status: 'RUNNING' },
+  });
+  if (claimed.count === 0) return 'SKIPPED';
+  const job = await prisma.contentJob.findUnique({ where: { itemId_step: { itemId, step: REASSEMBLE_STEP } } });
+  const item = await prisma.contentItem.findUnique({ where: { id: itemId }, select: { kind: true, scenes: true } });
+  const meta = (job?.output ?? {}) as { hash?: string; attempts?: number };
+  const attempts = Number(meta.attempts ?? 0);
+  const scenes = (item?.scenes ?? []) as unknown as Scene[];
+  if (!job || !item || item.kind !== 'SHORTFORM' || scenesHash(scenes) !== meta.hash) {
+    // 콘텐츠가 사라졌거나 숏폼이 아니거나 장면이 작업 기록과 다르다 — 영상을 만들지 않고 닫는다.
+    await prisma.contentJob.updateMany({ where: { itemId, step: REASSEMBLE_STEP, status: 'RUNNING' }, data: { status: 'DONE', error: '장면이 바뀌어 재조립을 건너뜀' } });
+    return 'STALE';
+  }
+  let result: Awaited<ReturnType<ReturnType<typeof getContentAdapter>['assemble']>>;
+  try {
+    result = await getContentAdapter().assemble({ scenes, audio: null });
+  } catch (e) {
+    const next = attempts + 1;
+    const failed = next >= REASSEMBLE_MAX_ATTEMPTS;
+    await prisma.contentJob.updateMany({
+      where: { itemId, step: REASSEMBLE_STEP, status: 'RUNNING' },
+      data: { status: failed ? 'FAILED' : 'QUEUED', output: { hash: meta.hash, attempts: next }, error: (e as Error).message.slice(0, 300) },
+    });
+    logger.warn('숏폼 영상 재조립 실패', { itemId, attempts: next, message: (e as Error).message.slice(0, 160) });
+    return failed ? 'FAILED' : 'RETRY';
+  }
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ status: string; output: { hash?: string } | null }>>`
+      SELECT status, output FROM content_job WHERE item_id = ${itemId} AND step = ${REASSEMBLE_STEP} FOR UPDATE`;
+    const cur = rows[0];
+    if (!cur || cur.status !== 'RUNNING' || cur.output?.hash !== meta.hash) return 'STALE' as const;
+    if (result.videoUrl) {
+      await tx.contentItem.updateMany({ where: { id: itemId, videoUrl: null }, data: { videoUrl: result.videoUrl } });
+    }
+    await tx.contentJob.update({
+      where: { itemId_step: { itemId, step: REASSEMBLE_STEP } },
+      data: { status: 'DONE', costKrw: result.costKrw ?? 0, output: { hash: meta.hash, attempts, note: result.note, available: result.available, videoUrl: result.videoUrl ?? null }, error: null },
+    });
+    return result.videoUrl ? ('DONE' as const) : ('NO_VIDEO' as const);
+  });
+}
+
+/** 배치: 쌓인 재조립을 오래된 것부터 시간 상한 안에서 처리한다(이벤트 배치 1분·콘텐츠 배치 1시간). */
+export async function reassembleQueuedVideos(opts: { limit?: number; budgetMs?: number; now?: Date } = {}) {
+  const started = Date.now();
+  const now = opts.now ?? new Date();
+  const out = { done: 0, noVideo: 0, retry: 0, failed: 0, stale: 0 };
+  const jobs = await prisma.contentJob.findMany({
+    where: { step: REASSEMBLE_STEP, OR: [{ status: 'QUEUED' }, { status: 'RUNNING', updatedAt: { lt: new Date(now.getTime() - REASSEMBLE_LEASE_MS) } }] },
+    orderBy: { updatedAt: 'asc' },
+    select: { itemId: true },
+    take: opts.limit ?? 5,
+  });
+  for (const j of jobs) {
+    if (opts.budgetMs && Date.now() - started > opts.budgetMs) break;
+    const r = await reassembleContentVideo(j.itemId, now).catch((e) => {
+      logger.error('숏폼 영상 재조립 처리 오류', { itemId: j.itemId, message: (e as Error).message.slice(0, 160) });
+      return 'SKIPPED' as const;
+    });
+    if (r === 'DONE') out.done += 1;
+    else if (r === 'NO_VIDEO') out.noVideo += 1;
+    else if (r === 'RETRY') out.retry += 1;
+    else if (r === 'FAILED') out.failed += 1;
+    else if (r === 'STALE') out.stale += 1;
+  }
+  return out;
 }
 
 /**
@@ -682,6 +797,10 @@ export async function approveContent(merchantId: string, id: string, userId: str
   const item = await ownItem(merchantId, id);
   if (item.status !== 'REVIEW') throw new ContentError('검토 대기 중인 콘텐츠만 승인할 수 있습니다.');
   if (!item.aiLabeled) throw new ContentError('AI 생성 표시가 없는 콘텐츠는 승인할 수 없습니다.');
+  // 수정한 자막으로 영상을 다시 만드는 중이면 승인하지 않는다 — 승인 때 예약이 영상 없는 숏폼을 건너뛰지 않게(2026-11-12).
+  if (item.kind === 'SHORTFORM' && (await videoRebuildState(id)) === 'PREPARING') {
+    throw new ContentError('수정한 자막으로 영상을 다시 만드는 중입니다. 영상이 준비되면(보통 1~2분) 승인해 주세요.');
+  }
   if (!item.regNoIncluded) {
     throw new ContentError('기부금품 모집등록번호가 없어 승인할 수 없습니다. 기관 정보에 모집등록번호를 넣고 콘텐츠를 다시 만들어 주세요.');
   }
@@ -1018,7 +1137,7 @@ export async function resolveUnknownPublish(merchantId: string, publishId: strin
 
 /** 배치: 멈춘 생성 재개 → 멈춘 게시 복구 → 예약 게시 → 지표 수집 */
 export async function processContentQueue(now = new Date()) {
-  const result = { resumed: 0, published: 0, retried: 0, failed: 0, deferred: 0, metrics: 0, recovered: 0 };
+  const result = { resumed: 0, published: 0, retried: 0, failed: 0, deferred: 0, metrics: 0, recovered: 0, reassembled: 0 };
   const threshold = new Date(now.getTime() - STUCK_GENERATING_MS);
   const stuck = await prisma.contentItem.findMany({
     where: { status: 'GENERATING', updatedAt: { lt: threshold } },
@@ -1032,6 +1151,9 @@ export async function processContentQueue(now = new Date()) {
     await runContentPipeline(s.id);
     result.resumed += 1;
   }
+  // 담당자 수정 뒤 쌓인 숏폼 영상 재조립(응답 뒤 실행이 끊긴 것 포함)
+  const videos = await reassembleQueuedVideos({ limit: 10, budgetMs: 300_000, now });
+  result.reassembled = videos.done + videos.noVideo;
   const rec = await recoverStalePublishing(now);
   result.recovered = rec.unknown;
   if (env.automation.socialPublishEnabled) {

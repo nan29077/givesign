@@ -4,6 +4,7 @@ import { registerDefaultConsumers } from '@/server/services/event-consumers';
 import { advanceDueJourneyRuns } from '@/server/services/journeys/engine';
 import { expireApprovals, recoverStaleApprovals, runQueuedApprovals } from '@/server/services/approvals';
 import { emitShiftReminders } from '@/server/services/journeys/reminders';
+import { reassembleQueuedVideos } from '@/server/services/content';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,8 @@ export async function GET(req: Request) {
     // 처리 도중 끊긴 승인(PROCESSING 15분)은 다시 승인 대기로, 승인된 일괄 발급(QUEUED)은 시간 상한 안에서 이어서 실행(점검 A-1).
     const approvalsRecovered = await recoverStaleApprovals();
     const approvalsRun = await runQueuedApprovals({ budgetMs: 60_000 });
-    return { reminders, events, journeys, approvalsExpired, approvalsRecovered, approvalsRun };
+    // 담당자 수정 뒤 숏폼 영상 재조립 — 응답 뒤 실행이 끊긴 것을 1분 안에 이어 만든다(2026-11-12, 시간 상한 45초).
+    const videos = await reassembleQueuedVideos({ limit: 3, budgetMs: 45_000 });
+    return { reminders, events, journeys, approvalsExpired, approvalsRecovered, approvalsRun, videos };
   });
 }

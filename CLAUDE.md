@@ -39,7 +39,7 @@
    - **콘텐츠 캘린더**(`content-calendar.ts`, `/api/cron/content`)는 (기관, 슬롯 시각) 유니크(`content_slot`)로 슬롯당 1건만 만든다. 모집등록번호·진행 중 캠페인·월 한도가 없으면 만들지 않고 이유를 설정 화면에 보인다(행으로 남기지 않음). 자동 승인은 승인까지만, 게시 예약은 `autoSchedule` + 슬롯이 미래 + `SOCIAL_PUBLISH_ENABLED` + 연결 채널·형식 허용일 때만 슬롯 시각으로 한다.
    - **LLM**(`adapters/llm`, `LLM_PROVIDER=mock|anthropic|openai`)은 JSON 응답을 검증(장면 수·자막 길이·해시태그·금지어·전화/이메일·링크)하고 어기면 1회 재요청 후 실패한다. 진행률·참여 방법·"AI 생성 콘텐츠"·모집등록번호·링크는 LLM 이 아니라 시스템이 붙인다. 키가 없으면 호출하지 않는다. 비용은 시도마다 `ai_usage`(실패 시도 포함). 프롬프트·응답 본문은 로그에 남기지 않는다.
    - **AI 초안**(`ai-drafts.ts` — 캠페인·감사 문구·문의 답변·성과 요약)은 입력칸을 채우기만 한다. 자동 저장·자동 발송·자동 게시를 만들지 않는다. 기관(관리자)당 분당 `AI_DRAFT_PER_MINUTE` 회. LLM 이 mock 이면 화면은 버튼 대신 "AI 공급자 연결 후 사용". 공급자로 보내는 문의 본문은 연락처·계좌를 가린다(`maskForLlm`). 수혜자 실명·연락처 패턴은 거절한다.
-   - 영상(mp4)은 `FFMPEG_PATH` + sharp 가 있을 때만 조립해 `content_item.video_url` 에 둔다. TTS 는 계약 전이라 만들지 않는다(만든 척하지 않음). 플랫폼별 캡션 규칙은 `content-captions.ts` 한 곳(링크·AI 표시는 잘리지 않는다).
+   - 영상(mp4)은 `FFMPEG_PATH` + sharp 가 있을 때만 조립해 `content_item.video_url` 에 둔다. 담당자 수정 뒤 재조립은 요청 안에서 하지 않는다(아래 2026-11-12 결정 후속). TTS 는 계약 전이라 만들지 않는다(만든 척하지 않음). 플랫폼별 캡션 규칙은 `content-captions.ts` 한 곳(링크·AI 표시는 잘리지 않는다).
 
 ## 자원봉사 모집 공고·회차 (2026-11-06)
 
@@ -92,13 +92,13 @@ DB 모델·테이블·컬럼은 메시지페이 것(`Charge` · `MerchantProfile
 |---|---|---|
 | 대시보드 | `/studio` | 이달 후원액·후원자 수·정기후원·캠페인 진행률 |
 | 후원 내역 | `/studio/charges` | 건별 후원 (MO·웹·정기) |
-| 후원자 관리 | `/studio/donors` | 후원자별 누적·최근·정기 여부·메모·영수증 신청 |
+| 후원자별 현황·회원 | `/studio/donors` | 후원자별 누적·최근·정기 여부·메모·영수증 신청 + 후원페이지 회원 |
 | 정기후원 | `/studio/recurring` | 정기후원 현황·실패·해지 |
 | 캠페인 | `/studio/campaigns` | 모금 단위 등록·진행률·문자 키워드 |
 | 후원페이지 | `/studio/donation-page` | 공개 `/donate/[code]` 구성 |
 | 기부금영수증 | `/studio/receipts` | 연도별 발급·일괄 발급·홈택스 제출 파일 |
 | 기관 정보 | `/studio/profile` | 기관 유형·고유번호·대표자·지정기부금단체·모집등록번호 |
-| 후원자·봉사자 | `/studio/supporters` | 통합 구성원·세그먼트·기관 명단 업로드·약정 미완료 재안내 (`/studio/donors` 는 후원자 상세 분석) |
+| 후원자·봉사자 명단 | `/studio/supporters` | 통합 구성원·세그먼트·기관 명단 업로드·약정 미완료 재안내 (`/studio/donors` 는 후원자별 현황·회원) |
 | 자원봉사 | `/studio/volunteers` | 신청 승인·배정·활동 기록·1365 등록 자료 CSV (`FEATURE_VOLUNTEER`) |
 | 자원봉사 모집 공고 | `/studio/volunteers/postings` · `/studio/volunteers/postings/[id]` | 공고 등록·수정·모집 시작/마감·보관, 회차(날짜·시각·정원) 추가/보관, 회차별 신청 현황·출석/불참. 공개 `/donate/[code]/volunteer/[postingId]` |
 | 약정서·신청서 | `/studio/agreements` | 전자 약정서·신청서 보관·판 이력 |
@@ -479,3 +479,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **승인 대기함 준비도**: 빠진 항목만 보인다. 필수가 빠졌으면 처리할 일 위에, 권장만 빠졌으면 처리할 일 아래에. 전체 목록·작동 기록은 `/studio/start`.
 - **배포**: 빌드 폴더는 `distDir = .givesign-next` — standalone 실행은 `.givesign-next/standalone/server.js`(정적 파일·public 내용 복사 필요, `docs/AWS-배포-가이드.md` 4절). 로컬 저장소 `var/`(업로드·비공개 문서)가 파일 추적으로 standalone 에 통째로 실리던 것을 `outputFileTracingExcludes`(루트 `/` 키 포함)로 뺐다. `.dockerignore` 가 `.env`·`var`·`node_modules` 를 컨텍스트에서 뺀다(.env 가 있으면 Next 가 standalone 에 복사한다).
 - 의존성: next 16.4.6 · prisma/@prisma/client/adapter-pg 7.10.1 · zod 4.6.7 · vitest 4.1.12, 하위 의존성 `overrides`(source-map-js·fast-uri). 운영 의존성 `npm audit --omit=dev` 0건. vitest 설정은 `vitest.config.mts`.
+
+## 2026-11-12 결정 후속 (대표 결정 5건)
+
+테스트 `tests/followup-2026-11-12.test.ts`. 보고서 `docs/2026-11-12_결정후속_조치보고서.md`.
+
+- ① 기본 일러스트는 그대로 둔다.
+- ② 캠페인 카드뉴스 편집기에 **다른 단체 캠페인 외부 링크를 두지 않는다.** 대신 화면 안 "6장 구성 예시 보기"(`CAMPAIGN_STORY_GUIDE`, 가상 사업 예시 — 카드에 자동으로 넣지 않음, 안내 문구 검사 `hasCardGuidance` 에 걸리지 않는 문장).
+- ③ 기관 콘솔 메뉴 이름: `/studio/supporters` = **후원자·봉사자 명단**, `/studio/donors` = **후원자별 현황·회원**(아이콘 `UserRoundSearch` — 후원 내역과 다름), 문의 응대 아이콘 `inquiries`(문자 관리와 다름). 화면 제목·교차 안내 문구도 같은 이름.
+- ④ 개발 도구 취약점: eslint 10 은 Next 린트 묶음(react·import·jsx-a11y 플러그인)이 아직 지원하지 않아 eslint 9 유지, `overrides` 로 `@typescript-eslint/typescript-estree` 의 minimatch 를 ^11.0.8 로 고정 — `npm audit` 전체 0건. eslint 플러그인이 eslint 10 을 지원하면 이 고정을 지우고 올린다.
+- ⑤ **숏폼 수정 뒤 영상 재조립은 요청 밖에서.** `updateContentDraft` 는 영상을 비우고 `content_job (item, 'REASSEMBLE')` 을 `QUEUED`(+ 장면 해시)로 쌓는 것까지만(작업 행 → 콘텐츠 순서, 한 트랜잭션). 실행은 `reassembleContentVideo` — 수정 액션의 `after()`(응답 뒤) + `/api/cron/events`(1분, 45초 상한) + `/api/cron/content`(1시간). 선점 QUEUED/멈춘 RUNNING(10분) → RUNNING, 마무리는 작업 행 `FOR UPDATE` 후 **아직 RUNNING 이고 해시가 같을 때만** 영상 주소를 넣는다(조립 중 다시 고치면 결과를 버리고 다음 실행이 새 장면으로). 예외는 `REASSEMBLE_MAX_ATTEMPTS`(3)회 뒤 `FAILED`, 도구가 꺼져 만들지 못한 결과(available=false)는 재시도 없이 닫는다. **준비 중(`videoRebuildState` = PREPARING)이면 `approveContent` 가 거절**(승인 때 예약이 영상 없는 숏폼을 건너뛰지 않게) — 상세 화면은 "영상 준비 중" + 자동 새로고침(`RefreshWhile`), 승인 버튼 대신 안내. 처음 생성의 `ASSEMBLE` 기록은 건드리지 않는다.
