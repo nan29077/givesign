@@ -83,6 +83,8 @@ export interface StepDef {
   /** 승인 필요 기본값 */
   defaultApproval?: boolean;
   /** 후원자 수신 거부(자동 안내 끔)·발송 상한·야간 보류를 적용하는 발송 단계 */
+  /** 때가 정해진 안내(봉사 전날·재개 방법) — 후원자당 7일 상한을 적용하지 않고 상한 계산에서도 빠진다(2026-11-13 점검 A-L1) */
+  timely?: boolean;
   sends?: boolean;
   /** 단계 설명(화면) */
   describe(params: Record<string, ParamValue>): string;

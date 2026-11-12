@@ -149,6 +149,19 @@ CMD ["node", "server.js"]
 | `HECTO_AUTH_UI_BASE` | `https://ezauth.settlebank.co.kr` | 결제창 |
 | `HECTO_AUTH_API_BASE` | `https://ezauthapi.settlebank.co.kr:8081` | 서버 API — **UI 와 절대 합치지 말 것** (합치면 승인 전건 실패) |
 
+## 5-1. 배치(스케줄러) 등록 — 등록하지 않으면 자동화가 돌지 않습니다
+
+`/api/cron/*` 배치(이벤트 처리·발송 대기열·정기 출금·월간 안내·영수증·콘텐츠 게시 등)는 **누군가 주기적으로 불러 줘야** 돈다. 등록부는 `src/server/cron-registry.ts` 한 곳이다.
+
+| 운영 방식 | 설정 | 할 일 |
+|---|---|---|
+| PC·단일 서버 | `CRON_RUNNER=internal`(기본) | 없음. 서버가 기동하면 내장 실행기(`src/server/cron-runner.ts`)가 등록부 주기대로 자기 배치 주소를 부른다. 정해진 시각 배치는 서버가 꺼져 있었으면 켜진 뒤 하루 안의 것만 한 번 따라잡는다 |
+| AWS(여러 인스턴스) | `CRON_RUNNER=external` | EventBridge Scheduler 에 등록. `npx tsx tools/cron-schedule.ts` 가 표를, `--aws` 가 등록 명령 초안을 출력한다. 헤더 `Authorization: Bearer ${CRON_SECRET}` |
+| E2E·점검 | `CRON_RUNNER=off` | 배치를 손으로만 부른다 |
+
+- 겹쳐 불려도 배치마다 잠금이 한 번만 돌게 한다(internal 과 EventBridge 를 함께 켜도 중복 처리는 없지만 호출이 두 배가 된다 — 하나만 쓴다).
+- **지연 알림**: 실행 기록이 있는 배치의 마지막 종료가 주기의 3배를 넘거나 마지막 실행이 실패하면 최고관리자에게 콘솔 알림(배치·날짜마다 1회, events 배치가 확인)과 관리자 대시보드 경고가 뜬다. 상세는 관리자 > 자동화.
+
 ---
 
 ## 6. 인프라 구성 권장값
@@ -172,3 +185,4 @@ CMD ["node", "server.js"]
 3. `NEXT_OUTPUT=standalone npm run build` → 이미지 푸시
 4. ECS 서비스 롤링 배포 (기동 시 `assertBootSafety()` 통과 여부가 곧 헬스체크)
 5. `/api/health` 를 관리자 계정으로 열어 `providers` 가 전부 실제 연동인지 확인
+6. 5-1절에 따라 배치를 등록(또는 `CRON_RUNNER=internal` 확인)하고, 관리자 > 자동화에서 모든 배치가 '정상' 인지 확인

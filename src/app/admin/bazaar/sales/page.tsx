@@ -34,7 +34,7 @@ export default async function AdminBazaarSales() {
       <BazaarSubNav items={ADMIN_BAZAAR_TABS} current="/admin/bazaar/sales" />
       <Card>
         <CardTitle>새 판매 결과</CardTitle>
-        <p className="mt-1 text-[12.5px] text-ink-500">열 순서: {SALE_CSV_HEADER.join(', ')}({SALE_CSV_HEADER.length}개 열을 모두 맞춥니다). 한 줄에 상품 하나. 쉼표가 든 금액은 따옴표로 감싸거나 쉼표 없이 적습니다. 판매 금액이 수량 × 판매가와 크게 다르면 거절합니다. 반송비 부담은 기관/기브싸인/없음. 이전 판매의 환불 정정은 판매 0, 환불 금액만 적어 올립니다(환불 수수료 환입은 원래 판매 때 요율). 엑셀 CSV(UTF-8·CP949) 모두 읽습니다.</p>
+        <p className="mt-1 text-[12.5px] text-ink-500">열 순서: {SALE_CSV_HEADER.join(', ')}({SALE_CSV_HEADER.length}개 열을 모두 맞춥니다). 한 줄에 상품 하나. 쉼표가 든 금액은 따옴표로 감싸거나 쉼표 없이 적습니다. <strong>판매금액·환불금액은 상품 대금만</strong> 적습니다(구매자가 낸 배송비는 빼고 — 배송비는 수수료·기관 정산에 넣지 않습니다). 판매 금액이 수량 × 판매가와 크게 다르면 거절합니다. 반송비 부담은 기관/기브싸인/없음. 이전 판매의 환불 정정은 판매 0, 환불 금액만 적어 올립니다(환불 수수료 환입은 원래 판매 때 요율). 엑셀 CSV(UTF-8·CP949) 모두 읽습니다.</p>
         {!canOperate ? <div className="mt-3"><Notice tone="neutral">판매 결과 입력·승인·반려는 최고관리자·운영·재무 권한에서만 할 수 있습니다.</Notice></div> : null}
         {canOperate ? <div className="mt-3">
           <ActionForm action={createSaleBatchAction} submitLabel="판매 결과 등록(승인 대기)">

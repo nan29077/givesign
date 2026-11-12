@@ -489,3 +489,21 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - ③ 기관 콘솔 메뉴 이름: `/studio/supporters` = **후원자·봉사자 명단**, `/studio/donors` = **후원자별 현황·회원**(아이콘 `UserRoundSearch` — 후원 내역과 다름), 문의 응대 아이콘 `inquiries`(문자 관리와 다름). 화면 제목·교차 안내 문구도 같은 이름.
 - ④ 개발 도구 취약점: eslint 10 은 Next 린트 묶음(react·import·jsx-a11y 플러그인)이 아직 지원하지 않아 eslint 9 유지, `overrides` 로 `@typescript-eslint/typescript-estree` 의 minimatch 를 ^11.0.8 로 고정 — `npm audit` 전체 0건. eslint 플러그인이 eslint 10 을 지원하면 이 고정을 지우고 올린다.
 - ⑤ **숏폼 수정 뒤 영상 재조립은 요청 밖에서.** `updateContentDraft` 는 영상을 비우고 `content_job (item, 'REASSEMBLE')` 을 `QUEUED`(+ 장면 해시)로 쌓는 것까지만(작업 행 → 콘텐츠 순서, 한 트랜잭션). 실행은 `reassembleContentVideo` — 수정 액션의 `after()`(응답 뒤) + `/api/cron/events`(1분, 45초 상한) + `/api/cron/content`(1시간). 선점 QUEUED/멈춘 RUNNING(10분) → RUNNING, 마무리는 작업 행 `FOR UPDATE` 후 **아직 RUNNING 이고 해시가 같을 때만** 영상 주소를 넣는다(조립 중 다시 고치면 결과를 버리고 다음 실행이 새 장면으로). 예외는 `REASSEMBLE_MAX_ATTEMPTS`(3)회 뒤 `FAILED`, 도구가 꺼져 만들지 못한 결과(available=false)는 재시도 없이 닫는다. **준비 중(`videoRebuildState` = PREPARING)이면 `approveContent` 가 거절**(승인 때 예약이 영상 없는 숏폼을 건너뛰지 않게) — 상세 화면은 "영상 준비 중" + 자동 새로고침(`RefreshWhile`), 승인 버튼 대신 안내. 처음 생성의 `ASSEMBLE` 기록은 건드리지 않는다.
+
+## 2026-11-13 후원 자동화·라이브 바자회 점검 조치
+
+테스트 `tests/fixes-2026-11-13.test.ts`. 보고서 `docs/2026-11-13_후원자동화_라이브바자회_점검조치보고서.md`.
+
+- **배치 실행 보장.** 배치마다 `cron-registry.ts` 에 기계용 주기 `when`(everySec · hourlyAtMin · dailyAtKst + days)을 함께 선언한다(schedule·eventBridge 와 같은 뜻). 서버는 기동하면 내장 실행기(`src/server/cron-runner.ts`, `CRON_RUNNER=internal` 기본)가 그 주기대로 **자기 `/api/cron/*` 주소를 HTTP 로** 부른다(업무 코드를 직접 부르지 않음 — 인증·잠금·기록은 runCronJob). 정해진 시각 배치는 꺼져 있던 동안 놓친 것을 하루 안의 것만 1회 따라잡는다. AWS 는 `CRON_RUNNER=external` + EventBridge(`npx tsx tools/cron-schedule.ts --aws`), E2E 는 `off`. 테스트(Vitest)·빌드 중에는 켜지지 않는다. 새 배치는 등록부에 `when` 과 라우트를 함께 만든다(테스트가 둘을 대조한다).
+- **배치 지연 알림** `cron-health.ts`: 기록 있는 배치의 마지막 종료가 주기의 3배 초과(LATE) 또는 마지막 실행 실패(FAILED) → 최고관리자 콘솔 알림(배치·사유·KST 날짜 1회, events 배치가 부름) + 관리자 대시보드 경고.
+- **매월 영수증 발급은 `runMonthlyReceipts`** — 월간 안내 스위치와 무관, 매월 1~5일 매일(같은 결과), 귀속 연도 = 지난달의 해 + 1~2월이면 지난해. 월간 안내(`processRun`)는 영수증을 발급하지 않는다. 기관의 "지금 보내기"도 발급을 먼저 부른다.
+- **환불 무효 영수증**: 환불로 무효가 되면 `requestReissueAfterRefund` 가 남은 발급 대상이 있을 때 승인 요청 `RECEIPT_REISSUE`(무효 영수증당 1건) + 기관 알림. 승인 = `reissueReceipt`(다시 불러도 같은 결과).
+- **문서 발급 일시 오류**: `issuePurposeDocument` 결과 `transient: true`(예외로 못 만듦) → 저니 문서 단계는 건너뛰지 않고 예외로 재시도(5회 뒤 FAILED = 막힌 일). `blocked` 코드는 새로 만들지 않았다(묶음 발송의 기존 코드 유지).
+- **저니**: 보내는 도중 예외로 끝난 문자 단계는 다음 시도에서 다시 보내지 않고 `UNKNOWN`(결과 미확인) 기록. 단계 승인 요청은 14일 기한(`JOURNEY_APPROVAL_TTL_DAYS`), 지나면 `stopExpiredJourneyApprovals` 가 실행을 STOPPED. 때가 정해진 문자 단계(`timely: true` = 봉사 전날 `reminder`·재개 방법 `resume-guide`, 목록 `TIMELY_JOURNEY_STEP_KEYS`)는 7일 상한을 적용하지 않고 상한 계산에서도 빠진다. 첫 후원 판정은 결제 건 + 확정 계좌이체. 봉사 전날 대상 계산은 배치에서 시간당 1회(`throttle`).
+- **발송 대기열**: 15분 넘게 SENDING 인 건은 UNKNOWN 으로 닫고 원천(저니 단계 `UNKNOWN`·발급 문서 `sendError`·월간 안내 `notice_delivery.status=UNKNOWN`)에도 적는다. 월간 안내는 발송 전에 탈퇴·기관 차단을 뺀다.
+- **정기 출금 배치**는 하루 3번(10·12·14시), 출금일 빠른 순 + (출금일, id) 커서, 시간 상한에 잘리면 최고관리자 알림(하루 1회). **예약 게시**는 5분 배치 `content-publish`(`publishDueContent`, 1시간 배치도 놓친 것을 함께 — 선점 조건부). 지표 수집은 오래 갱신 안 된 순.
+- **바자회 입고일**(`assertInboundDate`): 오늘 이후·약정일 이전 불가, 올해가 아니면 `yearConfirmed`. 확정 뒤 정정은 최고관리자 `correctInboundDate`(사유·상태 이력·감사로그) → `receiptCorrectionNeeded` 가 기부일 불일치(`reason: 'DATE'`)도 잡아 종결을 막는다. 합격(PASS)은 모든 품목 합격 수량 = 약정 수량일 때만.
+- **바자회 정산**: 끝나지 않은 달(이번 달 이후)은 `earlyReason`(최고관리자) 없이 확정하지 않는다. 화면 기본 월은 지난달. `runBazaarSettlementAutomation`(바자회 배치, 스위치와 무관)이 1~5일 지난달 집계를 만들고 확정 필요 1회·지급일 지난 확정 정산마다 1회 알림. 판매금액·환불금액 = **상품 대금(배송비 제외)** — `amountMismatch` 상한도 판매가 기준. 판매 종료 상품에는 판매 수량을 받지 않는다(환불만), 종료는 승인 대기 판매 결과가 없을 때만.
+- **바자회 알림**(`bazaar-notify.ts`): 단계마다 콘솔 알림, 기부자 문자는 정보성 3종만(`BAZAAR_VALUATION`·`BAZAAR_PLEDGE_REQUEST`·`BAZAAR_RECEIPT_ISSUED`). 업무 트랜잭션 뒤에 부르고 예외를 던지지 않는다. 매칭 기한 하루 전 재알림(제안당 1회), 1회 키는 `claimOnce`(system_setting).
+- **현물 기부자 영수증 정보**: 수집·이용 동의(`agree`) 필수 + `consent_record`(RECEIPT_ISSUANCE 판) + 감사로그(마스킹) + 하루 5회 시도(저장소 장애 때 닫힘). 기업 사업자등록번호는 검증 숫자(`isValidBusinessNo`). 본인인증 일치 확인은 현물 기부자 본인인증 연동 때.
+- 남김(2차): 영수증 정보 미등록자 연말 감사장(서식 문구가 "영수증을 따로 발급" 이라 별도 서식 필요).

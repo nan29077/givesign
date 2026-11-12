@@ -68,7 +68,7 @@ async function corporateGiver() {
     displayName: '(주)나눔상사',
     contactName: '홍담당',
     phone: '010-2222-3333',
-    businessNo: '220-81-12345',
+    businessNo: '220-81-12341',
     representativeName: '나대표',
     address: '서울시 강남구',
   });
@@ -294,7 +294,7 @@ describe('라이브 바자회 — 전체 흐름', () => {
     expect(s.returnCost).toBe(3000n + 4000n);
     expect(s.payout).toBe(250000n - 10000n - 72000n - 7000n);
     await expect(markSettlementPaid(s.id, adminA, { transferRef: 'x', paidAt: new Date() })).rejects.toThrow(/확정된 정산/);
-    await confirmSettlement(s.id, adminA);
+    await confirmSettlement(s.id, adminA, { earlyReason: '테스트 — 이번 달 원장 확정' });
 
     // 확정 뒤 들어온 판매는 다음 달로 넘어간다(확정 금액 불변)
     const batch2 = await createSaleBatch(adminB, { title: '2회차', source: 'MANUAL', rows: [{ trackingCode: 'GSB-000002', soldQty: 1, grossAmount: 15000n, refundQty: 0, refundAmount: 0n, returnCost: 0n, returnBearer: 'NONE' }] });
@@ -320,7 +320,7 @@ describe('라이브 바자회 — 전체 흐름', () => {
     // 홈택스 명세에 현물 영수증(사업자번호) 포함
     const ht = await buildHometaxExport(merchantId, receipt.taxYear, adminA);
     expect(ht.content).toContain(receipt.receiptNo);
-    expect(ht.content).toContain('2208112345');
+    expect(ht.content).toContain('2208112341');
     expect(ht.content).toContain('현물');
 
     // 무효 → 재발급(번호 재사용 안 함)
@@ -353,8 +353,12 @@ describe('라이브 바자회 — 전체 흐름', () => {
     await expect(confirmInspection(merchantId, donationId, merchantUserId)).rejects.toThrow(/영수증 정보/);
     // 실패하면 전체가 되돌아가 다시 확정할 수 있다
     expect((await prisma.inKindInbound.findUniqueOrThrow({ where: { donationId } })).merchantConfirmedAt).toBeNull();
-    await expect(updateDonorReceiptInfo(g.donorId, { legalName: '김개인', resident: '9001011234567', hometaxOptIn: true })).rejects.toThrow(/주민등록번호/);
-    await updateDonorReceiptInfo(g.donorId, { legalName: '김개인', resident: '9001011234568', hometaxOptIn: true });
+    await expect(updateDonorReceiptInfo(g.donorId, { legalName: '김개인', resident: '9001011234567', hometaxOptIn: true, agree: true })).rejects.toThrow(/주민등록번호/);
+    // 2026-11-13 B-M3: 수집·이용 동의 없이는 저장하지 않는다 + 동의 기록(약관 판)·감사로그
+    await expect(updateDonorReceiptInfo(g.donorId, { legalName: '김개인', resident: '9001011234568', hometaxOptIn: true, agree: false })).rejects.toThrow(/동의/);
+    await prisma.termsVersion.create({ data: { id: newId(), type: 'RECEIPT_ISSUANCE', version: '1.0', title: '영수증 동의', content: '테스트', required: false, effectiveFrom: new Date('2026-01-01') } });
+    await updateDonorReceiptInfo(g.donorId, { legalName: '김개인', resident: '9001011234568', hometaxOptIn: true, agree: true });
+    expect(await prisma.consentRecord.count({ where: { userId: g.userId, type: 'RECEIPT_ISSUANCE', agreed: true } })).toBe(1);
     const r = await confirmInspection(merchantId, donationId, merchantUserId);
     expect(r.totalAmount).toBe(50000n);
     expect(r.residentNoEnc).toBeTruthy();

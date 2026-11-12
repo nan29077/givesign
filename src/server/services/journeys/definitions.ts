@@ -84,6 +84,9 @@ function documentStep(input: {
       // 발송 전 점검에서 막힘(필수 항목 빈칸·연락처 없음 등, 2026-11-09 C2): 건너뛰지 않고 실행을 "막힌 일" 로 남긴다.
       // 승인 대기함이 journey_run.status=FAILED + last_error(PREFLIGHT_BLOCK_PREFIX) 로 모아 보여 주고, 기관이 고친 뒤 "다시 실행" 한다.
       if (r.blocked === 'PREFLIGHT') throw new JourneyBlockedError(r.reason);
+      // DB·저장소·PDF 의 일시 오류 — 건너뛰면 그 후원자의 문서가 영영 빠진다. 예외로 던져 저니 재시도(5회·간격)에 맡기고,
+      // 소진되면 실행이 FAILED(승인 대기함 "막힌 일")가 된다(2026-11-13 점검 A-M1).
+      if (r.transient) throw new Error(r.reason);
       return { type: 'skip', detail: r.reason };
     },
   };
@@ -215,10 +218,13 @@ export const JOURNEYS: JourneyDef[] = [
           if (!e.run.payerId) return '후원자 없음';
           const amount = big(e.run.context.amount);
           if (amount >= BigInt(Math.max(0, numOr(e.params.minAmount, 0)))) return true;
-          const paid = await prisma.charge.count({
-            where: { merchantId: e.run.merchantId, payerId: e.run.payerId, status: { in: PAID_STATUSES }, isTest: false },
-          });
-          return paid <= 1 ? true : `기준 금액 미만이고 첫 후원이 아님`;
+          // 첫 후원 판정은 결제 건 + 확정된 계좌이체를 함께 센다. 결제 건만 세면 통장 이체로만 후원하는 분은
+          // 몇 번째든 "첫 후원" 이 되어 소액 이체마다 감사장이 나갔다(2026-11-13 점검 A-M3).
+          const [paid, offline] = await Promise.all([
+            prisma.charge.count({ where: { merchantId: e.run.merchantId, payerId: e.run.payerId, status: { in: PAID_STATUSES }, isTest: false } }),
+            prisma.offlineDonation.count({ where: { merchantId: e.run.merchantId, payerId: e.run.payerId, status: 'CONFIRMED' } }),
+          ]);
+          return paid + offline <= 1 ? true : `기준 금액 미만이고 첫 후원이 아님`;
         },
         async merge(e) {
           const c = e.run.context.campaignId
@@ -274,6 +280,7 @@ export const JOURNEYS: JourneyDef[] = [
         label: '재개 방법 안내',
         kind: 'message',
         sends: true,
+        timely: true,
         describe: () => '아직 정지 상태이면 마이페이지에서 결제수단을 확인하고 재개하는 방법을 안내합니다.',
         async when(e) {
           const r = await prisma.recurringDonation.findFirst({ where: { merchantId: e.run.merchantId, payerId: e.run.payerId ?? '', status: 'SUSPENDED' }, select: { id: true } });
@@ -381,6 +388,7 @@ export const JOURNEYS: JourneyDef[] = [
         label: '일정 안내 문자',
         kind: 'message',
         sends: true,
+        timely: true,
         describe: () => '내일 봉사 일정·장소를 문자로 안내합니다. 보내기 직전에 신청이 승인 상태이고 회차가 아직 시작 전인지 다시 확인합니다.',
         async when(e) {
           if (!e.run.context.schedule) return '일정 정보 없음';

@@ -24,7 +24,7 @@ const STATUS_LABEL: Record<string, { label: string; tone: 'neutral' | 'brand' | 
 
 const OUTCOME_LABEL: Record<string, string> = {
   DONE: '완료', SKIPPED: '건너뜀', WAIT: '대기', AWAITING_APPROVAL: '승인 대기', APPROVED: '승인', REJECTED: '반려',
-  BLOCKED: '보류', FAILED: '오류', STOPPED: '멈춤', RETRY: '다시 실행',
+  BLOCKED: '보류', FAILED: '오류', STOPPED: '멈춤', RETRY: '다시 실행', UNKNOWN: '결과 미확인',
 };
 
 /**

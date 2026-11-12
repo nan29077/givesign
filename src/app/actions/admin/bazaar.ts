@@ -106,7 +106,11 @@ export async function decideParticipationAction(_p: AdminActionState, fd: FormDa
     await writeAudit({ adminUserId: admin.id, action: `BAZAAR_PARTICIPATION_${decision}`, targetType: 'merchant_bazaar', targetId: merchantId, after: { withdrawnMatches: r.withdrawn } });
     revalidateBazaar();
     if (decision === 'APPROVED') return '참여를 승인했습니다. 이제 매칭 대상에 포함됩니다.';
-    return r.withdrawn ? `처리했습니다. 응답 대기 중이던 매칭 제안 ${r.withdrawn}건을 철회하고 접수 상태로 되돌렸습니다.` : '처리했습니다.';
+    const parts = ['처리했습니다.'];
+    if (r.withdrawn) parts.push(`응답 대기 중이던 매칭 제안 ${r.withdrawn}건을 철회하고 접수 상태로 되돌렸습니다.`);
+    // 진행 중인 기부 건은 기관이 처리(가액 확정·검수 확정)를 못 해 멈춘다 — 다른 기관으로 다시 매칭하거나 취소해야 한다(2026-11-13 B-L5).
+    if (r.inProgress) parts.push(`이 기관이 맡아 진행 중인 기부 건 ${r.inProgress}건은 기관이 처리할 수 없어 멈춥니다. 기부 건 목록에서 확인해 취소하거나 참여를 다시 승인해 주세요.`);
+    return parts.join(' ');
   });
 }
 
@@ -161,6 +165,9 @@ export async function registerInboundAction(_p: AdminActionState, fd: FormData) 
     const receivedAt = receivedAtRaw ? new Date(`${receivedAtRaw}T12:00:00+09:00`) : new Date();
     if (Number.isNaN(receivedAt.getTime())) throw new Error('입고일을 확인해 주세요.');
     const bearer = text(fd, 'returnCostBearer') as 'NONE' | 'MERCHANT' | 'GIVESIGN';
+    // 반송비는 숫자(원)만(2026-11-13 B-L3 — 예전에는 숫자가 아니면 일반 오류 문구만 나왔다)
+    const returnCostRaw = text(fd, 'returnCost').replace(/[,\s원]/g, '') || '0';
+    if (!/^\d+$/.test(returnCostRaw)) throw new Error('반송비는 숫자(원)로 입력해 주세요. 없으면 0.');
     await svc.registerInbound(donationId, admin.id, {
       warehouse: text(fd, 'warehouse'),
       receivedAt,
@@ -171,7 +178,8 @@ export async function registerInboundAction(_p: AdminActionState, fd: FormData) 
         acceptedQty: result === 'FAIL' ? 0 : intOf(fd, `accepted_${it.id}`, `${it.name} 합격 수량`),
         note: optText(fd, `note_${it.id}`),
       })),
-      returnCost: BigInt(text(fd, 'returnCost').replace(/[,\s원]/g, '') || '0'),
+      returnCost: BigInt(returnCostRaw),
+      yearConfirmed: text(fd, 'yearConfirmed') === 'on',
       returnCostBearer: ['NONE', 'MERCHANT', 'GIVESIGN'].includes(bearer) ? bearer : 'NONE',
       disposition: text(fd, 'disposition') === 'DISPOSED' ? 'DISPOSED' : 'RETURNED',
       note: optText(fd, 'note'),
@@ -180,6 +188,22 @@ export async function registerInboundAction(_p: AdminActionState, fd: FormData) 
     await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_INBOUND', targetType: 'in_kind_donation', targetId: donationId, after: { result } });
     revalidateBazaar();
     return result === 'FAIL' ? '불합격으로 등록했습니다(반송·폐기).' : '입고·검수를 등록했습니다. 기관이 검수를 확정하면 영수증이 발급됩니다.';
+  });
+}
+
+/** 입고일 정정(최고관리자, 2026-11-13 B-H1). 발급된 영수증과 기부일이 달라지면 무효 → 재발급으로 정정한다. */
+export async function correctInboundDateAction(_p: AdminActionState, fd: FormData) {
+  return run(async (admin) => {
+    assertSuper(admin);
+    const donationId = text(fd, 'donationId');
+    const raw = text(fd, 'receivedAt');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error('정정할 입고일을 골라 주세요.');
+    const r = await svc.correctInboundDate(donationId, admin.id, new Date(`${raw}T12:00:00+09:00`), text(fd, 'reason'));
+    await writeAudit({ adminUserId: admin.id, action: 'BAZAAR_INBOUND_DATE_CORRECT', targetType: 'in_kind_donation', targetId: donationId, before: { receivedAt: r.before }, after: { receivedAt: r.after, reason: text(fd, 'reason') } });
+    revalidateBazaar();
+    return r.receiptCorrection
+      ? `입고일을 ${r.after}로 정정했습니다. 발급된 영수증의 기부일과 달라졌으니 영수증을 무효 처리한 뒤 재발급해 주세요.`
+      : `입고일을 ${r.after}로 정정했습니다.`;
   });
 }
 
@@ -400,8 +424,11 @@ export async function confirmSettlementAction(_p: AdminActionState, fd: FormData
   return run(async (admin) => {
     assertMoneyAdmin(admin);
     const id = text(fd, 'settlementId');
-    const r = await svc.confirmSettlement(id, admin.id);
-    await writeAudit({ adminUserId: admin.id, action: r.status === 'CARRIED' ? 'BAZAAR_SETTLEMENT_CARRY' : 'BAZAAR_SETTLEMENT_CONFIRM', targetType: 'bazaar_settlement', targetId: id, after: { payout: r.payout.toString(), carriedToMonth: r.carriedToMonth } });
+    // 끝나지 않은 달 확정은 최고관리자 + 사유만(2026-11-13 B-M1)
+    const earlyReason = optText(fd, 'earlyReason');
+    if (earlyReason) assertSuper(admin);
+    const r = await svc.confirmSettlement(id, admin.id, { earlyReason });
+    await writeAudit({ adminUserId: admin.id, action: r.status === 'CARRIED' ? 'BAZAAR_SETTLEMENT_CARRY' : 'BAZAAR_SETTLEMENT_CONFIRM', targetType: 'bazaar_settlement', targetId: id, after: { payout: r.payout.toString(), carriedToMonth: r.carriedToMonth, ...(earlyReason ? { earlyReason } : {}) } });
     revalidatePath('/admin/bazaar', 'layout');
     revalidatePath('/admin/in-kind-settlements');
     revalidatePath('/studio/bazaar', 'layout');

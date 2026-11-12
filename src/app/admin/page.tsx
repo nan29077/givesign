@@ -8,6 +8,7 @@ import { PAID_CHARGE_STATUSES } from '@/components/admin/constants';
 import { prisma } from '@/server/db';
 import { requireAdmin } from '@/server/auth';
 import { checkBaseData } from '@/server/services/base-data-check';
+import { lateCronJobs } from '@/server/services/cron-health';
 import { formatWon, formatNumber } from '@/lib/money';
 import { formatKst, kstStartOfDay, kstStartOfMonth } from '@/lib/datetime';
 import { chargeStatusLabel } from '@/lib/labels';
@@ -39,6 +40,7 @@ export default async function AdminDashboardPage() {
     openInquiries,
     recentCharges,
     baseDataProblems,
+    lateJobs,
   ] = await Promise.all([
     prisma.charge.aggregate({
       // 기관 대시보드(fundraising.ts)와 같은 기준: 승인 시각(paidAt) + 테스트 거래 제외.
@@ -79,6 +81,8 @@ export default async function AdminDashboardPage() {
     }),
     // 기준 데이터(현행 약관·전역 수수료/한도 정책)가 비면 조용히 기본값으로 돌아간다. 눈에 띄게 알린다.
     checkBaseData().catch(() => [] as string[]),
+    // 배치 지연·실패(2026-11-13 A-H1). 콘솔 알림과 같은 판정 — events 배치가 멈춰 알림이 못 가도 여기서 보인다.
+    lateCronJobs().catch(() => []),
   ]);
 
   const successRate = txTotal === 0 ? null : Math.round((txApproved / txTotal) * 1000) / 10;
@@ -203,6 +207,21 @@ export default async function AdminDashboardPage() {
               <Link href="/admin/fees" className="underline">수수료 정책</Link> ·{' '}
               <Link href="/admin/policies" className="underline">한도 정책</Link> 에서 채워 주세요.
               운영 DB 에서 <code>npm run db:seed</code> 를 실행하면 없는 기준 데이터만 넣습니다(계정·샘플은 만들지 않음).
+            </p>
+          </Notice>
+        ) : null}
+        {lateJobs.length > 0 ? (
+          <Notice tone="warning" title={`배치 ${lateJobs.length}개가 지연·실패 상태입니다`}>
+            <ul className="list-disc pl-4">
+              {lateJobs.slice(0, 8).map((j) => (
+                <li key={j.name}>
+                  {j.name} — {j.reason === 'LATE' ? '정해진 주기의 3배가 넘도록 실행되지 않음' : '마지막 실행 실패'}
+                  {j.lastFinishedAt ? ` (마지막 종료 ${formatKst(j.lastFinishedAt)})` : ''}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1">
+              <Link href="/admin/automation" className="underline">자동화 &gt; 배치·이벤트</Link> 에서 확인해 주세요. 외부 스케줄러가 없으면 서버 내장 실행기(CRON_RUNNER=internal)가 켜져 있어야 합니다.
             </p>
           </Notice>
         ) : null}

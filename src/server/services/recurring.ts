@@ -16,7 +16,7 @@ import { campaignOpen } from '@/lib/fundraising';
 import { currentTermsDoc } from './terms';
 import * as tpl from './mt-templates';
 import { PAID_STATUSES } from '@/components/studio/shared';
-import type { ChargeStatus, RecurringDonation } from '@/generated/prisma/client';
+import type { ChargeStatus, Prisma, RecurringDonation } from '@/generated/prisma/client';
 import {
   RECURRING_FAILURE_POLICY,
   RECURRING_FAILURE_CLASSES,
@@ -613,20 +613,26 @@ export async function runRecurringDonations(now = new Date(), budgetMs = BATCH_B
 
   // id 순 커서로 끝까지 훑는다. 건너뛴 약정(날짜를 그대로 두는 경우)이 같은 페이지를 다시 채워
   // 무한 반복하지 않도록 오프셋이 아니라 커서를 쓴다.
-  let cursor: string | null = null;
+  // 출금일이 빠른 약정부터(2026-11-13 점검 A-M4). 예전에는 id(생성) 순이라 대상이 몰리는 날 시간 상한에 걸리면
+  // 최근 약정이 매번 뒤로 밀렸다. 배치는 하루 세 번 돌고, 상한에 걸리면 남은 약정을 다음 실행이 이어 간다.
+  let cursor: { on: Date; id: string } | null = null;
   for (;;) {
     if (Date.now() - started > budgetMs) {
       summary.truncated = true;
       break;
     }
+    const after: Prisma.RecurringDonationWhereInput = cursor
+      ? { OR: [{ nextChargeOn: { gt: cursor.on } }, { nextChargeOn: cursor.on, id: { gt: cursor.id } }] }
+      : {};
     const page: DueRow[] = await prisma.recurringDonation.findMany({
-      where: { status: 'ACTIVE', nextChargeOn: { lte: dateCol(today) }, ...(cursor ? { id: { gt: cursor } } : {}) },
+      where: { status: 'ACTIVE', nextChargeOn: { lte: dateCol(today) }, ...after },
       include: { merchant: { select: { id: true, displayName: true, status: true } }, payer: { select: { displayName: true, phoneMasked: true } } },
-      orderBy: { id: 'asc' },
+      orderBy: [{ nextChargeOn: 'asc' }, { id: 'asc' }],
       take: PAGE_SIZE,
     });
     if (page.length === 0) break;
-    cursor = page[page.length - 1].id;
+    const tail = page[page.length - 1];
+    cursor = { on: tail.nextChargeOn as Date, id: tail.id };
 
     for (const r of page) {
       summary.checked += 1;

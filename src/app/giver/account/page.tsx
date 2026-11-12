@@ -47,6 +47,11 @@ export default async function GiverAccount() {
                 <Field label="주민등록번호" required hint="암호화해 보관하고 화면에는 가린 값만 보입니다."><Input name="resident" required inputMode="numeric" autoComplete="off" placeholder="900101-1234567" /></Field>
               </div>
               <Checkbox name="hometaxOptIn" defaultChecked={donor.hometaxOptIn} label="연말정산 간소화 서비스(국세청)에 기부 내역을 제출하는 데 동의합니다" />
+              <Checkbox
+                name="agree"
+                required
+                label="(필수) 기부금영수증 발급·국세청 제출을 위해 성명·주민등록번호를 수집·이용하는 데 동의합니다. 보관 기간은 관련 법령(소득세법 등)이 정한 기간이며, 동의하지 않으면 현물 기부금영수증을 발급할 수 없습니다."
+              />
             </ActionForm>
           </div>
         </Card>

@@ -1,5 +1,6 @@
 import { runCronJob } from '@/server/cron';
-import { expireMatches } from '@/server/services/bazaar';
+import { expireMatches, runBazaarSettlementAutomation } from '@/server/services/bazaar';
+import { remindExpiringMatches } from '@/server/services/bazaar-notify';
 import { isLiveBazaarEnabled } from '@/server/services/bazaar-settings';
 
 export const runtime = 'nodejs';
@@ -17,8 +18,13 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: Request) {
   return runCronJob(req, 'bazaar', 600, async () => {
-    if (!(await isLiveBazaarEnabled())) return { skipped: true, message: '라이브 바자회가 꺼져 있습니다.' };
-    const expiredMatches = await expireMatches();
-    return { expiredMatches };
+    const now = new Date();
+    // 정산은 스위치와 무관하다 — 꺼져도 확정된 정산은 계속 지급한다(2026-11-05 결정). 지난달 집계 자동 생성·지급일 알림(2026-11-13 B-M5).
+    const settlement = await runBazaarSettlementAutomation(now);
+    if (!(await isLiveBazaarEnabled())) return { skipped: true, message: '라이브 바자회가 꺼져 있어 매칭 처리는 건너뜁니다.', ...settlement };
+    const expiredMatches = await expireMatches(now);
+    // 수락 기한 하루 전 재알림(제안당 1회, 2026-11-13 B-M2)
+    const reminded = await remindExpiringMatches(now);
+    return { expiredMatches, reminded, ...settlement };
   });
 }

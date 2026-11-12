@@ -79,6 +79,9 @@ import { CRON_JOBS } from '@/server/cron-registry';
 
 // ---------------------------------------------------------------- 공용 준비
 
+/** 원장이 이번 달에 쌓이므로 이번 달 정산 확정은 사유가 필요하다(2026-11-13 B-M1). */
+const EARLY = { earlyReason: '테스트 — 이번 달 원장 확정' };
+
 async function makeAdmin(permission: 'SUPER_ADMIN' | 'OPERATION' | 'FINANCE' | 'SUPPORT' | 'READ_ONLY' = 'SUPER_ADMIN') {
   const u = await prisma.user.create({ data: { id: newId(), email: `admin-${newId()}@test.kr`, name: '관리자', role: 'ADMIN' } });
   await prisma.adminProfile.create({ data: { id: newId(), userId: u.id, permission } });
@@ -96,7 +99,7 @@ async function readyMerchant(merchantId: string) {
 async function corporateGiver() {
   return registerGiver({
     donorType: 'CORPORATE', email: `corp-${newId()}@test.kr`, password: 'x', passwordHash: 'x',
-    displayName: '(주)나눔상사', contactName: '홍담당', phone: '010-2222-3333', businessNo: '220-81-12345', representativeName: '나대표', address: '서울시 강남구',
+    displayName: '(주)나눔상사', contactName: '홍담당', phone: '010-2222-3333', businessNo: '220-81-12341', representativeName: '나대표', address: '서울시 강남구',
   });
 }
 
@@ -249,7 +252,7 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     const m1 = kstMonthKey();
     await generateSettlements(m1);
     const s1 = await prisma.bazaarSettlement.findFirstOrThrow({ where: { merchantId, month: m1 } });
-    expect((await confirmSettlement(s1.id, adminA)).status).toBe('CONFIRMED');
+    expect((await confirmSettlement(s1.id, adminA, EARLY)).status).toBe('CONFIRMED');
     await markSettlementPaid(s1.id, adminA, { transferRef: '이체', paidAt: new Date() });
 
     // 다음 달(열린 달)로 환불 10,000 만 들어옴 → 지급액 −7,000
@@ -258,7 +261,7 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     await generateSettlements(m2);
     const s2 = await prisma.bazaarSettlement.findFirstOrThrow({ where: { merchantId, month: m2 } });
     expect(s2.payout).toBe(-7000n);
-    const r = await confirmSettlement(s2.id, adminA);
+    const r = await confirmSettlement(s2.id, adminA, EARLY);
     expect(r.status).toBe('CARRIED');
     const m3 = nextMonth(m2);
     expect(r.carriedToMonth).toBe(m3);
@@ -272,7 +275,7 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     const m2sum = await prisma.bazaarLedger.aggregate({ where: { merchantId, month: m2 }, _sum: { amount: true } });
     expect(m2sum._sum.amount).toBe(0n);
     // 다시 확정·이월해도 두 번 반영되지 않는다
-    await expect(confirmSettlement(s2.id, adminA)).rejects.toThrow(/집계 상태/);
+    await expect(confirmSettlement(s2.id, adminA, EARLY)).rejects.toThrow(/집계 상태/);
     await expect(carryOverSettlement(s2.id, adminA)).rejects.toThrow(/확정/);
 
     // 다음 달 판매 20,000 → 귀속 14,000 − 이월 7,000 = 7,000
@@ -309,7 +312,7 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     await generateSettlements(month);
     const s = await prisma.bazaarSettlement.findFirstOrThrow({ where: { merchantId, month } });
     const batch2 = await createSaleBatch(adminB, { title: '2회', source: 'MANUAL', rows: [row(product.trackingCode, 5, 50000n)] });
-    await Promise.all([approveSaleBatch(batch2, { userId: adminA, superAdmin: false }), confirmSettlement(s.id, adminA)]);
+    await Promise.all([approveSaleBatch(batch2, { userId: adminA, superAdmin: false }), confirmSettlement(s.id, adminA, EARLY)]);
     const confirmed = await prisma.bazaarSettlement.findUniqueOrThrow({ where: { id: s.id } });
     const sale2 = await prisma.bazaarLedger.findFirstOrThrow({ where: { batchId: batch2, entryType: 'SALE' } });
     // 판매가 확정 정산에 들어갔으면 그 금액이 확정 금액에 포함되고, 아니면 다음 달 원장으로 갔다.
@@ -328,7 +331,7 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     const month = kstMonthKey();
     await generateSettlements(month);
     const s = await prisma.bazaarSettlement.findFirstOrThrow({ where: { merchantId, month } });
-    await Promise.all([confirmSettlement(s.id, adminA), generateSettlements(month), generateSettlements(month)]);
+    await Promise.all([confirmSettlement(s.id, adminA, EARLY), generateSettlements(month), generateSettlements(month)]);
     const after = await prisma.bazaarSettlement.findUniqueOrThrow({ where: { id: s.id } });
     expect(after.status).toBe('CONFIRMED');
     expect(after.gross).toBe(20000n);
@@ -637,8 +640,8 @@ describe('라이브 바자회 점검 조치 — 흐름·동시성', () => {
     const sep = lines.findIndex((l) => l.includes('법인·사업자 현물 기부'));
     expect(sep).toBeGreaterThan(0);
     const before = lines.slice(0, sep).join('\n');
-    expect(before).not.toContain('2208112345');
-    expect(lines.slice(sep).join('\n')).toContain('2208112345');
+    expect(before).not.toContain('2208112341');
+    expect(lines.slice(sep).join('\n')).toContain('2208112341');
     expect(lines[sep + 1]).toContain('사업자등록번호');
   });
 });

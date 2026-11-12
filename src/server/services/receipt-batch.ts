@@ -5,7 +5,8 @@ import { logger } from '@/lib/logger';
 import { PAID_STATUSES } from '@/components/studio/shared';
 import { emitDomainEventSafe } from './events';
 import { registerApprovalHandler, requestApproval, ApprovalError } from './approvals';
-import { issueReceiptsBulk, issuerReadiness, receiptCandidates } from './receipts';
+import { issueReceiptsBulk, issuerReadiness, receiptCandidates, eligibleCharges, eligibleOfflineDonations, reissueReceipt, ReceiptError } from './receipts';
+import { notifyUser } from './notifications';
 
 /**
  * 연 1회 기부금영수증 준비 (영수증 주기 YEARLY 기관).
@@ -149,10 +150,77 @@ interface BatchProgress {
   failed?: number;
 }
 
+/**
+ * 환불로 무효 처리된 영수증의 후속(2026-11-13 점검 A-M2).
+ *
+ * 환불이 끝나면 그 후원이 묶인 영수증 전체가 무효가 된다(절대 규칙 9). 예전에는 기관이 무효 행을 찾아 직접 재발급해야 했고
+ * 알림도 없어, 재발급하지 않으면 그 후원자의 **남은 정상 후원까지** 영수증·홈택스 명세에서 빠졌다.
+ *  - 남은 발급 대상(같은 해 결제 성공 건·포함 설정 시 확정 계좌이체)이 있으면 승인 요청 RECEIPT_REISSUE 를 쌓는다(무효 영수증당 1건).
+ *  - 기관 담당자에게 콘솔 알림. 남은 후원이 없으면 알림만(재발급할 것이 없음).
+ *  - 승인하면 reissueReceipt — 새 번호로 발급, 무효 영수증과 이어 붙이고 후원자에게 새 영수증 링크 문자(발급 안내와 같음).
+ *  - 실패해도 환불 결과는 바뀌지 않는다(호출부가 오류를 기록만 한다).
+ */
+export async function requestReissueAfterRefund(voided: { id: string; merchantId: string; payerId: string; taxYear: number; receiptNo: string }) {
+  const [charges, offline, merchant, payer] = await Promise.all([
+    eligibleCharges(voided.merchantId, voided.payerId, voided.taxYear),
+    eligibleOfflineDonations(voided.merchantId, voided.payerId, voided.taxYear),
+    prisma.merchantProfile.findUnique({ where: { id: voided.merchantId }, select: { userId: true } }),
+    prisma.payerProfile.findUnique({ where: { id: voided.payerId }, select: { displayName: true, phoneMasked: true, onboardingStatus: true } }),
+  ]);
+  const remaining = charges.length + offline.length;
+  const total = charges.reduce((a, c) => a + c.amount, 0n) + offline.reduce((a, o) => a + o.amount, 0n);
+  const who = payer?.displayName || payer?.phoneMasked || '후원자';
+  let requested = false;
+  if (remaining > 0 && payer?.onboardingStatus !== 'WITHDRAWN') {
+    const r = await requestApproval({
+      merchantId: voided.merchantId,
+      kind: 'RECEIPT_REISSUE',
+      title: `${voided.taxYear}년 기부금영수증 재발급 — ${who}님`,
+      summary: `환불로 ${voided.receiptNo} 가 무효 처리되었습니다. 남은 후원 ${remaining}건 합계 ${formatWon(total)}으로 새 영수증을 발급합니다.`,
+      payload: { receiptId: voided.id, taxYear: voided.taxYear, remaining, total },
+      subjectType: 'donation_receipt',
+      subjectId: voided.id,
+      payerId: voided.payerId,
+      dedupeKey: `receipt-reissue:${voided.id}`,
+    });
+    requested = r.created;
+  }
+  if (merchant) {
+    await notifyUser({
+      userId: merchant.userId,
+      title: '환불로 기부금영수증이 무효 처리되었습니다',
+      body: requested
+        ? `${who}님 ${voided.receiptNo} — 남은 후원 ${remaining}건(${formatWon(total)})으로 재발급할 수 있습니다. 승인 대기함에서 승인해 주세요.`
+        : `${who}님 ${voided.receiptNo} — 같은 해에 남은 후원이 없어 재발급할 것이 없습니다.`,
+      linkUrl: requested ? '/studio/inbox' : '/studio/receipts',
+    }).catch(() => undefined);
+  }
+  return { requested, remaining };
+}
+
 let registered = false;
 export function registerReceiptBatchHandler() {
   if (registered) return;
   registered = true;
+  registerApprovalHandler('RECEIPT_REISSUE', {
+    async onApprove(req, userId) {
+      const receiptId = String(req.payload.receiptId ?? '');
+      const old = await prisma.donationReceipt.findFirst({ where: { id: receiptId, merchantId: req.merchantId }, select: { id: true, status: true, supersededById: true } });
+      if (!old) throw new ApprovalError('무효 처리된 영수증을 찾을 수 없습니다.');
+      // 다시 불려도 같은 결과(이미 재발급됐으면 성공으로 본다 — approvals.ts 규칙)
+      if (old.supersededById) {
+        const next = await prisma.donationReceipt.findUnique({ where: { id: old.supersededById }, select: { receiptNo: true } });
+        return `이미 재발급했습니다(${next?.receiptNo ?? ''}).`;
+      }
+      try {
+        const r = await reissueReceipt(old.id, userId);
+        return `새 영수증 ${r.receipt.receiptNo}(${formatWon(r.receipt.totalAmount)})을 발급하고 후원자에게 안내했습니다.`;
+      } catch (e) {
+        if (e instanceof ReceiptError) throw new ApprovalError(e.message);
+        throw e;
+      }
+    },
+  });
   registerApprovalHandler('RECEIPT_BATCH', {
     // 승인 즉시 발급하는 경로(배치가 없는 호출부 호환). 기본은 아래 execute 로 배치가 나눠 발급한다.
     async onApprove(req, userId) {

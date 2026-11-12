@@ -118,7 +118,7 @@ try {
   await R.step('기부자: 기업 회원 가입 → 기부자 콘솔', async () => {
     await go(giver, '/bazaar/join');
     await giver.fill('input[name=displayName]', '(주)나눔상사');
-    await giver.fill('input[name=businessNo]', '220-81-12345');
+    await giver.fill('input[name=businessNo]', '220-81-12341');
     await giver.fill('input[name=representativeName]', '나대표');
     await giver.fill('input[name=contactName]', '홍담당');
     await giver.fill('input[name=phone]', '010-2222-3333');
@@ -200,7 +200,7 @@ try {
     await giver.waitForURL(/\/giver\/receipts\/.+/);
     await shot(giver, '07_현물기부금영수증');
     const doc = await bodyText(giver);
-    return doc.includes('285,000') && doc.includes('220-81-12345');
+    return doc.includes('285,000') && doc.includes('220-81-12341');
   });
 
   // ------------------------------------------------------------ 7. 상품·편성
@@ -257,9 +257,15 @@ try {
     await submit(admin, '승인(원장 반영)', '66,500원'); // (100,000-5,000)×70%
   });
   await R.step('관리자: 월 정산 집계·확정·지급', async () => {
-    await go(admin, '/admin/in-kind-settlements');
+    // 2026-11-13 B-M1: 기본 화면은 지난달(끝난 달). 이 시나리오의 판매는 이번 달이라 이번 달을 열고,
+    // 사유 없이 확정하면 거절되는 것을 본 뒤 최고관리자 사유(행사 조기 마감)로 확정한다.
+    const thisMonth = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 7);
+    await go(admin, `/admin/in-kind-settlements?month=${thisMonth}`);
     await submit(admin, '집계하기', '정산을 집계했습니다');
-    await go(admin, '/admin/in-kind-settlements');
+    await go(admin, `/admin/in-kind-settlements?month=${thisMonth}`);
+    await submit(admin, '확정', '아직 끝나지 않은 달', { exact: true });
+    await go(admin, `/admin/in-kind-settlements?month=${thisMonth}`);
+    await admin.fill('input[name=earlyReason]', '시뮬레이션 — 행사 조기 마감');
     await submit(admin, '확정', '정산을 확정했습니다', { exact: true });
     await go(admin, '/admin/in-kind-settlements');
     await admin.fill('input[name=transferRef]', '국민 이체 0001');

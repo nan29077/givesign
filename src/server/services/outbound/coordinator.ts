@@ -11,6 +11,7 @@ import {
   OUTBOUND_BUNDLE_TEMPLATE,
   OUTBOUND_MAX_DEFERRALS,
   RELATIONAL_WEEKLY_CAP,
+  TIMELY_JOURNEY_STEP_KEYS,
   lmsBytes,
   relationalLabel,
   relationalPriority,
@@ -60,7 +61,7 @@ type Db = Prisma.TransactionClient | typeof prisma;
  */
 export async function relationalCapCount(db: Db, merchantId: string, payerId: string | null, now: Date, excludeLockedBy?: string): Promise<number> {
   const since = new Date(now.getTime() - 7 * DAY);
-  const journey = await db.journeyStepLog.count({ where: { merchantId, payerId, sent: true, at: { gte: since } } });
+  const journey = await db.journeyStepLog.count({ where: { merchantId, payerId, sent: true, at: { gte: since }, stepKey: { notIn: [...TIMELY_JOURNEY_STEP_KEYS] } } });
   if (!payerId || !coordinatorEnabled()) return journey;
   const queued = await db.outboundQueue.count({
     // 보내는 중(SENDING)도 센다 — 단, 지금 이 실행이 잡은 안내(아직 보내지 않음)는 뺀다.
@@ -228,6 +229,22 @@ async function propagate(item: QueueRow, outcome: 'SENT' | 'FAILED' | 'SKIPPED',
     }
   } catch (e) {
     logger.warn('발송 대기열 결과 기록 실패', { itemId: item.id, message: (e as Error).message });
+  }
+}
+
+/** 대기열에서 멈춘(결과 미확인) 건을 원천에 반영한다. 실패해도 대기열 결과는 그대로다. */
+async function propagateUnknown(item: QueueRow) {
+  const note = '발송 결과 미확인(보내는 도중 멈춤) — 다시 보내지 않았습니다';
+  try {
+    if (item.source === 'journey') {
+      await prisma.journeyStepLog.updateMany({ where: { dedupeKey: item.sendKey }, data: { outcome: 'UNKNOWN', detail: note } });
+    } else if (item.source === 'issued_document' && item.sourceId) {
+      await prisma.issuedDocument.updateMany({ where: { id: item.sourceId, sentAt: null }, data: { sendError: note } });
+    } else if (item.source === 'notice' && item.sourceId) {
+      await prisma.noticeDelivery.updateMany({ where: { id: item.sourceId, status: 'QUEUED' }, data: { status: 'UNKNOWN', reason: '발송 결과 미확인' } });
+    }
+  } catch (e) {
+    logger.warn('발송 대기열 결과 미확인 반영 실패', { itemId: item.id, message: (e as Error).message });
   }
 }
 
@@ -425,11 +442,19 @@ export async function flushDueOutbound(opts: { now?: Date; limit?: number; budge
   const started = Date.now();
   const now = opts.now ?? new Date();
   const out = { payers: 0, messages: 0, stale: 0, purged: 0 };
-  const stale = await prisma.outboundQueue.updateMany({
-    where: { status: 'SENDING', lockedAt: { lt: new Date(now.getTime() - SENDING_STALE_MS) } },
-    data: { status: 'UNKNOWN', lockedAt: null, lockedBy: null, templateEnc: null, lastReason: '발송 중 멈춤 — 두 번 보내지 않도록 다시 보내지 않음' },
-  });
-  out.stale = stale.count;
+  // 보내는 도중 멈춘 건: 두 번 보내지 않도록 다시 보내지 않고 결과 미확인으로 닫는다. 원천(저니 단계·발급 문서·월간 안내 기록)에도
+  // "결과 미확인" 을 적는다 — 예전에는 원천이 '대기'·'발송 완료' 로 남아 기관 화면 숫자가 실제와 어긋났다(2026-11-13 점검 A-M6).
+  const staleCut = new Date(now.getTime() - SENDING_STALE_MS);
+  const staleRows = await prisma.outboundQueue.findMany({ where: { status: 'SENDING', lockedAt: { lt: staleCut } }, take: 500 });
+  for (const it of staleRows) {
+    const r = await prisma.outboundQueue.updateMany({
+      where: { id: it.id, status: 'SENDING', lockedAt: { lt: staleCut } },
+      data: { status: 'UNKNOWN', lockedAt: null, lockedBy: null, templateEnc: null, lastReason: '발송 중 멈춤 — 두 번 보내지 않도록 다시 보내지 않음' },
+    });
+    if (r.count !== 1) continue;
+    out.stale += 1;
+    await propagateUnknown(it);
+  }
   // 스위치를 끈 뒤에도 이미 쌓인 안내는 보낸다(쌓을 때 약속한 발송). 새로 쌓이지는 않는다.
   {
     const groups = await prisma.outboundQueue.groupBy({

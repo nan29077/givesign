@@ -355,7 +355,7 @@ export function isMonthKey(v: string): boolean {
 // ---------------------------------------------------------------- 판매 결과 파일(CSV)
 /**
  * 판매 결과 업로드 양식.
- * 열: 추적코드(또는 상품명에 포함), 판매수량, 판매금액, 환불수량, 환불금액, 반송비, 반송비부담(기관/기브싸인/없음), 메모
+ * 열: 추적코드(또는 상품명에 포함), 판매수량, 판매금액(상품 대금 — 배송비 제외), 환불수량, 환불금액(상품 대금), 반송비, 반송비부담(기관/기브싸인/없음), 메모
  * 셀러브릭스 주문 화면을 옮겨 적거나 내려받은 표를 이 순서로 맞춰 올린다.
  */
 export const SALE_CSV_HEADER = ['추적코드', '판매수량', '판매금액', '환불수량', '환불금액', '반송비', '반송비부담', '메모'] as const;
@@ -513,12 +513,14 @@ export function parseSaleCsv(text: string): ParsedSaleRow[] {
 
 /**
  * 판매 금액이 수량 × 판매가와 크게 다르면 입력 실수로 본다(쉼표 밀림·자릿수 오타).
- * 할인·배송비·가격 변경을 감안해 수량 × 판매가의 절반 미만, 수량 × (판매가 + 배송비)의 2배 초과만 거절한다.
+ * 판매금액은 상품 대금만(배송비 제외)이다. 할인·가격 변경을 감안해 수량 × 판매가의 절반 미만, 2배 초과만 거절한다.
+ * (배송비는 구매자가 낸 배송 실비라 위탁판매 수수료·기관 귀속 계산에 넣지 않는다 — 2026-11-13 결정)
  */
-export function amountMismatch(qty: number, amount: bigint, salePrice: bigint, shippingFee: bigint): boolean {
+export function amountMismatch(qty: number, amount: bigint, salePrice: bigint, _shippingFee: bigint = 0n): boolean {
   if (qty <= 0) return false;
+  // 판매금액은 상품 대금만이다(배송비 제외 — 2026-11-13 결정, 점검 B-M4). 배송비를 넣으면 수수료·기관 귀속액이 배송비에도 붙는다.
   const low = (BigInt(qty) * salePrice) / 2n;
-  const high = BigInt(qty) * (salePrice + shippingFee) * 2n;
+  const high = BigInt(qty) * salePrice * 2n;
   return amount < low || amount > high;
 }
 

@@ -29,5 +29,10 @@ export async function register() {
   if (env.appEnv !== 'prod') {
     console.info(`[env] APP_ENV=${env.appEnv} / NODE_ENV=${env.nodeEnv} 로 기동합니다.`);
   }
+
+  // 배치 내장 실행기(2026-11-13 점검 A-H1). 외부 스케줄러가 없으면 서버가 등록부 주기대로 자기 배치 주소를 부른다.
+  // CRON_RUNNER=external(외부 스케줄러만) · off 로 끈다. 테스트·빌드 중에는 켜지지 않는다.
+  const { startCronRunner } = await import('@/server/cron-runner');
+  startCronRunner();
   }
 }

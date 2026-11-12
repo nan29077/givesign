@@ -8,7 +8,7 @@ import { getStudioPendingCounts } from './studio-pending';
 
 /** 승인 요청 → 열 화면(2026-11-09 3차 H: 결과 보고·연간 통보 추가) */
 function approvalHref(kind: string): string {
-  if (kind === 'RECEIPT_BATCH') return '/studio/receipts';
+  if (kind === 'RECEIPT_BATCH' || kind === 'RECEIPT_REISSUE') return '/studio/receipts';
   if (kind === 'IMPACT_REPORT_SEND') return '/studio/impact';
   if (kind === 'ANNUAL_NOTICE_SEND') return '/studio/reports/legal';
   return '/studio/journeys';

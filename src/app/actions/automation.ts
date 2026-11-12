@@ -10,7 +10,7 @@ import type { ContentKind, SocialPlatform } from '@/generated/prisma/enums';
 import { decideVolunteer, recordVolunteerActivity, VolunteerError } from '@/server/services/volunteers';
 import { commitSupporterImport, ImportError, PLEDGE_REMINDER_INTERVAL_DAYS, previewSupporterImport, sendPledgeReminders, type ImportPreviewRow } from '@/server/services/supporters';
 import { AlimtalkConfigError, ALIMTALK_TEMPLATES, saveAlimtalkChannel } from '@/server/services/alimtalk';
-import { runMerchantNoticeDetailed, previousMonthKey } from '@/server/services/monthly-notice';
+import { runMerchantNoticeDetailed, previousMonthKey, runMonthlyReceipts } from '@/server/services/monthly-notice';
 import {
   approveContent,
   archiveContent,
@@ -182,7 +182,10 @@ export async function saveNoticeSettingsAction(_p: StudioActionState, f: FormDat
 export async function runNoticeNowAction(_p: StudioActionState) {
   return withMerchant(async (merchantId) => {
     const month = previousMonthKey();
+    // 매월 발급 기관은 안내 전에 미발급 영수증을 발급한다(예전에는 안내 안에서 했다 — 배치와 같은 함수, 2026-11-13 A-H2).
+    const receipts = await runMonthlyReceipts(new Date(), { merchantId }).catch(() => null);
     const { outcome, run: r } = await runMerchantNoticeDetailed(merchantId, month);
+    if (r && receipts?.issued) await prisma.noticeRun.update({ where: { id: r.id }, data: { receiptsIssued: { increment: receipts.issued } } }).catch(() => undefined);
     revalidatePath('/studio/notices');
     if (outcome === 'BUSY') return { ok: true, message: `${month} 안내를 이미 보내는 중입니다. 잠시 뒤 결과를 확인해 주세요.` };
     if (!r) return { ok: true, message: `${month} 안내는 이미 보냈습니다. 같은 달은 한 번만 보냅니다.` };

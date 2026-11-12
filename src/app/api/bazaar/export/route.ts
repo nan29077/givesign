@@ -103,7 +103,7 @@ export async function GET(req: Request) {
         items: { orderBy: { seq: 'asc' } },
         receipts: { where: { status: 'ISSUED' }, select: { receiptNo: true, totalAmount: true } },
         inbound: { select: { receivedAt: true } },
-        products: { select: { id: true, itemId: true, quantity: true, status: true, remainingAction: true } },
+        products: { select: { id: true, itemId: true, quantity: true, status: true, remainingAction: true, returnedQty: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -131,7 +131,8 @@ export async function GET(req: Request) {
           it.quantity,
           it.acceptedQty ?? '',
           it.unitValue ?? '',
-          it.unitValue != null && it.acceptedQty != null ? it.unitValue * BigInt(it.acceptedQty) : '',
+          // 영수증 가액 = 확정 단가 × (합격 수량 − 기부자 반환 수량) — 발급 규칙과 같게(2026-11-13 B-L1)
+          it.unitValue != null && it.acceptedQty != null ? it.unitValue * BigInt(Math.max(it.acceptedQty - (prod?.returnedQty ?? 0), 0)) : '',
           d.receipts.map((r) => r.receiptNo).join(' '),
           d.inbound ? formatKst(d.inbound.receivedAt, false) : '',
           prod ? sold : '',

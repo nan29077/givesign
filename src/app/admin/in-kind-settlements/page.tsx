@@ -13,6 +13,7 @@ import { carryOverSettlementAction, confirmSettlementAction, generateSettlements
 import { settlementStatusLabel } from '@/lib/bazaar';
 import { formatWon } from '@/lib/money';
 import { formatKst, kstDateKey, kstMonthKey } from '@/lib/datetime';
+import { previousMonthKey } from '@/server/services/monthly-notice';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,9 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
   await requireAdmin();
   const enabled = await isLiveBazaarEnabled();
   const sp = await searchParams;
-  const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : kstMonthKey();
+  // 기본은 지난달(끝난 달)을 집계·확정한다(2026-11-13 B-M1). 이번 달은 주소 ?month= 로 미리 볼 수 있다.
+  const thisMonth = kstMonthKey();
+  const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : previousMonthKey();
   const [settlements, recon] = await Promise.all([
     prisma.bazaarSettlement.findMany({ orderBy: [{ month: 'desc' }, { status: 'asc' }], take: 200, include: { merchant: { select: { displayName: true, settlementAccount: { select: { bankName: true, accountTail4: true, holderMasked: true } } } } } }),
     enabled ? prisma.bazaarReconcile.findMany({ orderBy: { createdAt: 'desc' }, take: 12 }) : Promise.resolve([]),
@@ -38,7 +41,7 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
       {enabled ? <BazaarSubNav items={ADMIN_BAZAAR_TABS} current="/admin/in-kind-settlements" /> : null}
       <Card>
         <CardTitle>월 정산 집계</CardTitle>
-        <p className="mt-1 text-[12.5px] text-ink-500">해당 월 원장(승인된 판매 결과·반송비·전월 이월)을 기관별로 모읍니다. 이미 확정·지급·이월된 정산은 바뀌지 않으며, 확정 뒤 들어온 판매는 다음 달로 넘어갑니다. 지급액이 0원 이하이면 확정할 때 지급 없이 다음 달 정산으로 넘어갑니다(다음 정산에서 차감).</p>
+        <p className="mt-1 text-[12.5px] text-ink-500">끝난 달만 확정합니다(지난달 집계는 매월 1일 자동으로 만들어집니다). 이번 달은 미리 집계해 볼 수 있고, 행사 조기 마감 등으로 꼭 확정해야 하면 최고관리자가 사유를 적어 확정합니다. 해당 월 원장(승인된 판매 결과·반송비·전월 이월)을 기관별로 모읍니다. 이미 확정·지급·이월된 정산은 바뀌지 않으며, 확정 뒤 들어온 판매는 다음 달로 넘어갑니다. 지급액이 0원 이하이면 확정할 때 지급 없이 다음 달 정산으로 넘어갑니다(다음 정산에서 차감).</p>
         <div className="mt-3"><ActionForm action={generateSettlementsAction} submitLabel="집계하기"><AdminField label="정산 월"><AdminInput type="month" name="month" defaultValue={month} /></AdminField></ActionForm></div>
       </Card>
 
@@ -60,7 +63,7 @@ export default async function InKindSettlementsPage({ searchParams }: { searchPa
                 <Td>
                   <LabelBadge map={settlementStatusLabel} value={s.status} />
                   {s.transferRef ? <span className="block text-[11px] text-ink-400">{s.transferRef}</span> : null}
-                  {s.status === 'DRAFT' ? <div className="mt-1"><ActionForm action={confirmSettlementAction} submitLabel="확정" compact confirm={`${s.merchant.displayName} ${s.month} 정산을 확정할까요? 확정 금액은 바뀌지 않습니다.${s.payout <= 0n ? ' 지급액이 0원 이하라 지급 없이 다음 달로 넘어갑니다.' : ''}`}><input type="hidden" name="settlementId" value={s.id} /></ActionForm></div> : null}
+                  {s.status === 'DRAFT' ? <div className="mt-1"><ActionForm action={confirmSettlementAction} submitLabel="확정" compact confirm={`${s.merchant.displayName} ${s.month} 정산을 확정할까요? 확정 금액은 바뀌지 않습니다.${s.payout <= 0n ? ' 지급액이 0원 이하라 지급 없이 다음 달로 넘어갑니다.' : ''}`}><input type="hidden" name="settlementId" value={s.id} />{s.month >= thisMonth ? <AdminInput name="earlyReason" placeholder="월 마감 전 확정 사유(최고관리자)" aria-label="월 마감 전 확정 사유" /> : null}</ActionForm></div> : null}
                   {s.status === 'CONFIRMED' && s.payout <= 0n ? (
                     <div className="mt-1"><ActionForm action={carryOverSettlementAction} submitLabel="다음 달로 이월" compact confirm="지급할 금액이 없는 정산입니다. 다음 달 정산으로 넘기고 마감할까요? 되돌릴 수 없습니다."><input type="hidden" name="settlementId" value={s.id} /></ActionForm></div>
                   ) : null}

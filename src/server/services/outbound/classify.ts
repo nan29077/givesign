@@ -110,6 +110,11 @@ export function isRelationalTemplate(code: string | null | undefined): boolean {
 
 /** 기관·후원자당 관계·정보형 안내 7일 상한(11-06 미결정: 기준은 (기관, 후원자) 유지 — 대표 결정 전). 저니 상한과 같은 값. */
 export const RELATIONAL_WEEKLY_CAP = 3;
+/**
+ * 때가 정해진 저니 문자 단계(봉사 전날 안내·정기후원 재개 방법). 하루 미뤄지면 의미가 없어 7일 상한을 적용하지 않고
+ * 상한 계산에도 넣지 않는다(2026-11-13 점검 A-L1). 단계 정의의 `timely: true` 와 같은 목록으로 맞춘다.
+ */
+export const TIMELY_JOURNEY_STEP_KEYS = ['reminder', 'resume-guide'] as const;
 /** 상한·담당자 확인으로 대기열 안내를 하루씩 미루는 최대 횟수. 넘으면 건너뛰고 기록한다. */
 export const OUTBOUND_MAX_DEFERRALS = 3;
 /** 묶음 발송 본문 상한(LMS 2,000바이트, 한글 2바이트 기준). 넘으면 둘로 나눈다. */

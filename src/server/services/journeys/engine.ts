@@ -30,6 +30,10 @@ export const JOURNEY_LEASE_MS = 5 * 60_000;
 /** 7일 상한 — 통합 발송 관리의 관계·정보형 상한과 같은 상수(코드 한 곳, 2026-11-09 D2) */
 export const JOURNEY_WEEKLY_SEND_CAP = RELATIONAL_WEEKLY_CAP;
 export const JOURNEY_MAX_DEFERRALS = 14;
+/** 저니 단계 승인 기한(일). 지나면 그 실행은 멈춘다(2026-11-13 점검 A-L3). */
+export const JOURNEY_APPROVAL_TTL_DAYS = 14;
+/** 보내는 도중 예외로 끝나 실제 발송 여부를 모르는 문자 단계(2026-11-13 점검 A-M7) */
+export const JOURNEY_UNKNOWN_DETAIL = '이전 발송 시도의 결과를 확인하지 못해 다시 보내지 않았습니다(결과 미확인 — 필요하면 직접 연락해 주세요)';
 const QUIET_START = 21; // 21시부터
 const QUIET_END = 9; // 9시 전까지
 /** JOURNEY_QUIET_HOURS=off 이면 야간 보류를 끈다(테스트·특수 운영용). 기본은 켜짐. */
@@ -210,6 +214,8 @@ async function sendGuard(run: RunRow, now: Date, step?: StepDef): Promise<StepOu
   }
   if (isQuietHour(now)) return { type: 'retry', until: nextMorning(now), detail: '야간 발송 보류' };
   // 7일 상한은 저니 밖 관계·정보형 안내(월간 안내 등 발송 대기열)까지 합쳐 센다(2026-11-09 D2-3).
+  // 때가 정해진 안내(봉사 전날·정기후원 재개 방법)는 상한에 걸려 하루 미뤄지면 의미가 없어 상한을 적용하지 않는다(2026-11-13 점검 A-L1).
+  if (step?.timely) return null;
   const sent = await relationalCapCount(prisma, run.merchantId, run.payerId, now);
   if (sent >= JOURNEY_WEEKLY_SEND_CAP) return { type: 'retry', until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
   return null;
@@ -235,7 +241,7 @@ async function reserveSend(run: RunRow, step: StepDef, now: Date): Promise<Reser
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`journey-send:${run.merchantId}:${run.payerId ?? '-'}`}))`;
       const existing = await tx.journeyStepLog.findUnique({ where: { dedupeKey: key }, select: { id: true } });
       if (existing) return { type: 'already' as const };
-      const sent = await relationalCapCount(tx, run.merchantId, run.payerId, now);
+      const sent = step.timely ? 0 : await relationalCapCount(tx, run.merchantId, run.payerId, now);
       if (sent >= JOURNEY_WEEKLY_SEND_CAP) {
         return { type: 'retry' as const, until: new Date(now.getTime() + 86_400_000), detail: `후원자당 7일 ${JOURNEY_WEEKLY_SEND_CAP}건 상한` };
       }
@@ -310,6 +316,7 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
     };
     let outcome: StepOutcome;
     let reservedId: string | null = null;
+    let unknownResult = false;
     try {
       // 1) 반려된 단계는 건너뛴다
       if (ctx.rejected?.[step.key]) outcome = { type: 'skip', detail: '담당자가 반려함' };
@@ -334,6 +341,8 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
               subjectId: run.subjectId ?? undefined,
               payerId: run.payerId,
               dedupeKey: `journey:${run.id}:${step.key}`,
+              // 몇 달 뒤 승인해 그때 감사장이 나가지 않게 기한을 둔다(2026-11-13 점검 A-L3). 지나면 stopExpiredJourneyApprovals 가 실행을 멈춘다.
+              expiresAt: new Date(now.getTime() + JOURNEY_APPROVAL_TTL_DAYS * 86_400_000),
             });
             await log(run, idx, step, 'AWAITING_APPROVAL', '승인 대기함에 올림');
             return finish('AWAITING_APPROVAL');
@@ -343,8 +352,20 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
             if (r.type === 'already') {
               // 문자 단계: 앞선 실행이 이미 보냈다(또는 보내다 멈췄다 — 두 번 보내는 것보다 안전하다).
               // 문서 단계: 발급 자체가 dedupeKey 로 한 번이라 다시 불러 결과만 맞춘다.
-              outcome = step.kind === 'document' ? await step.run(env) : { type: 'skip', detail: '이미 보낸 단계' };
-              if (outcome.type === 'done') outcome = { ...outcome, sent: false };
+              const sendKey = journeySendKey(run.id, step.key);
+              const prev = await prisma.journeyStepLog.findUnique({ where: { dedupeKey: sendKey }, select: { id: true, outcome: true } });
+              if (step.kind === 'document') {
+                outcome = await step.run(env);
+                // 앞선 시도가 일시 오류로 끝났고 이번에 발급됐으면 예약 행을 완료로 맞춘다(2026-11-13 점검 A-M1).
+                if (outcome.type === 'done' && prev?.outcome === 'FAILED') {
+                  await prisma.journeyStepLog.update({ where: { id: prev.id }, data: { outcome: 'DONE', sent: true, detail: outcome.detail?.slice(0, 300) ?? null } }).catch(() => undefined);
+                  reservedId = prev.id;
+                } else if (outcome.type === 'done') outcome = { ...outcome, sent: false };
+              } else if (prev?.outcome === 'FAILED') {
+                // 보내는 도중 예외 — 실제로 나갔는지 알 수 없다. 다시 보내지 않고 "결과 미확인" 으로 남긴다(2026-11-13 점검 A-M7).
+                outcome = { type: 'skip', detail: JOURNEY_UNKNOWN_DETAIL };
+                unknownResult = true;
+              } else outcome = { type: 'skip', detail: '이미 보낸 단계' };
             } else if (r.type !== 'reserved') outcome = r;
             else {
               reservedId = r.id;
@@ -358,7 +379,10 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
                   throw e;
                 }
                 // 보냈는지 모르는 예외 — 예약을 남겨 두어 다시 보내지 않는다(월간 안내와 같은 기준).
-                await prisma.journeyStepLog.update({ where: { id: r.id }, data: { outcome: 'FAILED', detail: (e as Error).message.slice(0, 300) } }).catch(() => undefined);
+                // 문서 단계는 발급이 실패하면 아무것도 나가지 않으므로 상한에서 뺀다(다음 시도가 같은 발급 키로 다시 발급한다).
+                await prisma.journeyStepLog
+                  .update({ where: { id: r.id }, data: { outcome: 'FAILED', detail: (e as Error).message.slice(0, 300), ...(step.kind === 'document' ? { sent: false } : {}) } })
+                  .catch(() => undefined);
                 reservedId = null;
                 throw e;
               }
@@ -391,7 +415,7 @@ export async function advanceRun(runId: string, now = new Date()): Promise<{ sta
       case 'done':
       case 'skip': {
         // 예약 행이 이미 DONE·sent 로 남았으면 다시 쓰지 않는다(상한에 두 번 세지 않게).
-        if (!reservedId) await log(run, idx, step, outcome.type === 'done' ? 'DONE' : 'SKIPPED', outcome.detail, outcome.type === 'done' && Boolean(outcome.sent));
+        if (!reservedId) await log(run, idx, step, unknownResult ? 'UNKNOWN' : outcome.type === 'done' ? 'DONE' : 'SKIPPED', outcome.detail, outcome.type === 'done' && Boolean(outcome.sent));
         // 보류 횟수는 단계마다 센다 — 다음 단계로 넘어가면 0 부터(점검 A 낮음).
         run = await prisma.journeyRun.update({
           where: { id: runId },
@@ -544,6 +568,34 @@ async function cancelRunsForSubject(ev: StoredDomainEvent, subjectType: string, 
       data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: text.log, merchantId: ev.merchantId, payerId: run.payerId },
     });
   }
+}
+
+/**
+ * 승인 기한이 지난 저니 실행 멈추기(2026-11-13 점검 A-L3). 승인 대기로 기한(14일) 넘게 머문 실행을 STOPPED 로 닫고
+ * 남은 승인 요청을 취소한다. 기한이 생기기 전에 쌓인 승인 대기도 같은 기준(마지막 갱신 시각)으로 정리된다.
+ */
+export async function stopExpiredJourneyApprovals(now = new Date()) {
+  const cut = new Date(now.getTime() - JOURNEY_APPROVAL_TTL_DAYS * 86_400_000);
+  const runs = await prisma.journeyRun.findMany({
+    where: { status: 'AWAITING_APPROVAL', updatedAt: { lt: cut } },
+    select: { id: true, merchantId: true, journeyKey: true, stepIndex: true, payerId: true },
+    take: 200,
+  });
+  let stopped = 0;
+  for (const run of runs) {
+    const r = await prisma.journeyRun.updateMany({
+      where: { id: run.id, status: 'AWAITING_APPROVAL', updatedAt: { lt: cut } },
+      data: { status: 'STOPPED', finishedAt: now, lockedAt: null, lockedBy: null, lastError: '승인 기한 지남' },
+    });
+    if (r.count === 0) continue;
+    stopped += 1;
+    const step = journeyDef(run.journeyKey)?.steps[run.stepIndex];
+    if (step) await cancelApproval(`journey:${run.id}:${step.key}`, '승인 기한 지남');
+    await prisma.journeyStepLog.create({
+      data: { id: newId(), runId: run.id, stepIndex: run.stepIndex, stepKey: step?.key ?? '-', outcome: 'STOPPED', detail: `승인 기한(${JOURNEY_APPROVAL_TTL_DAYS}일)이 지나 멈춤`, merchantId: run.merchantId, payerId: run.payerId },
+    });
+  }
+  return stopped;
 }
 
 /**

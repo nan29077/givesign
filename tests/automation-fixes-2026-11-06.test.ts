@@ -361,23 +361,22 @@ describe('A-3 선점 시각 = 잡는 순간, 배치 시간 상한, 문자 단계
   });
 
   it.skipIf(singleBackend)('[낮음] 7일 3건 상한은 동시에 도는 실행끼리도 넘지 않는다(후원자 단위 잠금)', async () => {
-    // 이미 2건 보낸 상태
+    // 이미 2건 보낸 상태. 2026-11-13 A-L1: 재개 방법·봉사 전날 안내는 때가 정해져 상한에서 빠지므로,
+    // 상한 대상인 연초 영수증 정보 안내 단계로 확인한다.
+    await makeIssuer();
     for (let i = 0; i < JOURNEY_WEEKLY_SEND_CAP - 1; i++) {
-      const r = await prisma.journeyRun.create({ data: { id: newId(), merchantId: fx.merchantId, journeyKey: 'recurring-resume', triggerKey: `old:${i}`, payerId, status: 'DONE' } });
-      await prisma.journeyStepLog.create({ data: { id: newId(), runId: r.id, stepIndex: 0, stepKey: 'resume-guide', outcome: 'DONE', sent: true, merchantId: fx.merchantId, payerId } });
+      const r = await prisma.journeyRun.create({ data: { id: newId(), merchantId: fx.merchantId, journeyKey: 'donation-thanks', triggerKey: `old:${i}`, payerId, status: 'DONE' } });
+      await prisma.journeyStepLog.create({ data: { id: newId(), runId: r.id, stepIndex: 0, stepKey: 'thanks-letter', outcome: 'DONE', sent: true, merchantId: fx.merchantId, payerId } });
     }
-    await prisma.recurringDonation.create({
-      data: { id: newId(), merchantId: fx.merchantId, payerId, amount: 10000n, dayOfMonth: 10, status: 'SUSPENDED', nextChargeOn: new Date(), cycleMonth: '2026-11' },
-    });
     const runs = await Promise.all(
       ['C1', 'C2', 'C3'].map((k) =>
-        prisma.journeyRun.create({ data: { id: newId(), merchantId: fx.merchantId, journeyKey: 'recurring-resume', triggerKey: `cap:${k}`, payerId, stepIndex: 1, status: 'WAITING', context: {} } }),
+        prisma.journeyRun.create({ data: { id: newId(), merchantId: fx.merchantId, journeyKey: 'receipt-info-yearend', triggerKey: `cap:${k}`, payerId, stepIndex: 0, status: 'WAITING', context: {} } }),
       ),
     );
     await Promise.all(runs.map((r) => advanceRun(r.id)));
     const sent = await prisma.journeyStepLog.count({ where: { merchantId: fx.merchantId, payerId, sent: true } });
     expect(sent).toBe(JOURNEY_WEEKLY_SEND_CAP);
-    expect(readMockOutbox(20).filter((m) => m.template === 'RECURRING_RESUME_GUIDE')).toHaveLength(1);
+    expect(readMockOutbox(20).filter((m) => m.template === 'RECEIPT_INFO_REQUEST')).toHaveLength(1);
   });
 
   it('[낮음] 단계를 넘어가면 보류 횟수를 0 으로 되돌린다', async () => {

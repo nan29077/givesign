@@ -1,11 +1,12 @@
 'use server';
 
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import type { AdminActionState } from '@/components/admin/state';
 import { createSession, hashPassword } from '@/server/auth';
-import { consumeIpRateLimit } from '@/server/rate-limit';
+import { clientIpFromHeaders, consumeIpRateLimit } from '@/server/rate-limit';
 import { requireGiver } from '@/server/bazaar-auth';
 import { assertBazaarEnabled } from '@/server/services/bazaar-settings';
 import * as svc from '@/server/services/bazaar';
@@ -200,7 +201,15 @@ export async function updateGiverProfileAction(_p: AdminActionState, fd: FormDat
 
 export async function updateGiverReceiptAction(_p: AdminActionState, fd: FormData) {
   return runGiver(async ({ donor }) => {
-    await svc.updateDonorReceiptInfo(donor.id, { legalName: t(fd, 'legalName'), resident: t(fd, 'resident'), hometaxOptIn: fd.get('hometaxOptIn') === 'on' });
+    const h = await headers();
+    await svc.updateDonorReceiptInfo(donor.id, {
+      legalName: t(fd, 'legalName'),
+      resident: t(fd, 'resident'),
+      hometaxOptIn: fd.get('hometaxOptIn') === 'on',
+      agree: fd.get('agree') === 'on',
+      ip: await clientIpFromHeaders(),
+      userAgent: h.get('user-agent'),
+    });
     return '영수증 정보를 저장했습니다. 주민등록번호는 암호화해 보관하며 화면에는 가린 값만 보입니다.';
   });
 }

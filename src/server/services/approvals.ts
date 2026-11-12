@@ -37,7 +37,9 @@ export type ApprovalKind =
   // 2026-11-12 4차 J: 업무별 문서 묶음 대량 발송(확인 화면에서 이용요금 예측을 본 뒤 승인 → 배치가 나눠 보냄)
   | 'BUNDLE_SEND'
   // 2026-11-13 5차 L4: 관계 확장 안내(광고성) 주간 묶음 — 항상 기관 승인 후 배치가 문자로 보낸다(전역 스위치 꺼짐 기본)
-  | 'RELATIONSHIP_MESSAGE_BATCH';
+  | 'RELATIONSHIP_MESSAGE_BATCH'
+  // 2026-11-13 점검 A-M2: 환불로 무효 처리된 기부금영수증을 남은 후원으로 다시 발급(승인하면 바로 발급)
+  | 'RECEIPT_REISSUE';
 
 export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   JOURNEY_STEP: '자동 안내 승인',
@@ -54,6 +56,7 @@ export const APPROVAL_KIND_LABEL: Record<ApprovalKind, string> = {
   CAMPAIGN_GOAL_FOLLOWUP: '캠페인 목표 달성 — 감사·결과 안내 준비',
   BUNDLE_SEND: '문서 묶음 발송',
   RELATIONSHIP_MESSAGE_BATCH: '관계 확장 안내(광고) 발송',
+  RECEIPT_REISSUE: '기부금영수증 재발급(환불 정정)',
 };
 
 export interface ApprovalRow {

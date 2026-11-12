@@ -149,7 +149,7 @@ export async function issuePurposeDocumentImpl(input: IssuePurposeDocumentInput)
     return await issueInner(input);
   } catch (e) {
     logger.error('용도별 문서 발송 실패', { merchantId: input.merchantId, purpose: input.purpose, message: (e as Error).message });
-    return { ok: false, reason: '문서를 만들지 못했습니다. 잠시 후 다시 시도합니다.' };
+    return { ok: false, reason: '문서를 만들지 못했습니다. 잠시 후 다시 시도합니다.', transient: true };
   }
 }
 

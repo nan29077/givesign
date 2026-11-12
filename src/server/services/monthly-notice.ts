@@ -49,6 +49,11 @@ export interface MonthlyNoticeSummary {
 
 export async function runMonthlyNotices(now = new Date(), opts: { merchantId?: string; monthKey?: string } = {}): Promise<MonthlyNoticeSummary> {
   const monthKey = opts.monthKey ?? previousMonthKey(now);
+  // 매월 발급 기관의 영수증을 먼저(월간 안내 스위치와 무관 — 2026-11-13 점검 A-H2). 실패가 안내를 막지 않는다.
+  const receipts = await runMonthlyReceipts(now, { merchantId: opts.merchantId }).catch((e) => {
+    logger.error('매월 영수증 발급 단계 실패 — 안내는 계속합니다', { message: (e as Error).message });
+    return null;
+  });
   const merchants = await prisma.merchantProfile.findMany({
     where: {
       status: 'APPROVED',
@@ -58,7 +63,7 @@ export async function runMonthlyNotices(now = new Date(), opts: { merchantId?: s
     },
     select: { id: true },
   });
-  const summary: MonthlyNoticeSummary = { monthKey, merchants: 0, sent: 0, alimtalk: 0, fallback: 0, failed: 0, skipped: 0, receiptsIssued: 0 };
+  const summary: MonthlyNoticeSummary = { monthKey, merchants: 0, sent: 0, alimtalk: 0, fallback: 0, failed: 0, skipped: 0, receiptsIssued: receipts?.issued ?? 0 };
   for (const m of merchants) {
     try {
       const r = await runMerchantNotice(m.id, monthKey);
@@ -69,7 +74,11 @@ export async function runMonthlyNotices(now = new Date(), opts: { merchantId?: s
       summary.fallback += r.fallbackCount;
       summary.failed += r.failedCount;
       summary.skipped += r.skippedCount;
-      summary.receiptsIssued += r.receiptsIssued;
+      // 안내 기록 화면의 "영수증" 칸: 이번 실행에서 그 기관에 발급한 장수를 함께 남긴다.
+      const issuedHere = receipts?.byMerchant.get(m.id) ?? 0;
+      if (issuedHere > 0) {
+        await prisma.noticeRun.update({ where: { id: r.id }, data: { receiptsIssued: { increment: issuedHere } } }).catch(() => undefined);
+      }
     } catch (e) {
       logger.error('월간 안내 기관 처리 실패', { merchantId: m.id, message: (e as Error).message });
     }
@@ -144,20 +153,8 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
   const { start, end } = monthRange(monthKey);
   const taxYear = Number(monthKey.slice(0, 4));
 
-  // 월별 영수증 옵션: 안내 전에 미발급 건을 발급한다. 발급 조건(공익법인 확인 등)이 안 되면 건너뛴다.
-  let receiptsIssued = run.receiptsIssued;
-  if (merchant.receiptCycle === 'MONTHLY' && receiptsIssued === 0) {
-    const ready = doneeVerified(merchant) && issuerReadiness(merchant).ok;
-    if (ready) {
-      try {
-        const r = await issueReceiptsBulk(merchantId, taxYear, 'SYSTEM');
-        receiptsIssued = r.issued;
-      } catch (e) {
-        logger.error('월별 영수증 일괄 발급 실패 — 안내는 계속합니다', { merchantId, message: (e as Error).message });
-      }
-    }
-  }
-
+  // 매월 영수증 발급은 runMonthlyReceipts 가 월간 안내 스위치와 무관하게 따로 한다(2026-11-13 점검 A-H2).
+  // 같은 배치가 안내보다 먼저 부르므로 안내 문자의 "영수증 확인" 링크를 누르면 지난달분이 이미 보인다.
   const monthly = await prisma.charge.groupBy({
     by: ['payerId'],
     where: { merchantId, isTest: false, status: { in: PAID_STATUSES }, payerId: { not: null }, paidAt: { gte: start, lt: end } },
@@ -174,8 +171,14 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
     }),
     prisma.payerMerchantLink.findMany({ where: { merchantId, payerId: { in: payerIds }, noticeOptOutAt: { not: null } }, select: { payerId: true } }),
     prisma.noticeDelivery.findMany({ where: { noticeRunId: run.id }, select: { payerId: true } }),
-    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, phoneEnc: true, blockedAt: true } }),
+    prisma.payerProfile.findMany({ where: { id: { in: payerIds } }, select: { id: true, phoneEnc: true, blockedAt: true, onboardingStatus: true } }),
   ]);
+  // 탈퇴·기관 차단도 발송 전에 뺀다(통합 발송을 끈 직접 발송 경로에는 대기열의 재확인이 없다 — 2026-11-13 점검 A-L6).
+  const [blockedRows, blockedLinks] = await Promise.all([
+    prisma.blockedPayer.findMany({ where: { merchantId, payerId: { in: payerIds } }, select: { payerId: true } }),
+    prisma.payerMerchantLink.findMany({ where: { merchantId, payerId: { in: payerIds }, payerBlockedAt: { not: null } }, select: { payerId: true } }),
+  ]);
+  const blockedSet = new Set([...blockedRows.map((b) => b.payerId), ...blockedLinks.map((b) => b.payerId)]);
   const yearM = new Map(yearly.map((y) => [y.payerId!, y._sum.amount ?? 0n]));
   const optSet = new Set(optOuts.map((o) => o.payerId));
   const doneSet = new Set(done.map((d) => d.payerId));
@@ -189,7 +192,15 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
     if (doneSet.has(payerId)) continue;
     const payer = payerM.get(payerId);
     const amount = row._sum.amount ?? 0n;
-    const skipReason = !payer ? '후원자 없음' : payer.blockedAt ? '이용 제한' : optSet.has(payerId) ? '월간 안내 수신 거부' : null;
+    const skipReason = !payer
+      ? '후원자 없음'
+      : payer.onboardingStatus === 'WITHDRAWN'
+        ? '탈퇴한 후원자'
+        : payer.blockedAt || blockedSet.has(payerId)
+          ? '이용 제한'
+          : optSet.has(payerId)
+            ? '월간 안내 수신 거부'
+            : null;
 
     // 발송 전에 (실행, 후원자) 기록을 먼저 만든다. 유니크 위반이면 다른 실행이 이미 맡은 사람이라 건너뛴다.
     // 이 행이 SENDING 으로 남으면(발송 중 프로세스 종료) 다시 보내지 않는다 — 두 번 보내는 것보다 안전하다.
@@ -275,7 +286,52 @@ async function processRun(runId: string, merchantId: string, monthKey: string, o
       fallbackCount: { increment: counts.fallback },
       failedCount: { increment: counts.failed },
       skippedCount: { increment: counts.skipped },
-      receiptsIssued,
     },
   });
+}
+
+export interface MonthlyReceiptSummary {
+  merchants: number;
+  notReady: number;
+  issued: number;
+  skipped: number;
+  failed: number;
+}
+
+/**
+ * 매월 발급 기관의 영수증 자동 발급(2026-11-13 점검 A-H2).
+ *
+ *  - 예전에는 월간 안내 안에서만 발급해, 월간 안내를 끈 기관은 영수증이 자동 발급되지 않았다. 지금은 스위치와 무관하다.
+ *  - 배치가 매월 1~5일 매일 돈다. issueReceiptsBulk 는 "아직 영수증에 묶이지 않은 결제 성공 건" 만 발급하므로 다시 돌아도 같은 결과다.
+ *  - 귀속 연도: 지난달이 속한 해 + 1~2월이면 지난해도 함께(1월 1일 실행이 빠져 12월분이 영영 남던 문제).
+ *  - 기관이 발급 요건(관리자 공익법인 확인·고유번호·대표자·소재지)을 갖추지 않았으면 건너뛴다(예전과 같다).
+ */
+export async function runMonthlyReceipts(now = new Date(), opts: { merchantId?: string } = {}): Promise<MonthlyReceiptSummary & { byMerchant: Map<string, number> }> {
+  const out = { merchants: 0, notReady: 0, issued: 0, skipped: 0, failed: 0, byMerchant: new Map<string, number>() };
+  const thisYear = Number(kstMonthKey(now).slice(0, 4));
+  const month = Number(kstMonthKey(now).slice(5, 7));
+  const years = [...new Set([Number(previousMonthKey(now).slice(0, 4)), ...(month <= 2 ? [thisYear - 1] : [])])].sort();
+  const merchants = await prisma.merchantProfile.findMany({
+    where: { status: 'APPROVED', receiptCycle: 'MONTHLY', user: { status: 'ACTIVE', deletedAt: null }, ...(opts.merchantId ? { id: opts.merchantId } : {}) },
+  });
+  for (const m of merchants) {
+    out.merchants += 1;
+    if (!(doneeVerified(m, now) && issuerReadiness(m).ok)) {
+      out.notReady += 1;
+      continue;
+    }
+    for (const year of years) {
+      try {
+        const r = await issueReceiptsBulk(m.id, year, 'SYSTEM');
+        out.issued += r.issued;
+        out.byMerchant.set(m.id, (out.byMerchant.get(m.id) ?? 0) + r.issued);
+        out.skipped += r.skipped;
+        out.failed += r.failed;
+      } catch (e) {
+        out.failed += 1;
+        logger.error('월별 영수증 일괄 발급 실패 — 다음 실행에서 다시 시도합니다', { merchantId: m.id, year, message: (e as Error).message });
+      }
+    }
+  }
+  return out;
 }

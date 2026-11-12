@@ -3559,7 +3559,7 @@ model NoticeDelivery {
   id          String   @id
   noticeRunId String   @map("notice_run_id")
   payerId     String   @map("payer_id")
-  /// SENDING(발송 전 선점) · SENT · FAILED · SKIPPED · QUEUED(통합 발송 관리 대기열에 쌓임 — 보낸 뒤 결과로 바뀜)
+  /// SENDING(발송 전 선점) · SENT · FAILED · SKIPPED · QUEUED(통합 발송 관리 대기열에 쌓임 — 보낸 뒤 결과로 바뀜) · UNKNOWN(대기열에서 보내는 도중 멈춤)
   status      String
   channel     String?
   amount      BigInt   @default(0)

@@ -2,7 +2,9 @@
  * 배치 목록(한 곳). 외부 스케줄러(EventBridge 등)에 등록할 주기를 여기에 선언하고,
  * 관리자 화면(/admin/automation)이 cron_heartbeat 와 비교해 지연을 판단한다.
  *
- * 주기를 바꾸면 스케줄러 등록도 함께 바꾼다. 배포 가이드: docs/AWS-배포-가이드.md
+ * 주기를 바꾸면 스케줄러 등록도 함께 바꾼다. 배포 가이드: docs/AWS-배포-가이드.md 5절
+ * (등록 명령 출력: `npx tsx tools/cron-schedule.ts`). 외부 스케줄러가 없는 환경(PC 운영)은
+ * 서버 안의 내장 실행기(src/server/cron-runner.ts, CRON_RUNNER=internal 기본)가 같은 주기로 부른다.
  */
 export interface CronDef {
   name: string;
@@ -17,116 +19,137 @@ export interface CronDef {
   description: string;
   /** 잠금 저장소 장애 때도 실행할지(중복 방지가 DB 유니크로 보장되는 수신 배치만) */
   failOpenLock?: boolean;
+  /**
+   * 내장 실행기(cron-runner.ts)가 쓰는 기계용 주기(2026-11-13 점검 A-H1). schedule·eventBridge 와 같은 뜻으로 맞춘다.
+   *  - everySec: N초마다
+   *  - hourlyAtMin: 매시 M분(KST·UTC 같음)
+   *  - dailyAtKst: 매일 HH:MM(KST, 여러 개 가능), days 가 있으면 그 날짜(KST 일)만
+   */
+  when: CronWhen;
 }
+
+export type CronWhen =
+  | { everySec: number }
+  | { hourlyAtMin: number }
+  | { dailyAtKst: string[]; days?: number[] };
 
 export const CRON_JOBS: CronDef[] = [
   {
     name: 'emma-mo', path: '/api/cron/emma-mo', schedule: '15초마다', eventBridge: 'rate(1 minute) ×4 오프셋',
-    intervalSec: 15, lockTtlSec: 50, failOpenLock: true,
+    intervalSec: 15, lockTtlSec: 50, failOpenLock: true, when: { everySec: 15 },
     description: 'EMMA 문자 수신 폴링 → 후원 접수 (EMMA_ENABLED 일 때만)',
   },
   {
     name: 'cleanup', path: '/api/cron/cleanup', schedule: '1분마다', eventBridge: 'rate(1 minute)',
-    intervalSec: 60, lockTtlSec: 55,
+    intervalSec: 60, lockTtlSec: 55, when: { everySec: 60 },
     description: '만료 링크·멱등키 정리, 결과 미확인 결제 대사 큐, 고아 결제 종료, 전자서명 만료',
   },
   {
     name: 'events', path: '/api/cron/events', schedule: '1분마다', eventBridge: 'rate(1 minute)',
     // 잠금 TTL = 이벤트·저니 선점 유지(5분). 단계별 시간 상한(이벤트 60초 + 저니 90초 + 승인 실행 60초) 합이 이보다 짧다(점검 A-3).
-    intervalSec: 60, lockTtlSec: 300,
+    intervalSec: 60, lockTtlSec: 300, when: { everySec: 60 },
     description: '도메인 이벤트 처리 — 기관 알림·명단 연결·목표 달성·저니 단계 실행, 승인된 일괄 발급 실행·멈춘 승인 복구',
   },
   {
     name: 'webhooks', path: '/api/cron/webhooks', schedule: '1분마다', eventBridge: 'rate(1 minute)',
-    intervalSec: 60, lockTtlSec: 120,
+    intervalSec: 60, lockTtlSec: 120, when: { everySec: 60 },
     description: '실패한 파트너 웹훅 재전송(백오프)',
   },
   {
     name: 'alimtalk-reports', path: '/api/cron/alimtalk-reports', schedule: '5분마다', eventBridge: 'rate(5 minutes)',
-    intervalSec: 300, lockTtlSec: 240,
+    intervalSec: 300, lockTtlSec: 240, when: { everySec: 300 },
     description: '알림톡 전달 결과 확인(솔라피) — 수신 완료 확정, 명시적 실패는 문자로 1회 대체, 2시간 무응답은 결과 미확인',
   },
   {
     name: 'outbound', path: '/api/cron/outbound', schedule: '1분마다', eventBridge: 'rate(1 minute)',
-    intervalSec: 60, lockTtlSec: 55,
+    intervalSec: 60, lockTtlSec: 55, when: { everySec: 60 },
     description: '통합 발송 관리 — 기한 된 정보성 안내를 후원자별로 묶어 한 통으로 발송(7일 상한·야간·담당자 확인 보류), 멈춘 발송은 결과 미확인으로',
   },
   {
     name: 'content', path: '/api/cron/content', schedule: '1시간마다', eventBridge: 'cron(0 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 900,
-    description: '콘텐츠 자율 생성(캘린더)·멈춘 생성 재개·SNS 예약 게시·지표 수집',
+    intervalSec: 3600, lockTtlSec: 900, when: { hourlyAtMin: 0 },
+    description: '콘텐츠 자율 생성(캘린더)·멈춘 생성 재개·SNS 예약 게시(놓친 것)·지표 수집',
+  },
+  {
+    // 2026-11-13 점검 A-M5: 예약 게시가 1시간 배치의 생성 작업 뒤에 밀려 최대 1시간 넘게 늦던 것을 5분 배치로 분리
+    name: 'content-publish', path: '/api/cron/content-publish', schedule: '5분마다', eventBridge: 'rate(5 minutes)',
+    intervalSec: 300, lockTtlSec: 280, when: { everySec: 300 },
+    description: 'SNS 예약 게시 — 예약 시각이 된 게시물 올리기, 30분 넘게 멈춘 게시는 결과 미확인으로',
   },
   {
     name: 'content-review', path: '/api/cron/content-review', schedule: '15분마다', eventBridge: 'rate(15 minutes)',
-    intervalSec: 900, lockTtlSec: 300,
+    intervalSec: 900, lockTtlSec: 300, when: { everySec: 900 },
     description: '콘텐츠 승인 알림 — 월요일 09시 그 주 검토 대기 건수, 게시 시각 하루 전·3시간 전 미승인(같은 슬롯·시점 1회, 콘솔 알림)',
   },
   {
     name: 'weekly-plan', path: '/api/cron/weekly-plan', schedule: '1시간마다(월요일 07시 이후 계획, 09~21시 보고)', eventBridge: 'cron(5 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 600,
+    intervalSec: 3600, lockTtlSec: 600, when: { hourlyAtMin: 5 },
     description: '주간 운영 계획 — 기관·주 1회 지난주 평가·이번 주 제안(실행은 승인 요청), 월요일 09시 기관 대표 담당자 보고 1통',
   },
   {
-    name: 'recurring', path: '/api/cron/recurring', schedule: '매일 10:00', eventBridge: 'cron(0 1 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 900,
-    description: '정기후원 출금·실패 재시도·정지',
+    // 2026-11-13 점검 A-M4: 하루 세 번(한 번의 시간 상한 8분에 다 못 하면 남은 약정을 이어서). 주기 키로 같은 달 두 번 출금되지 않는다.
+    name: 'recurring', path: '/api/cron/recurring', schedule: '매일 10:00 · 12:00 · 14:00', eventBridge: 'cron(0 1,3,5 * * ? *)',
+    intervalSec: 86_400, lockTtlSec: 900, when: { dailyAtKst: ['10:00', '12:00', '14:00'] },
+    description: '정기후원 출금·실패 재시도·정지 (출금일 빠른 순, 시간 상한에 걸리면 다음 실행이 이어 감)',
   },
   {
     name: 'payout', path: '/api/cron/payout', schedule: '매일 10:30', eventBridge: 'cron(30 1 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 600,
+    intervalSec: 86_400, lockTtlSec: 600, when: { dailyAtKst: ['10:30'] },
     description: '지급일 도래 정산 이체',
   },
   {
     name: 'edoc', path: '/api/cron/edoc', schedule: '매일 03:00', eventBridge: 'cron(0 18 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 600,
+    intervalSec: 86_400, lockTtlSec: 600, when: { dailyAtKst: ['03:00'] },
     description: '전자문서 정액 만료·서명 요청 만료·끝난 봉투 결과 대사·미사용 글꼴 정리',
   },
   {
-    name: 'monthly-notice', path: '/api/cron/monthly-notice', schedule: '매월 1일 10:00', eventBridge: 'cron(0 1 1 * ? *)',
-    intervalSec: 31 * 86_400, lockTtlSec: 1800,
-    description: '월간 후원 안내, 매월 영수증 기관 영수증 발급',
+    // 2026-11-13 점검 A-H2: 1~5일 매일 실행(그날 실패·서버 중단을 따라잡음). 같은 (기관, 월) 안내는 한 번만 나가고,
+    // 매월 영수증 발급은 월간 안내 스위치와 무관하게 따로 돈다(발급 가능한 미발급분만 — 다시 돌아도 같은 결과).
+    name: 'monthly-notice', path: '/api/cron/monthly-notice', schedule: '매월 1~5일 10:00', eventBridge: 'cron(0 1 1-5 * ? *)',
+    intervalSec: 31 * 86_400, lockTtlSec: 1800, when: { dailyAtKst: ['10:00'], days: [1, 2, 3, 4, 5] },
+    description: '매월 영수증 기관 영수증 발급(지난달까지 미발급분, 1~2월은 지난해분 포함) · 월간 후원 안내(켠 기관)',
   },
   {
     name: 'receipts', path: '/api/cron/receipts', schedule: '매일 09:00 (1~2월에만 일함)', eventBridge: 'cron(0 0 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 1800,
+    intervalSec: 86_400, lockTtlSec: 1800, when: { dailyAtKst: ['09:00'] },
     description: '연 1회 영수증 기관의 전년도 일괄 발급 준비(승인 대기함) — 승인된 건 발급',
   },
   {
     name: 'inbox', path: '/api/cron/inbox', schedule: '1시간마다', eventBridge: 'cron(20 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 600,
+    intervalSec: 3600, lockTtlSec: 600, when: { hourlyAtMin: 20 },
     description: '승인 대기함 처리 기한 넘김 → 기관 대표 담당자 콘솔 알림(배정마다 1회), 처리된 항목의 배정 닫기',
   },
   {
     // 2026-11-12 4차 K4
     name: 'inquiry-auto', path: '/api/cron/inquiry-auto', schedule: '5분마다', eventBridge: 'rate(5 minutes)',
-    intervalSec: 300, lockTtlSec: 240,
+    intervalSec: 300, lockTtlSec: 240, when: { everySec: 300 },
     description: '문자로 접수한 기관 문의 분류 — 기관이 켠 분류만 1회 자동 답변, 그 밖은 담당자에게(이력 요약·처리 기한·승인 대기함)',
   },
   {
-    name: 'bazaar', path: '/api/cron/bazaar', schedule: '1시간마다(라이브 바자회 켜짐일 때만 일함)', eventBridge: 'cron(10 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 600,
-    description: '라이브 바자회 매칭 수락 기한 만료 → 기부 건을 접수 상태로 되돌림',
+    name: 'bazaar', path: '/api/cron/bazaar', schedule: '1시간마다', eventBridge: 'cron(10 * * * ? *)',
+    intervalSec: 3600, lockTtlSec: 600, when: { hourlyAtMin: 10 },
+    description: '라이브 바자회 매칭 수락 기한 만료·하루 전 재알림(켜짐일 때) · 지난달 판매 정산 자동 집계와 지급일 알림(꺼져도 — 확정된 정산은 계속 지급)',
   },
   {
     name: 'campaign-ops', path: '/api/cron/campaign-ops', schedule: '1시간마다', eventBridge: 'cron(25 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 900,
+    intervalSec: 3600, lockTtlSec: 900, when: { hourlyAtMin: 25 },
     description: '캠페인 콘텐츠 일정 — 슬롯 7일 전 콘텐츠 생성(검토 대기, 승인해야 게시), 기간 70% 경과·진행률 미달 캠페인 기관 알림(캠페인당 1회)',
   },
   {
     name: 'self-check', path: '/api/cron/self-check', schedule: '매일 08:00', eventBridge: 'cron(0 23 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 900,
+    intervalSec: 86_400, lockTtlSec: 900, when: { dailyAtKst: ['08:00'] },
     description: '자가 진단 — SNS 연결 만료 7일 전 안내, 전자문서 잔액 7일 안 소진 예상, 문자 후원 수신 급감(같은 요일 평균 30% 미만) 기관·관리자 알림(같은 알림 1회)',
   },
   {
     // 2026-11-13 5차 L3 — BANK_FEED_ENABLED 꺼짐이면 일하지 않음
     name: 'bank-feed', path: '/api/cron/bank-feed', schedule: '매일 07:30 (BANK_FEED_ENABLED 일 때만 일함)', eventBridge: 'cron(30 22 * * ? *)',
-    intervalSec: 86_400, lockTtlSec: 900,
+    intervalSec: 86_400, lockTtlSec: 900, when: { dailyAtKst: ['07:30'] },
     description: '기관 통장 거래내역 자동 조회(오픈뱅킹·펌뱅킹 계약 전 — mock 은 연동 안 됨) → 입금 맞추기 표(파일과 같은 정규화·중복 해시)',
   },
   {
     // 2026-11-13 5차 L4 — 전역 스위치 relationship_messages.enabled 꺼짐이면 일하지 않음
     name: 'relationship', path: '/api/cron/relationship', schedule: '1시간마다(관계 안내 켜짐일 때만 일함)', eventBridge: 'cron(35 * * * ? *)',
-    intervalSec: 3600, lockTtlSec: 600,
+    intervalSec: 3600, lockTtlSec: 600, when: { hourlyAtMin: 35 },
     description: '관계 확장 안내(광고) — 동의자 주간 대상 묶음 승인 요청, 승인분 문자 발송(야간 21~8시 금지·월 1회·정보성과 같은 날 피함), 수신 거부율 2% 초과 자동 중지',
   },
 ];

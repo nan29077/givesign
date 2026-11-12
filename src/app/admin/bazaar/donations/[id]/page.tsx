@@ -14,6 +14,7 @@ import { getBazaarConfig } from '@/server/services/bazaar-settings';
 import {
   cancelDonationAction,
   closeDonationAction,
+  correctInboundDateAction,
   proposeMatchAction,
   registerInboundAction,
   reissueReceiptAction,
@@ -159,6 +160,10 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
                 <AdminField label="반송비 부담"><AdminSelect name="returnCostBearer" defaultValue={d.inbound?.returnCostBearer ?? 'NONE'}><option value="NONE">없음</option><option value="MERCHANT">기관 부담(정산 공제)</option><option value="GIVESIGN">기브싸인 부담</option></AdminSelect></AdminField>
                 <AdminField label="불합격 처리"><AdminSelect name="disposition" defaultValue="RETURNED"><option value="RETURNED">기부자에게 반송</option><option value="DISPOSED">폐기(기부자 동의)</option></AdminSelect></AdminField>
               </div>
+              <label className="flex items-start gap-2 text-[12.5px] text-ink-600">
+                <input type="checkbox" name="yearConfirmed" className="mt-0.5" />
+                <span>입고 연도 확인 — 입고일이 올해가 아니면(예: 지난해 입고분을 늦게 등록) 체크합니다. 입고일이 현물 기부금영수증의 기부일·귀속 연도가 됩니다. 오늘 이후·약정일 이전 날짜는 받지 않습니다.</span>
+              </label>
               <AdminField label="검수 메모"><AdminTextarea name="note" rows={2} defaultValue={d.inbound?.note ?? ''} /></AdminField>
               <AdminField label="검수 사진(선택)"><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="text-[12px]" /></AdminField>
             </ActionForm>
@@ -172,7 +177,9 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
           <CardTitle>현물 기부금영수증</CardTitle>
           {correction ? (
             <div className="mt-2"><Notice tone="warning" title="영수증 정정 필요">
-              기부자에게 돌려준 수량이 있어 발급 금액 {formatWon(correction.issued)} 이 실제 기부 {formatWon(correction.expected)} 보다 많습니다. 영수증 {correction.receiptNo} 를 무효 처리한 뒤 재발급하면 반환 수량을 뺀 금액으로 발급됩니다. 정정 전에는 종결할 수 없습니다.
+              {correction.reason === 'AMOUNT'
+                ? `기부자에게 돌려준 수량이 있어 발급 금액 ${formatWon(correction.issued)} 이 실제 기부 ${formatWon(correction.expected)} 와 다릅니다. 영수증 ${correction.receiptNo} 를 무효 처리한 뒤 재발급하면 반환 수량을 뺀 금액으로 발급됩니다. 정정 전에는 종결할 수 없습니다.`
+                : `입고일이 정정되어 영수증 ${correction.receiptNo} 의 기부일(${correction.issuedDate})이 입고일(${correction.expectedDate})과 다릅니다. 무효 처리한 뒤 재발급하면 새 입고일(귀속 연도)로 발급됩니다. 정정 전에는 종결할 수 없습니다.`}
             </Notice></div>
           ) : null}
           <ul className="mt-2 space-y-3">
@@ -188,6 +195,20 @@ export default async function AdminBazaarDonationDetail({ params }: { params: Pr
           {superAdmin && !d.receipts.some((r) => r.status === 'ISSUED') && ['RECEIPTED', 'ON_SALE', 'SALE_ENDED', 'CLOSED'].includes(status) ? (
             <div className="mt-3"><ActionForm action={reissueReceiptAction} submitLabel="현재 확정값으로 재발급" variant="secondary" confirm="확정 단가 × (합격 수량 - 반환 수량)으로 새 번호의 영수증을 발급합니다. 계속할까요?"><input type="hidden" name="donationId" value={d.id} /></ActionForm></div>
           ) : null}
+        </Card>
+      ) : null}
+
+      {superAdmin && d.inbound && d.inbound.merchantConfirmedAt ? (
+        <Card className="mt-4">
+          <CardTitle>입고일 정정(최고관리자)</CardTitle>
+          <p className="mt-1 text-[12.5px] text-ink-500">지금 입고일 {kstDateKey(d.inbound.receivedAt)}. 기관이 검수를 확정한 뒤 입고일이 잘못된 것을 알았을 때만 고칩니다. 발급된 영수증의 기부일과 달라지면 무효 처리 후 재발급해야 종결할 수 있습니다.</p>
+          <div className="mt-3"><ActionForm action={correctInboundDateAction} submitLabel="입고일 정정" variant="secondary" confirm="입고일을 정정할까요? 상태 이력과 감사로그에 남습니다.">
+            <input type="hidden" name="donationId" value={d.id} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <AdminField label="바른 입고일"><AdminInput type="date" name="receivedAt" defaultValue={kstDateKey(d.inbound.receivedAt)} /></AdminField>
+              <AdminField label="정정 사유"><AdminInput name="reason" placeholder="예: 입고 연도 오입력" /></AdminField>
+            </div>
+          </ActionForm></div>
         </Card>
       ) : null}
 

@@ -1136,6 +1136,27 @@ export async function resolveUnknownPublish(merchantId: string, publishId: strin
 }
 
 /** 배치: 멈춘 생성 재개 → 멈춘 게시 복구 → 예약 게시 → 지표 수집 */
+/**
+ * 예약 게시 실행(2026-11-13 점검 A-M5). 예약 시각이 된 게시물을 올리고, 30분 넘게 멈춘 게시는 결과 미확인으로 닫는다.
+ * 5분 배치(content-publish)와 1시간 배치(content)가 함께 부른다 — 예약 → 게시 중 전환이 조건부 갱신이라 겹쳐도 한 번만 올린다.
+ */
+export async function publishDueContent(now = new Date(), opts: { limit?: number; budgetMs?: number } = {}) {
+  const started = Date.now();
+  const out = { recovered: 0, published: 0, retried: 0, failed: 0, deferred: 0 };
+  out.recovered = (await recoverStalePublishing(now)).unknown;
+  if (!env.automation.socialPublishEnabled) return out;
+  const due = await prisma.contentPublish.findMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: now } }, select: { id: true }, orderBy: { scheduledAt: 'asc' }, take: opts.limit ?? 50 });
+  for (const d of due) {
+    if (opts.budgetMs && Date.now() - started > opts.budgetMs) break;
+    const r = await publishOne(d.id, now);
+    if (r === 'PUBLISHED') out.published += 1;
+    else if (r === 'RETRY') out.retried += 1;
+    else if (r === 'FAILED') out.failed += 1;
+    else if (r === 'DEFERRED') out.deferred += 1;
+  }
+  return out;
+}
+
 export async function processContentQueue(now = new Date()) {
   const result = { resumed: 0, published: 0, retried: 0, failed: 0, deferred: 0, metrics: 0, recovered: 0, reassembled: 0 };
   const threshold = new Date(now.getTime() - STUCK_GENERATING_MS);
@@ -1154,20 +1175,17 @@ export async function processContentQueue(now = new Date()) {
   // 담당자 수정 뒤 쌓인 숏폼 영상 재조립(응답 뒤 실행이 끊긴 것 포함)
   const videos = await reassembleQueuedVideos({ limit: 10, budgetMs: 300_000, now });
   result.reassembled = videos.done + videos.noVideo;
-  const rec = await recoverStalePublishing(now);
-  result.recovered = rec.unknown;
-  if (env.automation.socialPublishEnabled) {
-    const due = await prisma.contentPublish.findMany({ where: { status: 'SCHEDULED', scheduledAt: { lte: now } }, select: { id: true }, orderBy: { scheduledAt: 'asc' }, take: 50 });
-    for (const d of due) {
-      const r = await publishOne(d.id, now);
-      if (r === 'PUBLISHED') result.published += 1;
-      else if (r === 'RETRY') result.retried += 1;
-      else if (r === 'FAILED') result.failed += 1;
-      else if (r === 'DEFERRED') result.deferred += 1;
-    }
-  }
+  // 예약 게시는 5분 배치(/api/cron/content-publish)가 주로 맡고, 여기서는 놓친 것만 함께 올린다(선점이 조건부라 겹쳐도 한 번).
+  const pub = await publishDueContent(now);
+  result.recovered = pub.recovered;
+  result.published = pub.published;
+  result.retried = pub.retried;
+  result.failed = pub.failed;
+  result.deferred = pub.deferred;
+  // 지표 수집: 100건 상한 — 오래 갱신되지 않은 것부터(2026-11-13 점검 A-L4, 정렬이 없어 일부가 영영 갱신되지 않을 수 있었다)
   const live = await prisma.contentPublish.findMany({
     where: { status: { in: ['PUBLISHED', 'PRIVATE_UPLOADED'] }, mock: false, publishedAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } },
+    orderBy: [{ metricsAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
     take: 100,
   });
   for (const p of live) {

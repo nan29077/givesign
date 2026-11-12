@@ -44,6 +44,8 @@ export function explainItem(it: InboxItem): { reason: string; recommendedAction:
   switch (it.kind) {
     case 'RECEIPT_BATCH':
       return { reason: '지난해 후원 영수증을 한꺼번에 발급할 준비가 끝났습니다.', recommendedAction: '대상 수·표본·제외 대상을 확인한 뒤 승인하세요.', resultUnknown: false };
+    case 'RECEIPT_REISSUE':
+      return { reason: '환불로 기부금영수증이 무효 처리되었습니다. 남은 후원으로 다시 발급해야 연말정산 자료가 맞습니다.', recommendedAction: '금액을 확인하고 승인하면 바로 재발급되고 후원자에게 새 영수증 링크가 갑니다.', resultUnknown: false };
     case 'JOURNEY_STEP':
       return { reason: '자동 안내 중 "승인 후 보내기" 로 둔 단계입니다.', recommendedAction: '내용을 보고 승인하거나, 보내지 않으려면 반려하세요.', resultUnknown: false };
     case 'CONTENT_REVIEW':

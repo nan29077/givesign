@@ -98,6 +98,12 @@ export const MT_TEMPLATE = {
   CARD_PAYMENT_LINK: 'CARD_PAYMENT_LINK',
   /** 관계 확장 안내(광고성, 2026-11-13 5차 L4). 동의자·기관 승인 후·문자로만. 알림톡 정보성 템플릿에 넣지 않는다 */
   RELATIONSHIP_MESSAGE: 'RELATIONSHIP_MESSAGE',
+  /** 라이브 바자회 현물 기부자: 기관이 가액을 제안함(정보성, 2026-11-13 점검 B-M2) */
+  BAZAAR_VALUATION: 'BAZAAR_VALUATION',
+  /** 라이브 바자회 현물 기부자: 가액 확정 — 약정 동의 요청(정보성) */
+  BAZAAR_PLEDGE_REQUEST: 'BAZAAR_PLEDGE_REQUEST',
+  /** 라이브 바자회 현물 기부자: 현물 기부금영수증 발급(정보성) */
+  BAZAAR_RECEIPT_ISSUED: 'BAZAAR_RECEIPT_ISSUED',
 } as const;
 
 export type MtTemplateCode = (typeof MT_TEMPLATE)[keyof typeof MT_TEMPLATE];
@@ -489,6 +495,22 @@ export function tplReceiptIssued(input: { merchantName: string; taxYear: number;
   const body = `[기브싸인] ${input.merchantName} ${input.taxYear}년 기부금영수증(${formatNumber(input.amount)}원)이 발급되었습니다. 열람·출력:`;
   const text = withLink(body, input.link);
   return { code: MT_TEMPLATE.RECEIPT_ISSUED, text, masked: maskLink(text) };
+}
+
+/** 라이브 바자회 현물 기부자 안내(2026-11-13 점검 B-M2). 링크는 로그인한 기부자 콘솔 화면이라 토큰이 없다. */
+export function tplBazaarValuation(input: { donationTitle: string; merchantName: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] 기부하신 '${input.donationTitle}' 에 ${input.merchantName} 이(가) 기부 가액을 제안했습니다. 확인 후 수락하거나 다시 제안해 주세요:`, input.link);
+  return { code: MT_TEMPLATE.BAZAAR_VALUATION, text, masked: maskLink(text) };
+}
+
+export function tplBazaarPledgeRequest(input: { donationTitle: string; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] '${input.donationTitle}' 기부 가액이 확정되었습니다. 기부 약정에 동의하시면 물품 발송 안내를 드립니다:`, input.link);
+  return { code: MT_TEMPLATE.BAZAAR_PLEDGE_REQUEST, text, masked: maskLink(text) };
+}
+
+export function tplBazaarReceiptIssued(input: { merchantName: string; amount: bigint; link: string }): TemplateOutput {
+  const text = withLink(`[기브싸인] ${input.merchantName} 현물 기부금영수증(${formatNumber(input.amount)}원)이 발급되었습니다. 기부자 콘솔에서 확인·출력:`, input.link);
+  return { code: MT_TEMPLATE.BAZAAR_RECEIPT_ISSUED, text, masked: maskLink(text) };
 }
 
 export function tplPledgeLink(input: { merchantName: string; link: string }): TemplateOutput {
@@ -1062,6 +1084,27 @@ export const MT_TEMPLATE_META: Record<MtTemplateCode, MtTemplateMeta> = {
     editable: false,
     defaultBody: '(광고) {사회복지기관} 안내 ... 무료 수신거부: [링크]',
     variables: [V.merchant],
+  },
+  [MT_TEMPLATE.BAZAAR_VALUATION]: {
+    label: '라이브 바자회 — 기부 가액 제안 (현물 기부자)',
+    description: '기관이 현물 기부의 가액을 제안하면 기부자에게 알립니다. 정보성, 문자로 보냅니다.',
+    editable: false,
+    defaultBody: "기부하신 '{물품}' 에 {사회복지기관} 이(가) 기부 가액을 제안했습니다. 확인: [링크]",
+    variables: [V.merchant],
+  },
+  [MT_TEMPLATE.BAZAAR_PLEDGE_REQUEST]: {
+    label: '라이브 바자회 — 약정 동의 요청 (현물 기부자)',
+    description: '기부 가액이 확정되면 약정 동의를 요청합니다. 정보성, 문자로 보냅니다.',
+    editable: false,
+    defaultBody: "'{물품}' 기부 가액이 확정되었습니다. 기부 약정에 동의해 주세요: [링크]",
+    variables: [],
+  },
+  [MT_TEMPLATE.BAZAAR_RECEIPT_ISSUED]: {
+    label: '라이브 바자회 — 현물 기부금영수증 발급 (현물 기부자)',
+    description: '기관이 검수를 확정해 현물 기부금영수증이 발급되면 알립니다. 정보성, 문자로 보냅니다.',
+    editable: false,
+    defaultBody: '{사회복지기관} 현물 기부금영수증({금액})이 발급되었습니다. 확인: [링크]',
+    variables: [V.merchant, V.amount],
   },
   [MT_TEMPLATE.RECURRING_SELF_RESULT]: {
     label: '정기후원 변경·해지 결과 (문자 명령 링크)',

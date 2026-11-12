@@ -220,7 +220,16 @@ export async function approveRefund(refundId: string, adminUserId?: string) {
 
   // 환불된 건이 기부금영수증에 묶여 있으면 그 영수증을 무효화한다(절대 규칙 9).
   // 영수증 처리 실패가 환불 결과를 바꾸지 않도록 오류는 기록만 한다.
-  await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin').catch(async (e) => {
+  await voidReceiptForRefundedCharge(refund.chargeId, adminUserId ?? 'admin')
+    .then(async (voided) => {
+      // 남은 후원으로 재발급할 승인 요청 + 기관 알림(2026-11-13 점검 A-M2). 실패는 기록만 — 환불 결과를 바꾸지 않는다.
+      if (!voided) return;
+      const { requestReissueAfterRefund } = await import('./receipt-batch');
+      await requestReissueAfterRefund(voided).catch((e) =>
+        logger.error('환불 후 영수증 재발급 요청 실패', { receiptId: voided.id, message: (e as Error).message }),
+      );
+    })
+    .catch(async (e) => {
     logger.error('환불 후 기부금영수증 무효화 실패', { chargeId: refund.chargeId, message: (e as Error).message });
     // 무효화에 실패하면 환불된 금액이 든 영수증이 그대로 남아 홈택스 명세에 실린다. 사람이 처리하도록 알린다.
     await notifySuperAdmins({
