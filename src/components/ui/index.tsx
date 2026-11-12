@@ -59,6 +59,16 @@ export function LinkButton({
   children,
   ...props
 }: React.ComponentProps<typeof Link> & { variant?: ButtonVariant; size?: ButtonSize }) {
+  // 파일 내려받기(/api/… 경로)는 페이지가 아니다. next/link 로 걸면 화면에 보이는 순간 미리 불러오기(prefetch)가
+  // 내보내기를 요청해 CSV 를 매번 만들고, 일부는 응답 없이 매달린다(2026-11-12 점검). 일반 링크로 내린다.
+  if (typeof href === 'string' && href.startsWith('/api/')) {
+    const { prefetch: _prefetch, replace: _replace, scroll: _scroll, shallow: _shallow, locale: _locale, ...anchorProps } = props as typeof props & { shallow?: boolean; locale?: string | false };
+    return (
+      <a href={href} className={cx(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...(anchorProps as React.AnchorHTMLAttributes<HTMLAnchorElement>)}>
+        {children}
+      </a>
+    );
+  }
   return (
     <Link href={href} className={cx(buttonBase, buttonVariants[variant], buttonSizes[size], className)} {...props}>
       {children}

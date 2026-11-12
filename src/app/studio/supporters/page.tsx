@@ -99,7 +99,7 @@ export default async function StudioSupportersPage({ searchParams }: { searchPar
           <input type="hidden" name="seg" value={seg} />
           {consentOnly ? <input type="hidden" name="consent" value="1" /> : null}
           {nextOnly ? <input type="hidden" name="next" value="1" /> : null}
-          <Input name="q" defaultValue={q} placeholder="이름 · 번호 끝자리 · 태그" />
+          <Input name="q" defaultValue={q} aria-label="후원자·봉사자 검색" placeholder="이름 · 번호 끝자리 · 태그" />
           <Select name="role" aria-label="구성원 구분" defaultValue={role}>
             <option value="all">구분 전체</option>
             {(['DONOR', 'VOLUNTEER', 'BOTH', 'CONTACT'] as const).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}

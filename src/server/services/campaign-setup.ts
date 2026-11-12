@@ -413,10 +413,12 @@ async function computeImpact(db: Prisma.TransactionClient | typeof prisma, merch
   const effEnd = close ? now.getTime() : kstEndMs(endsOn);
   const slots = await db.contentSlot.findMany({ where: { campaignId: c.id, merchantId, slotAt: { gt: now } }, select: { id: true, slotAt: true, status: true, itemId: true } });
   const itemIds = slots.map((s) => s.itemId).filter((x): x is string => Boolean(x));
-  const [items, published] = await Promise.all([
-    itemIds.length ? db.contentItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, status: true } }) : Promise.resolve([]),
-    itemIds.length ? db.contentPublish.findMany({ where: { itemId: { in: itemIds }, status: { in: ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING', 'UNKNOWN'] } }, select: { itemId: true } }) : Promise.resolve([]),
-  ]);
+  // db 가 트랜잭션 클라이언트일 수 있다 — 한 연결에 쿼리를 동시에 보내지 않도록 차례로 실행한다
+  // (pg 는 같은 연결의 동시 query() 를 폐기 예정으로 경고하고 다음 메이저에서 오류로 바꾼다).
+  const items = itemIds.length ? await db.contentItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, status: true } }) : [];
+  const published = itemIds.length
+    ? await db.contentPublish.findMany({ where: { itemId: { in: itemIds }, status: { in: ['PUBLISHED', 'PRIVATE_UPLOADED', 'PUBLISHING', 'UNKNOWN'] } }, select: { itemId: true } })
+    : [];
   const itemStatus = new Map(items.map((i) => [i.id, i.status]));
   const publishedSet = new Set(published.map((p) => p.itemId));
   const unpublished = slots.filter((s) => HOLDABLE_SLOT.includes(s.status) && !(s.itemId && publishedSet.has(s.itemId)));

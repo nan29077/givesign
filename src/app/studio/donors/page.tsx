@@ -115,7 +115,7 @@ export default async function StudioDonorsPage({ searchParams }: { searchParams:
 
       <Card className="mb-4">
         <form className="grid gap-3 sm:grid-cols-[1fr_180px_180px_auto]" method="get">
-          <Input name="q" defaultValue={q} placeholder="이름 또는 번호 끝자리 검색" />
+          <Input name="q" defaultValue={q} aria-label="후원자 검색" placeholder="이름 또는 번호 끝자리 검색" />
           <Select name="filter" aria-label="후원자 구분" defaultValue={filter}>
             <option value="all">전체</option>
             <option value="recurring">정기후원자</option>

@@ -1,3 +1,5 @@
+import { SCENE_FONT_FAMILY } from './fonts';
+
 export type SceneFormat = 'STORY' | 'SQUARE' | 'FEED';
 export const FORMAT_SIZE: Record<SceneFormat, { w: number; h: number }> = {
   STORY: { w: 1080, h: 1920 }, SQUARE: { w: 1080, h: 1080 }, FEED: { w: 1080, h: 1350 },
@@ -32,7 +34,7 @@ export function editorialSceneSvg(input: {
   const footerLines = wrap(input.footer, 44, 3);
   const brandLines = wrap(input.merchantName, 22, 2);
   const elements = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="'Malgun Gothic', Pretendard, 'Noto Sans KR', sans-serif" role="img" aria-label="${esc(input.caption)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${SCENE_FONT_FAMILY}" role="img" aria-label="${esc(input.caption)}">`,
     `<rect width="${W}" height="${H}" fill="${bg}"/>`,
     `<rect x="72" y="${H * 0.15}" width="64" height="6" fill="${accent}"/>`,
     logo ? `<image href="${logo}" x="72" y="56" width="64" height="64"/>` : '',

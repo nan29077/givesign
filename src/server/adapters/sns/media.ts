@@ -1,6 +1,7 @@
 import { env } from '@/lib/env';
 import { getObject, newObjectName, objectNameFromUrl, putObject } from '@/server/uploads';
 import { call, SnsApiError } from './http';
+import { ensureBundledFonts } from '@/server/adapters/content/fonts';
 
 /**
  * 게시용 미디어 준비.
@@ -19,6 +20,8 @@ type SharpFn = (input: Buffer, opts?: { density?: number }) => {
 };
 
 async function loadSharp(): Promise<SharpFn> {
+  // 첫 렌더 전에 번들 한글 글꼴을 fontconfig 에 등록한다(없으면 게시 이미지의 한글이 □ 로 깨진다).
+  ensureBundledFonts();
   try {
     const mod = (await import('sharp')) as unknown as { default?: SharpFn } & SharpFn;
     return (mod.default ?? mod) as SharpFn;

@@ -80,7 +80,7 @@ export default async function SiteSettingsPage() {
         {canEdit ? (
           <ActionForm action={setRelationshipSwitchAction} submitLabel={relOn ? '끄기' : '켜기'} variant={relOn ? 'secondary' : 'primary'} className="mt-3">
             {relOn ? null : <input type="hidden" name="enabled" value="on" />}
-            {relOn ? null : <input name="confirmText" placeholder="법무 확인 완료" className="h-10 w-full rounded-xl border border-ink-200 px-3 text-[13px]" />}
+            {relOn ? null : <input name="confirmText" aria-label="확인 문구 입력" placeholder="법무 확인 완료" className="h-10 w-full rounded-xl border border-ink-200 px-3 text-[13px]" />}
           </ActionForm>
         ) : <p className="mt-2 text-[12.5px] text-ink-400">최고관리자만 바꿀 수 있습니다.</p>}
       </Card>
@@ -106,8 +106,8 @@ export default async function SiteSettingsPage() {
         ) : <p className="mt-1 text-[12.5px] text-ink-400">등록된 카드 정책이 없습니다.</p>}
         <ActionForm action={createCardFeePolicyAction} submitLabel="카드 수수료 정책 등록" className="mt-3">
           <div className="grid gap-2 sm:grid-cols-2">
-            <input name="merchantCode" placeholder="기관 코드(비우면 전체)" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
-            <input name="effectiveFrom" type="date" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
+            <input name="merchantCode" aria-label="기관 코드" placeholder="기관 코드(비우면 전체)" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
+            <input name="effectiveFrom" type="date" aria-label="적용 시작일" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
             <input name="pgFeeRate" placeholder="카드 결제 수수료 %" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
             <input name="platformFeeRate" placeholder="플랫폼 수수료 %" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />
             <input name="pgFixedFee" placeholder="건당 고정비(원)" defaultValue="0" className="h-10 rounded-xl border border-ink-200 px-3 text-[13px]" />

@@ -50,6 +50,7 @@ export function RefundRequestForm({
         <input type="hidden" name="chargeId" value={chargeId} />
         <Textarea
           name="reason"
+          aria-label="환불 사유"
           rows={3}
           required
           minLength={2}

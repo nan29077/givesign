@@ -467,3 +467,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 복구 링크(`/r/recover`)의 변경·해지도 `assertIdentityForRecurring`(본인인증 플래그)를 탄다. 개설 마법사도 상세 저장과 같은 키워드 규칙(`assertNewCampaignKeywordAllowed` — 문자 명령어·홍보물 키워드 금지).
 - 관계 안내 월 1회 상한에 걸린 행은 기간 키를 풀어(`skipped:{id}`) 다음 묶음에서 다시 제안될 수 있다. 카드 대사 수수료는 승인 요청 시점(`requestedAt`) 정책. 결과 미확인 알림톡 수동 재발송은 누르는 순간 탈퇴·차단을 다시 본다. 고아 결제 정리는 열린(유효) 또는 완료된 카드 결제창이 있는 건을 건드리지 않는다.
 - **마이그레이션 이름:** 이번 고도화 폴더가 `20261113100000_` 까지 미래 날짜로 붙어 있다. 새 마이그레이션은 `prisma migrate dev` 가 붙이는 오늘 날짜를 쓰지 말고 **가장 최근 폴더보다 뒤 시각**으로 이름을 직접 정한다(적용 순서가 꼬이지 않게).
+
+## 2026-11-12 전체 점검 조치
+
+테스트 `tests/audit-2026-11-12.test.ts`. 보고서 `docs/2026-11-12_전체점검_조치보고서.md`.
+
+- **장면 이미지 한글 글꼴**: 장면 SVG → PNG/MP4(sharp·librsvg)는 서버 설치 글꼴만 찾는다. 한글 글꼴 없는 리눅스 이미지에서는 제목·기관명이 사라지고 "AI 생성 콘텐츠 · 모집등록번호" 표시가 □ 로 깨졌다. sharp 를 부르는 곳(`content/video.ts`·`sns/media.ts` 의 `loadSharp`)은 **첫 렌더 전에 `ensureBundledFonts()`**(`adapters/content/fonts.ts`)를 부른다 — 기존 설정(FONTCONFIG_FILE 또는 /etc/fonts/fonts.conf)을 포함하고 `assets/fonts`(Noto Sans CJK KR)를 더한 fontconfig 설정을 임시 폴더에 만들어 가리킨다. 장면 SVG 글꼴 목록은 `SCENE_FONT_FAMILY`. 새로 sharp 를 부르는 곳을 만들면 같은 함수를 먼저 부른다. 끄기 `GIVESIGN_BUNDLED_FONTS=off`.
+- **카드뉴스 작성 안내 문구**: "스토리형 6장 만들기"·템플릿이 빈 칸에 넣는 안내("…적어/입력해/소개해/설명해 주세요")는 **저장할 때만** 막는다(`campaignSchema.cardNews` = `campaignCardsSaveSchema`, `hasCardGuidance`). 읽기(`readCampaignCards`)는 그대로 — 이미 저장된 카드를 화면에서 지우지 않는다. 편집기는 해당 카드에 경고를 띄운다.
+- **파일 내려받기 버튼**: `LinkButton` 은 `/api/…` 경로를 next/link 가 아닌 일반 `<a>` 로 그린다(화면에 보이는 순간 prefetch 가 CSV 내보내기를 요청하던 문제). 내려받기 링크를 `Link` 로 직접 걸지 않는다.
+- **트랜잭션 클라이언트로 `Promise.all` 금지**: 같은 연결에 쿼리를 동시에 보내면 pg 가 폐기 예정 경고를 내고 다음 메이저에서 오류가 된다. `db`/`tx` 를 받는 함수는 차례로 await 한다.
+- **승인 대기함 준비도**: 빠진 항목만 보인다. 필수가 빠졌으면 처리할 일 위에, 권장만 빠졌으면 처리할 일 아래에. 전체 목록·작동 기록은 `/studio/start`.
+- **배포**: 빌드 폴더는 `distDir = .givesign-next` — standalone 실행은 `.givesign-next/standalone/server.js`(정적 파일·public 내용 복사 필요, `docs/AWS-배포-가이드.md` 4절). 로컬 저장소 `var/`(업로드·비공개 문서)가 파일 추적으로 standalone 에 통째로 실리던 것을 `outputFileTracingExcludes`(루트 `/` 키 포함)로 뺐다. `.dockerignore` 가 `.env`·`var`·`node_modules` 를 컨텍스트에서 뺀다(.env 가 있으면 Next 가 standalone 에 복사한다).
+- 의존성: next 16.4.6 · prisma/@prisma/client/adapter-pg 7.10.1 · zod 4.6.7 · vitest 4.1.12, 하위 의존성 `overrides`(source-map-js·fast-uri). 운영 의존성 `npm audit --omit=dev` 0건. vitest 설정은 `vitest.config.mts`.

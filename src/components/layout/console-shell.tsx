@@ -160,7 +160,7 @@ export function ConsoleShell({
           >
             {open ? <X size={18} strokeWidth={1.6} /> : <Menu size={18} strokeWidth={1.6} />}
           </button>
-          <Link href="/" className="hidden sm:block">
+          <Link href="/" className="hidden sm:block" aria-label="기브싸인 메인으로">
             <Logo compact />
           </Link>
           <span className="min-w-0 flex-1 truncate text-[15px] font-black tracking-[-0.025em] text-ink-900">{title}</span>

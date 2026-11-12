@@ -99,6 +99,22 @@ export const campaignCardSchema = z.object({
 }).refine((v) => v.layout === 'image' ? !!v.imageUrl : !!(v.title || v.body || v.imageUrl), '카드에 이미지나 내용을 입력해 주세요.');
 export const campaignCardsSchema = z.array(campaignCardSchema).max(15, '카드뉴스는 최대 15장까지 등록할 수 있습니다.');
 export type CampaignCard = z.infer<typeof campaignCardSchema>;
+
+/**
+ * 편집기의 "스토리형 6장 만들기"·템플릿이 빈 칸에 넣는 작성 안내 문구("…적어 주세요" 등).
+ * 그대로 저장하면 공개 후원페이지에 안내 문구가 캠페인 본문처럼 노출되므로 **저장할 때만** 막는다(2026-11-12 점검).
+ * 읽기(readCampaignCards)는 그대로 두어 이미 저장된 카드가 화면에서 사라지지 않게 한다.
+ */
+const CARD_GUIDANCE_RE = /(적어|입력해|소개해|설명해)\s*주세요/;
+export function hasCardGuidance(card: Pick<CampaignCard, 'title' | 'body'>): boolean {
+  return CARD_GUIDANCE_RE.test(`${card.title ?? ''}\n${card.body ?? ''}`);
+}
+const campaignCardsSaveSchema = campaignCardsSchema.superRefine((cards, ctx) => {
+  const index = cards.findIndex(hasCardGuidance);
+  if (index >= 0) {
+    ctx.addIssue({ code: 'custom', message: `카드뉴스 ${index + 1}번째 장에 작성 안내 문구가 남아 있습니다. 기관의 실제 내용으로 바꾼 뒤 저장해 주세요.` });
+  }
+});
 export function readCampaignCards(value: unknown): CampaignCard[] {
   const result = campaignCardsSchema.safeParse(value);
   return result.success ? result.data : [];
@@ -118,7 +134,7 @@ export const campaignSchema = z
     beneficiary: z.string().trim().max(300).default(''),
     usagePlan: z.string().trim().max(3000).default(''),
     imageUrl: safeImage.default(''),
-    cardNews: campaignCardsSchema.optional(),
+    cardNews: campaignCardsSaveSchema.optional(),
     goalAmount: z.coerce
       .number()
       .int('목표 금액은 원 단위 정수입니다.')

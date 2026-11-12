@@ -29,6 +29,46 @@ export default async function StudioInboxPage() {
   const missing = readiness.items.filter((i) => !i.ok);
   const groupsShown = ov.groups;
 
+  const readinessBlock = (
+    <>
+        {missing.length ? (
+          <Card className="mb-5">
+            <h2 className="text-[16px] font-black text-ink-900">자동화 준비도</h2>
+            <p className="mt-1 text-[12.5px] text-ink-500">빠진 항목이 있으면 그 부분의 자동화가 멈추거나 대체 방식으로 동작합니다. 준비된 항목과 작동 기록 전체는 <Link href="/studio/start" className="font-semibold text-brand-700 hover:underline">작동 점검</Link>에서 봅니다.</p>
+            <ul className="mt-3 divide-y divide-ink-100">
+              {missing.map((i) => (
+                <li key={i.key} className="flex items-start gap-3 py-2.5">
+                  {i.ok ? (
+                    <CircleCheck size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-success-500" aria-hidden />
+                  ) : i.required ? (
+                    <CircleAlert size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-danger-500" aria-hidden />
+                  ) : (
+                    <Circle size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-ink-300" aria-hidden />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-semibold text-ink-900">
+                      {i.label} {!i.ok ? <Badge tone={i.required ? 'danger' : 'neutral'} className="ml-1">{i.required ? '필수' : '권장'}</Badge> : null}
+                    </p>
+                    {!i.ok && i.impact ? <p className="text-[12px] leading-relaxed text-ink-500">{i.impact}</p> : null}
+                    {/* 2026-11-12 4차 I — "설정됨" 과 "작동 확인됨"(실제로 돌아간 마지막 기록)을 나눠 보인다 */}
+                    {i.ok && i.checks.length ? (
+                      <p className="text-[12px] leading-relaxed text-ink-500">
+                        {i.verified ? '작동 확인됨 — ' : '설정됨 · 작동 확인 전 — '}
+                        {i.checks.map((c) => `${c.label} ${c.verifiedAt ? `${formatKst(c.verifiedAt)}${c.mock ? '(mock)' : ''}` : '기록 없음'}`).join(' · ')}
+                      </p>
+                    ) : null}
+                  </div>
+                  {!i.ok ? <Link href={i.href} className="shrink-0 text-[12.5px] font-semibold text-brand-700 hover:underline">설정</Link> : null}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : (
+          <p className="mb-4 text-[12px] text-ink-400">자동화 준비도: 필수·권장 항목이 모두 준비되었습니다. 실제로 돌아갔는지는 <Link href="/studio/start" className="font-semibold text-brand-700 hover:underline">작동 점검</Link>에서 봅니다({readiness.items.filter((i) => i.verified).length}개 작동 확인됨).</p>
+        )}
+    </>
+  );
+
   return (
     <>
       <PageHeader
@@ -69,45 +109,13 @@ export default async function StudioInboxPage() {
         </Card>
       ) : null}
 
-      {missing.length ? (
-        <Card className="mb-5">
-          <h2 className="text-[16px] font-black text-ink-900">자동화 준비도</h2>
-          <p className="mt-1 text-[12.5px] text-ink-500">빠진 항목이 있으면 그 부분의 자동화가 멈추거나 대체 방식으로 동작합니다.</p>
-          <ul className="mt-3 divide-y divide-ink-100">
-            {readiness.items.map((i) => (
-              <li key={i.key} className="flex items-start gap-3 py-2.5">
-                {i.ok ? (
-                  <CircleCheck size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-success-500" aria-hidden />
-                ) : i.required ? (
-                  <CircleAlert size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-danger-500" aria-hidden />
-                ) : (
-                  <Circle size={18} strokeWidth={1.7} className="mt-0.5 shrink-0 text-ink-300" aria-hidden />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-ink-900">
-                    {i.label} {!i.ok ? <Badge tone={i.required ? 'danger' : 'neutral'} className="ml-1">{i.required ? '필수' : '권장'}</Badge> : null}
-                  </p>
-                  {!i.ok && i.impact ? <p className="text-[12px] leading-relaxed text-ink-500">{i.impact}</p> : null}
-                  {/* 2026-11-12 4차 I — "설정됨" 과 "작동 확인됨"(실제로 돌아간 마지막 기록)을 나눠 보인다 */}
-                  {i.ok && i.checks.length ? (
-                    <p className="text-[12px] leading-relaxed text-ink-500">
-                      {i.verified ? '작동 확인됨 — ' : '설정됨 · 작동 확인 전 — '}
-                      {i.checks.map((c) => `${c.label} ${c.verifiedAt ? `${formatKst(c.verifiedAt)}${c.mock ? '(mock)' : ''}` : '기록 없음'}`).join(' · ')}
-                    </p>
-                  ) : null}
-                </div>
-                {!i.ok ? <Link href={i.href} className="shrink-0 text-[12.5px] font-semibold text-brand-700 hover:underline">설정</Link> : null}
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : (
-        <p className="mb-4 text-[12px] text-ink-400">자동화 준비도: 필수·권장 항목이 모두 준비되었습니다. 실제로 돌아갔는지는 <Link href="/studio/start" className="font-semibold text-brand-700 hover:underline">작동 점검</Link>에서 봅니다({readiness.items.filter((i) => i.verified).length}개 작동 확인됨).</p>
-      )}
+      {readiness.requiredMissing ? readinessBlock : null}
 
       <Section title="승인·처리할 일" empty="지금 처리할 일이 없습니다." items={ov.actions} staffCount={staff.length} />
       <Section title="막힌 일 (최근 14일)" empty="막힌 일이 없습니다." items={ov.blocked} muted staffCount={staff.length} />
       <Section title="기다리는 일" empty="기다리는 일이 없습니다." items={ov.waiting} muted staffCount={staff.length} />
+      {/* 필수 항목이 모두 준비됐으면 준비도(권장 항목)는 처리할 일 아래로 내린다(2026-11-12 점검 — 처리할 일이 화면 아래로 밀리던 문제) */}
+      {readiness.requiredMissing ? null : readinessBlock}
 
       <Notice tone="neutral">
         자동 안내의 승인 단계와 기준은 <Link href="/studio/journeys" className="font-semibold underline">자동 안내</Link>에서 바꿀 수 있습니다.

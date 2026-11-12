@@ -6,6 +6,7 @@ import bundledFfmpeg from 'ffmpeg-static';
 import { ffmpegPath } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { newObjectName, putObject } from '@/server/uploads';
+import { ensureBundledFonts } from './fonts';
 
 /**
  * 숏폼 영상 조립 (ffmpeg).
@@ -76,6 +77,8 @@ type SharpFn = (input: Buffer, opts?: Record<string, unknown>) => { resize: (w: 
 
 /** sharp 가 있으면 불러온다(배포 환경에 없을 수 있다). */
 export async function loadSharp(): Promise<SharpFn | null> {
+  // 첫 렌더 전에 번들 한글 글꼴을 fontconfig 에 등록한다(없으면 운영 서버에서 한글이 □ 로 깨진다).
+  ensureBundledFonts();
   try {
     const mod = (await import('sharp')) as unknown as { default?: SharpFn };
     return (mod.default ?? (mod as unknown as SharpFn)) as SharpFn;

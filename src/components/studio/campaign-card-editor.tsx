@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from 'lucide-react';
 import { ImageUploadField } from './image-upload-field';
 import { CampaignCardNews } from '@/components/public/campaign-card-news';
-import { readCampaignCards, type CampaignCard } from '@/lib/fundraising';
+import { hasCardGuidance, readCampaignCards, type CampaignCard } from '@/lib/fundraising';
 import { DONATION_BANNERS } from '@/lib/visual-presets';
 import { campaignStoryCards, CAMPAIGN_STORY_FLOW } from '@/lib/campaign-storytelling';
 
@@ -59,7 +59,7 @@ export function CampaignCardEditor({ initial }: { initial?: unknown }) {
     <div className="mt-5 rounded-2xl bg-[#faf5e9] p-5">
       <p className="text-sm font-black text-ink-900">이야기로 공감하고, 후원으로 이어지는 캠페인</p>
       <p className="mt-2 text-xs leading-6 text-ink-600">{CAMPAIGN_STORY_FLOW}. 큰 제목과 이미지, 짧은 문단을 번갈아 배치합니다.</p>
-      <p className="mt-1 text-xs leading-6 text-ink-500">입력한 제목·소개·이야기·사용 계획으로 6장을 구성합니다. 빈 항목에는 작성 안내가 들어갑니다. {cards.length ? '현재 카드를 교체하려면 먼저 모두 삭제해 주세요.' : '본문을 먼저 입력하면 카드에도 반영됩니다.'}</p>
+      <p className="mt-1 text-xs leading-6 text-ink-500">입력한 제목·소개·이야기·사용 계획으로 6장을 구성합니다. 빈 항목에는 작성 안내가 들어가며, 안내 문구를 실제 내용으로 바꿔야 저장됩니다.{cards.length ? '현재 카드를 교체하려면 먼저 모두 삭제해 주세요.' : '본문을 먼저 입력하면 카드에도 반영됩니다.'}</p>
       <button type="button" disabled={cards.length > 0} onClick={buildStory} className="mt-3 rounded-xl bg-brand-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">캠페인 내용으로 스토리형 6장 만들기</button>
       <a href="https://www.worldvision.or.kr/campaign/26-1000girls" target="_blank" rel="noreferrer" className="ml-3 inline-block text-xs font-bold text-brand-700 underline underline-offset-4">참고 캠페인 보기</a>
     </div>
@@ -69,6 +69,7 @@ export function CampaignCardEditor({ initial }: { initial?: unknown }) {
     </div> : null}
     {preview ? <div className="mx-auto mt-6 max-w-[600px]">{cards.length ? <CampaignCardNews cards={serialized} /> : <p className="py-10 text-center text-sm text-ink-400">카드를 추가하면 여기에 표시됩니다.</p>}</div> : <div className="mt-5 space-y-5">
       {cards.map((card, index) => <div key={card.key} className="rounded-2xl border border-ink-200 p-4 sm:p-5">
+        {hasCardGuidance(card) ? <p role="status" className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">작성 안내 문구가 남아 있습니다. 기관의 실제 내용으로 바꿔야 저장할 수 있습니다.</p> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">카드 {String(index + 1).padStart(2, '0')}</h3><div className="flex gap-1">
           <button type="button" aria-label={`${index + 1}번 카드 위로`} disabled={!index} onClick={() => move(index, -1)} className="rounded-lg p-2 hover:bg-ink-50 disabled:opacity-25"><ArrowUp size={16} /></button>
           <button type="button" aria-label={`${index + 1}번 카드 아래로`} disabled={index === cards.length - 1} onClick={() => move(index, 1)} className="rounded-lg p-2 hover:bg-ink-50 disabled:opacity-25"><ArrowDown size={16} /></button>

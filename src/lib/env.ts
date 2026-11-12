@@ -437,6 +437,11 @@ export function ffmpegPath(): string {
   return str('FFMPEG_PATH');
 }
 
+/** 장면 이미지 번들 한글 글꼴(assets/fonts) 사용 여부. GIVESIGN_BUNDLED_FONTS=off 로 끈다(2026-11-12 점검). */
+export function bundledFontsEnabled(): boolean {
+  return str('GIVESIGN_BUNDLED_FONTS').toLowerCase() !== 'off';
+}
+
 /**
  * 계약이 필요한 연동(2026-11-13 5차 L) — 본인인증·시점확인·카드 결제·계좌 거래내역 조회.
  * 모두 꺼짐·mock 기본이다. 호출할 때마다 읽는다(테스트·운영 전환 시 재시작 없이 반영).

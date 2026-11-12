@@ -108,12 +108,20 @@ S3 권한은 태스크 역할(IAM Role)로 부여하고, 액세스 키를 환경
 # 빌드 단계
 ENV NEXT_OUTPUT=standalone
 RUN npm ci && npx prisma generate && npm run build
+# standalone 은 정적 파일·public 을 싣지 않는다 — 직접 복사한다.
+# (standalone/public 에 일부 파일이 이미 있으므로 폴더째가 아니라 "내용"을 복사한다)
+RUN mkdir -p .givesign-next/standalone/public .givesign-next/standalone/.givesign-next \
+ && cp -r public/. .givesign-next/standalone/public/ \
+ && cp -r .givesign-next/static .givesign-next/standalone/.givesign-next/static
 
-# 실행 단계
-CMD ["node", ".next/standalone/server.js"]
+# 실행 단계 (빌드 폴더는 next.config.ts 의 distDir = .givesign-next 다. .next 가 아니다)
+WORKDIR /app/.givesign-next/standalone
+CMD ["node", "server.js"]
 ```
 
 `NEXT_OUTPUT=standalone` 을 준 빌드만 standalone 출력이 됩니다.
+저장소의 `.dockerignore` 가 `.env`·`var`(로컬 업로드·비공개 문서)·`node_modules` 를 빌드 컨텍스트에서 뺍니다. `.env` 가 컨텍스트에 있으면 Next 가 standalone 출력에 그대로 복사하므로 지우지 마세요. 로컬 저장소는 `next.config.ts` 의 `outputFileTracingExcludes` 로도 출력에서 뺍니다(2026-11-12 점검).
+카드뉴스·숏폼·SNS 게시 이미지의 한글은 저장소의 번들 글꼴(`assets/fonts`)로 그리므로 이미지에 한글 글꼴 패키지를 따로 설치하지 않아도 됩니다(standalone 출력에 함께 실립니다 — `outputFileTracingIncludes`). 숏폼 영상은 `ffmpeg-static` 이 함께 실립니다.
 로컬 미리보기(`npm run build && npm run start`)는 이 변수를 주지 않으므로 지금까지와 동일하게 동작합니다.
 (standalone 빌드는 `next start` 로 실행할 수 없습니다)
 

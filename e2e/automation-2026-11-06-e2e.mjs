@@ -2,7 +2,7 @@
  * 2026-11-06 고도화 화면 스모크 (기관·관리자).
  * 새 화면이 열리고(4xx/5xx 없음), 페이지 오류·콘솔 오류가 없고, 핵심 문구가 보이는지 확인한다.
  */
-import { launch, createReporter, loginMerchant, loginAdmin, bodyText, gotoReady, BASE, desktop, mobile, assertServerUp } from './_helpers.mjs';
+import { launch, createReporter, loginMerchant, loginAdmin, bodyText, BASE, desktop, mobile, assertServerUp } from './_helpers.mjs';
 
 await assertServerUp();
 const r = createReporter('2026-11-06 자동화 고도화 화면');

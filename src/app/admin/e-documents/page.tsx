@@ -95,7 +95,7 @@ export default async function AdminEDocumentsPage() {
                     </ActionForm>
                     <ActionForm action={rejectEDocBillingAction} submitLabel="반려" variant="danger">
                       <input type="hidden" name="requestId" value={r.id} />
-                      <AdminInput name="reason" placeholder="반려 사유 (기관에 보입니다)" maxLength={200} />
+                      <AdminInput name="reason" aria-label="반려 사유" placeholder="반려 사유 (기관에 보입니다)" maxLength={200} />
                     </ActionForm>
                   </div>
                 ) : null}
@@ -136,10 +136,10 @@ export default async function AdminEDocumentsPage() {
                           <input type="hidden" name="merchantId" value={w.merchantId} />
                           <input type="hidden" name="nonce" value={newId()} />
                           <div className="grid grid-cols-[1fr_80px] gap-1.5">
-                            <AdminInput name="amount" placeholder="금액 ±원" inputMode="numeric" />
-                            <AdminInput name="units" placeholder="시범 ±건" inputMode="numeric" />
+                            <AdminInput name="amount" aria-label="조정 금액" placeholder="금액 ±원" inputMode="numeric" />
+                            <AdminInput name="units" aria-label="조정 시범 건수" placeholder="시범 ±건" inputMode="numeric" />
                           </div>
-                          <AdminInput name="reason" placeholder="조정 사유 (필수)" maxLength={200} />
+                          <AdminInput name="reason" aria-label="조정 사유" placeholder="조정 사유 (필수)" maxLength={200} />
                         </ActionForm>
                       ) : null}
                       <div className="mt-1.5"><ActionButton action={verifyEDocAction} values={{ merchantId: w.merchantId }} label="원장 대조" /></div>

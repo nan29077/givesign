@@ -270,6 +270,7 @@ export function SettlementRequestsPanel({
           <div className="flex flex-wrap items-center gap-2">
             <input
               name="batchNo"
+              aria-label="이체 배치번호"
               placeholder="배치번호 (예: B7K2M9X4QP)"
               disabled={!canEdit}
               className="h-8 w-56 rounded-lg border border-ink-200 px-2 font-mono text-[12px] outline-none focus:border-brand-400 disabled:bg-ink-50 disabled:text-ink-300"
@@ -281,6 +282,7 @@ export function SettlementRequestsPanel({
           </div>
           <textarea
             name="results"
+            aria-label="이체 결과 붙여넣기"
             rows={4}
             placeholder={'01ABC...,SUCCESS\n01DEF...,FAIL,잔액부족'}
             disabled={!canEdit}

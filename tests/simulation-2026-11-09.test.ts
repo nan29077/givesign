@@ -906,7 +906,9 @@ describe('시나리오 8: 발송 상한(한 후원자에게 같은 주에 안내
 
     // ---- 1~3일 뒤 낮: P1 월간 안내는 상한 때문에 계속 보류 → 3번 보류 뒤 건너뜀. 관계 안내는 1일째에 나간다(정보성 없는 날)
     for (let d = 1; d <= 3; d += 1) {
-      at(T0 + d * DAY + 20 * MIN);
+      // 보류 기한은 "보류한 순간 + 하루"다. 가짜 시계가 실제 시간만큼 흐르므로(shouldAdvanceTime) 매일 같은 분에 돌리면
+      // 몇 ms 차이로 기한 전이 되어 보류 횟수가 모자랄 수 있다(전체 실행에서만 간헐 실패 — 2026-11-12 점검). 날마다 1분씩 늦춘다.
+      at(T0 + d * DAY + (20 + d) * MIN);
       await advanceDueJourneyRuns();
       await flushDueOutbound();
       at(T0 + d * DAY + 40 * MIN);

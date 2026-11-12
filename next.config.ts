@@ -39,12 +39,12 @@ const nextConfig: NextConfig = {
    * node_modules 전체를 이미지에 싣지 않아 이미지가 작아지고 콜드스타트가 빨라진다.
    *
    * 다만 standalone 빌드는 `next start` 로 실행할 수 없고
-   * `node .next/standalone/server.js` 로 띄워야 한다.
+   * `node .givesign-next/standalone/server.js` 로 띄워야 한다.
    * 로컬 미리보기(1_미리보기실행.bat → npm run start)를 깨뜨리지 않도록
    * 빌드 시 NEXT_OUTPUT=standalone 을 준 경우에만 켠다.
    *
    *   운영 도커 빌드: NEXT_OUTPUT=standalone npm run build
-   *                  → node .next/standalone/server.js
+   *                  → node .givesign-next/standalone/server.js (distDir 이 .givesign-next 다)
    *   로컬 미리보기 : npm run build && npm run start (지금까지와 동일)
    */
   ...(process.env.NEXT_OUTPUT === 'standalone' ? { output: 'standalone' as const } : {}),
@@ -55,6 +55,17 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingIncludes: {
     '/**/*': ['./assets/fonts/**/*', './node_modules/ffmpeg-static/ffmpeg*', './public/assets/givesign/presets/banner-*.webp'],
+  },
+  /**
+   * 로컬 저장소(var/uploads·var/private)는 배포 출력에 싣지 않는다(2026-11-12 점검).
+   * uploads.ts 가 process.cwd()/var 를 동적으로 읽어 파일 추적이 폴더 전체를 standalone 에 복사했다 —
+   * PC 에서 운영 이미지를 빌드하면 서명 문서·암호화 스냅샷·기관 글꼴 같은 비공개 파일이 이미지에 들어간다.
+   * 운영은 STORAGE_DRIVER=s3 이고, 로컬 드라이버도 실행 중에 폴더를 새로 만든다.
+   */
+  outputFileTracingExcludes: {
+    // '/**/*' 는 루트 경로('/')와 맞지 않아 메인 페이지 추적에 var 가 남았다 — 루트를 따로 적는다.
+    '/': ['./var/**/*'],
+    '/**/*': ['./var/**/*'],
   },
 
   /**

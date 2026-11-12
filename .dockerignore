@@ -1,0 +1,17 @@
+# 운영 이미지에 넣지 않는 것 (2026-11-12 점검)
+# 비밀값은 Secrets Manager 로 주입한다 — .env 가 빌드 컨텍스트에 있으면 standalone 출력에 복사된다.
+.env
+.env.*
+!.env.example
+# 로컬 저장소(업로드·비공개 문서)
+var
+# 빌드·설치 산출물은 이미지 안에서 다시 만든다
+node_modules
+.givesign-next
+.next
+src/generated
+# 개발 전용
+.git
+logs
+_to_delete
+e2e/screenshots

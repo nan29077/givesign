@@ -113,7 +113,7 @@ function ReviewCard({ entry, checks, platforms, mock, assets = [] }: { entry: Re
             className="h-6 w-6 accent-brand-600"
           />
         </label>
-        <Link href={`/studio/content/${item.id}`} className="w-20 shrink-0">
+        <Link href={`/studio/content/${item.id}`} className="w-20 shrink-0" aria-label={`${item.title} 상세 보기`}>
           <SvgThumb svg={item.coverSvg} format={kindFormat(item.kind)} className="w-full" />
         </Link>
         <div className="min-w-0 flex-1">
